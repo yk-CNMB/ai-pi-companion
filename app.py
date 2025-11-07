@@ -1,25 +1,26 @@
-# app.py (多用户独立记忆版)
+# app.py (多用户独立记忆 + 增强型登录)
 
 import os
 import json
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, make_response
 from flask_socketio import SocketIO, emit
 from google import genai
 
-# --- 配置与初始化 ---
+# --- 配置加载 ---
 CONFIG = {}
 try:
     with open("config.json", "r") as f:
         CONFIG = json.load(f)
         print("✅ 成功加载 config.json")
 except FileNotFoundError:
-    pass
+    print("⚠️ 未找到 config.json，将尝试使用环境变量。")
 
+# --- Flask & SocketIO ---
 app = Flask(__name__, static_folder='static')
-app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'secret')
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'default_secret_key')
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# 创建记忆文件夹
+# --- 记忆系统 ---
 MEMORIES_DIR = "memories"
 os.makedirs(MEMORIES_DIR, exist_ok=True)
 
@@ -32,11 +33,14 @@ if api_key and "在这里粘贴" not in api_key:
         print("✅ Gemini 客户端初始化成功")
     except Exception as e:
         print(f"❌ Gemini 初始化失败: {e}")
+else:
+     print("❌ 错误: 未找到有效的 GEMINI_API_KEY。")
 
 # --- 多用户记忆管理函数 ---
+
 def get_user_memory_file(username):
     """获取指定用户的记忆文件路径"""
-    # 简单处理：把用户名转成小写，作为文件名，避免字符问题
+    # 简单过滤，防止非法文件名
     safe_username = "".join([c for c in username if c.isalnum() or c in ('-', '_')]).lower()
     if not safe_username: safe_username = "default_user"
     return os.path.join(MEMORIES_DIR, f"{safe_username}.json")
@@ -45,7 +49,7 @@ def load_user_memories(username):
     """加载指定用户的记忆列表"""
     filepath = get_user_memory_file(username)
     try:
-        with open(filepath, "r") as f:
+        with open(filepath, "r", encoding="utf-8") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return []
@@ -56,63 +60,80 @@ def save_user_memory(username, fact):
     if fact not in memories:
         memories.append(fact)
         filepath = get_user_memory_file(username)
-        with open(filepath, "w") as f:
+        with open(filepath, "w", encoding="utf-8") as f:
             json.dump(memories, f, ensure_ascii=False, indent=2)
         return True
     return False
 
-# --- 会话管理 ---
 # 存储每个连接的 {sid: {'chat': chat_obj, 'username': 'yk'}}
 active_sessions = {}
 
+# --- Flask 路由 ---
 @app.route('/')
 def index():
-    return render_template('index.html')
+    """渲染主页，并添加防缓存头部"""
+    response = make_response(render_template('index.html'))
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
-# --- SocketIO 事件 ---
+# --- SocketIO 事件处理 ---
 
-# 1. 新的连接事件：用户必须在连接时"报上名来"
 @socketio.on('login')
 def handle_login(data):
-    username = data.get('username', 'Anonymous').strip()
+    """处理用户登录事件"""
     sid = request.sid
-    print(f"🔑 用户登录: {username} (SID: {sid})")
+    username = data.get('username', 'Anonymous').strip()
+    # 防止空名字
+    if not username:
+        username = "匿名用户"
+        
+    print(f"🔑 [尝试登录] 用户: {username} (SID: {sid})")
 
-    # 加载该用户的专属记忆
-    user_memories = load_user_memories(username)
-    memory_str = "\n".join([f"- {m}" for m in user_memories]) if user_memories else "暂无"
-    print(f"📖 加载 {username} 的记忆: {len(user_memories)} 条")
+    try:
+        # 1. 加载记忆
+        user_memories = load_user_memories(username)
+        print(f"📖 已加载记忆: {len(user_memories)} 条")
+        memory_str = "\n".join([f"- {m}" for m in user_memories]) if user_memories else "暂无"
 
-    # 为该用户构建专属的系统指令
-    system_instruction = (
-        f"你是一个名为'Pico'的AI虚拟形象。你现在正在和用户【{username}】聊天。\n"
-        f"【关于 {username} 的核心记忆】\n{memory_str}\n\n"
-        "请在对话中自然地运用这些记忆，保持活泼傲娇的性格。不要主动提及你在读取记忆。"
-    )
+        # 2. 构建指令
+        system_instruction = (
+            f"你是一个名为'Pico'的AI虚拟形象。你现在正在和用户【{username}】聊天。\n"
+            f"【关于 {username} 的核心记忆】\n{memory_str}\n\n"
+            "请在对话中自然地运用这些记忆，保持活泼傲娇的性格。"
+        )
 
-    if client:
-        try:
-            chat = client.chats.create(
-                model="gemini-2.5-flash",
-                config={"system_instruction": system_instruction}
-            )
-            # 保存会话信息
-            active_sessions[sid] = {'chat': chat, 'username': username}
-            
-            emit('login_success', {
-                'username': username,
-                'memory_count': len(user_memories)
-            })
-            
-            # 发送个性化欢迎语
-            welcome = f"嗨，{username}！Pico 准备好啦！"
-            if user_memories:
-                welcome += " (我好像记得你哦 😏)"
-            emit('response', {'text': welcome, 'sender': 'Pico'})
+        # 3. 创建 Gemini 会话 (最容易出错的步骤)
+        if not client:
+             raise Exception("Gemini API 未初始化 (可能是 Key 错误)")
+             
+        print("🤖 正在连接 Gemini 大脑...")
+        chat = client.chats.create(
+            model="gemini-1.5-flash",
+            config={"system_instruction": system_instruction}
+        )
+        
+        # 4. 成功！保存会话并通知前端
+        active_sessions[sid] = {'chat': chat, 'username': username}
+        print(f"✅ {username} 登录成功！")
+        
+        emit('login_success', {
+            'username': username,
+            'memory_count': len(user_memories)
+        })
+        
+        # 延迟一点点发送欢迎语，让前端有时间切换界面
+        socketio.sleep(0.5)
+        welcome = f"嗨，{username}！Pico 准备好啦！"
+        if user_memories: welcome += " (读取记忆完毕 🧠)"
+        emit('response', {'text': welcome, 'sender': 'Pico'})
 
-        except Exception as e:
-            print(f"创建聊天失败: {e}")
-            emit('response', {'text': "大脑连接失败...", 'sender': 'Pico'})
+    except Exception as e:
+        error_msg = f"登录失败: {str(e)}"
+        print(f"❌ {error_msg}")
+        # 关键：一定要告诉前端失败了！
+        emit('login_failed', {'error': error_msg})
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -120,6 +141,8 @@ def handle_disconnect():
     if sid in active_sessions:
         print(f"👋 用户断开: {active_sessions[sid]['username']}")
         del active_sessions[sid]
+    else:
+        print(f"👋 未登录的客户端断开连接: {sid}")
 
 @socketio.on('message')
 def handle_message(data):
