@@ -7,7 +7,7 @@ After=network.target
 # 使用你的树莓派用户名 (很可能是 yk)
 User=yk
 # Gunicorn 必须在这个文件夹里运行
-WorkingDirectory=/usr/local/bin/cloudflared
+WorkingDirectory=/home/yk/ai-pi-companion
 # 必须使用 .venv 里的 Gunicorn 完整路径！
 ExecStart=/home/yk/ai-pi-companion/.venv/bin/gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:5000 app:app
 # 如果崩溃了，10秒后自动重启
