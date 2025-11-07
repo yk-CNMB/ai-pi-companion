@@ -73,8 +73,8 @@ active_sessions = {}
 # --- Flask 路由 ---
 @app.route('/pico')
 def pico():
-    response = make_response(render_template('index.html'))
-    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response = make_response(render_template('chat.html')) # <--- 只改这里
+    # ...
     return response
 
 # --- SocketIO 事件处理 ---
@@ -168,4 +168,5 @@ if __name__ == '__main__':
     print("Starting Server (Eventlet Stable Mode)...")
     # socketio.run 会自动使用 eventlet (如果它被导入并打了补丁)
     socketio.run(app, host='0.0.0.0', port=5000)
+
 
