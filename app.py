@@ -1,11 +1,12 @@
-# app.py (TTS 语音版)
+# app.py (异步后台语音版)
 
 import os
 import json
 import asyncio
 import uuid
+import threading
 import edge_tts
-from flask import Flask, render_template, request, url_for
+from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 from google import genai
 
@@ -21,9 +22,9 @@ except FileNotFoundError:
 # --- Flask 配置 ---
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'default_secret_key')
-socketio = SocketIO(app, cors_allowed_origins="*")
+# ping_timeout 设置长一点，防止网络波动导致断连
+socketio = SocketIO(app, cors_allowed_origins="*", ping_timeout=60)
 
-# 确保音频存放目录存在
 AUDIO_DIR = os.path.join("static", "audio")
 os.makedirs(AUDIO_DIR, exist_ok=True)
 
@@ -39,27 +40,33 @@ if api_key and "在这里粘贴" not in api_key:
 else:
      print("❌ 错误: 未找到有效的 GEMINI_API_KEY。")
 
-# --- TTS 设置 ---
-# 可选语音: zh-CN-XiaoxiaoNeural (可爱女声), zh-CN-YunxiNeural (活泼男声)
+# TTS 语音设置
 TTS_VOICE = "zh-CN-XiaoxiaoNeural"
 
-async def generate_tts_async(text, output_path):
-    """异步生成 TTS 音频文件"""
-    communicate = edge_tts.Communicate(text, TTS_VOICE)
-    await communicate.save(output_path)
-
-def generate_audio(text):
-    """TTS 的同步包装函数"""
+# --- 异步 TTS 生成函数 (将在后台线程运行) ---
+def background_generate_audio(sid, text, app_context):
+    """在后台生成音频，完成后主动推送给特定客户端"""
     filename = f"{uuid.uuid4()}.mp3"
     filepath = os.path.join(AUDIO_DIR, filename)
+    
     try:
-        # 在同步环境中运行异步 TTS
-        asyncio.run(generate_tts_async(text, filepath))
-        # 返回相对于 static 文件夹的 Web 路径
-        return f"/static/audio/{filename}"
+        # 创建新的事件循环来运行异步的 edge-tts
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        print(f"🎵 [后台] 开始为 {sid[:4]}... 生成语音")
+        communicate = edge_tts.Communicate(text, TTS_VOICE)
+        loop.run_until_complete(communicate.save(filepath))
+        loop.close()
+        
+        audio_url = f"/static/audio/{filename}"
+        print(f"✅ [后台] 语音生成完毕，发送给 {sid[:4]}...")
+
+        # 使用 socketio 发送给特定的客户端 (sid)
+        socketio.emit('audio_response', {'audio': audio_url}, to=sid)
+
     except Exception as e:
-        print(f"TTS 生成失败: {e}")
-        return None
+        print(f"❌ [后台] TTS 生成失败: {e}")
 
 # --- AI 角色设定 ---
 SYSTEM_INSTRUCTION = (
@@ -86,10 +93,13 @@ def handle_connect():
                 config={"system_instruction": SYSTEM_INSTRUCTION}
             )
             chat_sessions[sid] = chat
-            # 开场白也加上语音
+            
             welcome_text = "嗨！我是Pico，很高兴见到你！"
-            audio_url = generate_audio(welcome_text)
-            emit('response', {'text': welcome_text, 'sender': 'Pico', 'audio': audio_url})
+            # 1. 先发送文字
+            emit('response', {'text': welcome_text, 'sender': 'Pico'})
+            # 2. 后台生成欢迎语音
+            threading.Thread(target=background_generate_audio, args=(sid, welcome_text, app.app_context())).start()
+            
         except Exception as e:
              print(f"创建聊天失败: {e}")
              emit('response', {'text': "⚠️ Pico：大脑连接失败。", 'sender': 'Pico'})
@@ -117,12 +127,11 @@ def handle_message(data):
         response = chat.send_message(user_message)
         ai_text = response.text
         
-        # 1. 生成语音
-        print(f"正在为回复生成语音...")
-        audio_url = generate_audio(ai_text)
+        # 1. 立刻发送文字回复，不等待语音
+        emit('response', {'text': ai_text, 'sender': 'Pico'})
         
-        # 2. 同时发送文本和语音 URL 给前端
-        emit('response', {'text': ai_text, 'sender': 'Pico', 'audio': audio_url})
+        # 2. 启动后台线程去生成语音，不阻塞主流程
+        threading.Thread(target=background_generate_audio, args=(sid, ai_text, app.app_context())).start()
         
     except Exception as e:
         print(f"API Error: {e}")
@@ -131,7 +140,5 @@ def handle_message(data):
         emit('typing_status', {'status': 'idle'})
 
 if __name__ == '__main__':
-    # 清理旧的音频文件 (可选)
-    print("Starting server...")
+    print("Starting server (Async Audio Mode)...")
     socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
-
