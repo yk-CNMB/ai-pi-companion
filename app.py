@@ -1,30 +1,38 @@
-# app.py (已修正)
+# app.py (使用 config.json 版)
 
 import os
+import json
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 from google import genai
-from dotenv import load_dotenv
 
-# 加载 .env 文件中的环境变量
-load_dotenv()
+# --- 配置加载 ---
+# 尝试从 config.json 加载配置
+CONFIG = {}
+try:
+    with open("config.json", "r") as f:
+        CONFIG = json.load(f)
+        print("✅ 成功加载 config.json")
+except FileNotFoundError:
+    print("⚠️ 未找到 config.json，尝试使用环境变量...")
 
-# --- 配置 ---
+# --- Flask 配置 ---
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'default_secret_key')
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# 初始化 Gemini 客户端
-try:
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        print("⚠️ 警告: 未找到 GEMINI_API_KEY")
-        client = None
-    else:
+# --- Gemini 初始化 ---
+client = None
+api_key = CONFIG.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+
+if not api_key or "在这里粘贴" in api_key:
+     print("❌ 错误: 未找到有效的 GEMINI_API_KEY。请检查 config.json 文件。")
+else:
+    try:
         client = genai.Client(api_key=api_key)
-except Exception as e:
-    print(f"Error initializing Gemini client: {e}")
-    client = None
+        print("✅ Gemini 客户端初始化成功")
+    except Exception as e:
+        print(f"❌ Gemini 初始化失败: {e}")
 
 # AI 角色设定
 SYSTEM_INSTRUCTION = (
@@ -33,7 +41,6 @@ SYSTEM_INSTRUCTION = (
     "在回复中可以加入一些表情符号，让回复更有生气。"
 )
 
-# 存储会话历史
 chat_sessions = {}
 
 # --- 路由 ---
@@ -47,17 +54,19 @@ def handle_connect():
     if client:
         sid = request.sid
         print(f"Client connected: {sid}")
-        # 修正：将 system_instruction 放入 config 字典中
-        # 修正：将模型名称改为目前可用的 gemini-2.5-flash
-        chat = client.chats.create(
-            model="gemini-2.5-flash",
-            config={"system_instruction": SYSTEM_INSTRUCTION}
-        )
-        chat_sessions[sid] = chat
-        emit('response', {'text': "🤖 Pico：嗨！我是Pico，很高兴在树莓派上和你聊天！", 'sender': 'Pico'})
+        try:
+            chat = client.chats.create(
+                model="gemini-1.5-flash",
+                config={"system_instruction": SYSTEM_INSTRUCTION}
+            )
+            chat_sessions[sid] = chat
+            emit('response', {'text': "🤖 Pico：嗨！我是Pico，很高兴在树莓派上和你聊天！", 'sender': 'Pico'})
+        except Exception as e:
+             print(f"创建聊天失败: {e}")
+             emit('response', {'text': "⚠️ Pico：大脑连接失败，请检查服务器日志。", 'sender': 'Pico'})
     else:
-        emit('response', {'text': "⚠️ Pico：我的大脑 (API Key) 似乎没连接好。", 'sender': 'Pico'})
-        
+        emit('response', {'text': "⚠️ Pico：我找不到我的 API 密钥 (config.json)，请帮我检查一下！", 'sender': 'Pico'})
+
 @socketio.on('disconnect')
 def handle_disconnect():
     sid = request.sid
@@ -89,4 +98,3 @@ def handle_message(data):
 if __name__ == '__main__':
     print("Starting Flask-SocketIO server on http://0.0.0.0:5000...")
     socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
-
