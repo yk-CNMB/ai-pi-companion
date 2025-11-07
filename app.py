@@ -1,4 +1,4 @@
-# app.py (记忆核心版 - 无语音)
+# app.py (多用户独立记忆版)
 
 import os
 import json
@@ -6,7 +6,7 @@ from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 from google import genai
 
-# --- 配置加载 ---
+# --- 配置与初始化 ---
 CONFIG = {}
 try:
     with open("config.json", "r") as f:
@@ -15,42 +15,15 @@ try:
 except FileNotFoundError:
     pass
 
-# --- 全局变量 ---
-MEMORY_FILE = "memories.json"
-memories = []
-
-# --- 记忆功能函数 ---
-def load_memories():
-    """从 JSON 文件读取记忆"""
-    global memories
-    try:
-        with open(MEMORY_FILE, "r") as f:
-            memories = json.load(f)
-        print(f"🧠 已加载 {len(memories)} 条记忆")
-    except (FileNotFoundError, json.JSONDecodeError):
-        memories = []
-        print("🧠 记忆库为空，初始化完毕")
-
-def save_memory(fact):
-    """保存一条新记忆到 JSON 文件"""
-    global memories
-    if fact not in memories:
-        memories.append(fact)
-        with open(MEMORY_FILE, "w") as f:
-            json.dump(memories, f, ensure_ascii=False, indent=2)
-        print(f"💾 已保存新记忆: {fact}")
-        return True
-    return False
-
-# 初始化时加载一次记忆
-load_memories()
-
-# --- Flask & SocketIO ---
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'secret')
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# --- Gemini 初始化 ---
+# 创建记忆文件夹
+MEMORIES_DIR = "memories"
+os.makedirs(MEMORIES_DIR, exist_ok=True)
+
+# Gemini 初始化
 client = None
 api_key = CONFIG.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
 if api_key and "在这里粘贴" not in api_key:
@@ -60,70 +33,124 @@ if api_key and "在这里粘贴" not in api_key:
     except Exception as e:
         print(f"❌ Gemini 初始化失败: {e}")
 
-# --- 核心：动态角色设定 ---
-def get_system_instruction():
-    """动态生成包含当前所有记忆的系统指令"""
-    base_instruction = (
-        "你是一个名为'Pico'的AI虚拟形象，运行在树莓派上。你的性格活泼、略带傲娇。与用户通过文字聊天。"
-        "请用中文回复，保持简洁。不要主动提及你拥有记忆功能，表现得自然一点。"
-    )
-    # 如果有记忆，就把它们加到指令里
-    if memories:
-        memory_str = "\n".join([f"- {m}" for m in memories])
-        return f"{base_instruction}\n\n【核心记忆列表】\n{memory_str}\n请在对话中自然地运用这些记忆。"
-    else:
-        return base_instruction
+# --- 多用户记忆管理函数 ---
+def get_user_memory_file(username):
+    """获取指定用户的记忆文件路径"""
+    # 简单处理：把用户名转成小写，作为文件名，避免字符问题
+    safe_username = "".join([c for c in username if c.isalnum() or c in ('-', '_')]).lower()
+    if not safe_username: safe_username = "default_user"
+    return os.path.join(MEMORIES_DIR, f"{safe_username}.json")
 
-chat_sessions = {}
+def load_user_memories(username):
+    """加载指定用户的记忆列表"""
+    filepath = get_user_memory_file(username)
+    try:
+        with open(filepath, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+def save_user_memory(username, fact):
+    """保存一条新记忆到指定用户的文件"""
+    memories = load_user_memories(username)
+    if fact not in memories:
+        memories.append(fact)
+        filepath = get_user_memory_file(username)
+        with open(filepath, "w") as f:
+            json.dump(memories, f, ensure_ascii=False, indent=2)
+        return True
+    return False
+
+# --- 会话管理 ---
+# 存储每个连接的 {sid: {'chat': chat_obj, 'username': 'yk'}}
+active_sessions = {}
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
-@socketio.on('connect')
-def handle_connect():
+# --- SocketIO 事件 ---
+
+# 1. 新的连接事件：用户必须在连接时"报上名来"
+@socketio.on('login')
+def handle_login(data):
+    username = data.get('username', 'Anonymous').strip()
+    sid = request.sid
+    print(f"🔑 用户登录: {username} (SID: {sid})")
+
+    # 加载该用户的专属记忆
+    user_memories = load_user_memories(username)
+    memory_str = "\n".join([f"- {m}" for m in user_memories]) if user_memories else "暂无"
+    print(f"📖 加载 {username} 的记忆: {len(user_memories)} 条")
+
+    # 为该用户构建专属的系统指令
+    system_instruction = (
+        f"你是一个名为'Pico'的AI虚拟形象。你现在正在和用户【{username}】聊天。\n"
+        f"【关于 {username} 的核心记忆】\n{memory_str}\n\n"
+        "请在对话中自然地运用这些记忆，保持活泼傲娇的性格。不要主动提及你在读取记忆。"
+    )
+
     if client:
-        sid = request.sid
-        print(f"Client connected: {sid}")
-        # 每次连接时，重新构建带记忆的指令
-        current_instruction = get_system_instruction()
-        chat_sessions[sid] = client.chats.create(
-            model="gemini-2.5-flash",
-            config={"system_instruction": current_instruction}
-        )
-        emit('response', {'text': "Pico 在线中！(记忆模块已激活 🧠)", 'sender': 'Pico'})
+        try:
+            chat = client.chats.create(
+                model="gemini-1.5-flash",
+                config={"system_instruction": system_instruction}
+            )
+            # 保存会话信息
+            active_sessions[sid] = {'chat': chat, 'username': username}
+            
+            emit('login_success', {
+                'username': username,
+                'memory_count': len(user_memories)
+            })
+            
+            # 发送个性化欢迎语
+            welcome = f"嗨，{username}！Pico 准备好啦！"
+            if user_memories:
+                welcome += " (我好像记得你哦 😏)"
+            emit('response', {'text': welcome, 'sender': 'Pico'})
+
+        except Exception as e:
+            print(f"创建聊天失败: {e}")
+            emit('response', {'text': "大脑连接失败...", 'sender': 'Pico'})
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    if request.sid in chat_sessions: del chat_sessions[request.sid]
+    sid = request.sid
+    if sid in active_sessions:
+        print(f"👋 用户断开: {active_sessions[sid]['username']}")
+        del active_sessions[sid]
 
 @socketio.on('message')
 def handle_message(data):
     sid = request.sid
-    msg = data['text']
-    if sid not in chat_sessions: return
+    if sid not in active_sessions:
+        emit('response', {'text': "⚠️ 请先刷新页面登录。", 'sender': 'Pico'})
+        return
 
-    # --- 简单的记忆触发指令 ---
-    # 如果用户说 "/记 [内容]"，则手动添加记忆
+    session_data = active_sessions[sid]
+    chat = session_data['chat']
+    username = session_data['username']
+    msg = data['text']
+
+    # --- 记忆指令: /记 ---
     if msg.startswith("/记 "):
         fact = msg[3:].strip()
         if fact:
-            save_memory(fact)
-            emit('response', {'text': f"🧠 好的，我已经记住了：{fact}", 'sender': 'Pico'})
-            # 重新加载当前会话的系统指令可能比较复杂，
-            # 简单做法是告诉用户下次连接生效，或者尝试在当前会话中注入提示
+            save_user_memory(username, fact)
+            emit('response', {'text': f"🧠 好，我把【{fact}】记在 {username} 的专属小本本上了！", 'sender': 'Pico'})
             return
 
     emit('typing_status', {'status': 'typing'})
     try:
-        response = chat_sessions[sid].send_message(msg)
+        response = chat.send_message(msg)
         emit('response', {'text': response.text, 'sender': 'Pico'})
     except Exception as e:
         print(f"API Error: {e}")
-        emit('response', {'text': "大脑短路了...", 'sender': 'Pico'})
+        emit('response', {'text': "大脑短路中...", 'sender': 'Pico'})
     finally:
         emit('typing_status', {'status': 'idle'})
 
 if __name__ == '__main__':
-    print("Starting Memory-Core Server...")
+    print("Starting Multi-User Memory Server...")
     socketio.run(app, host='0.0.0.0', port=5000)
