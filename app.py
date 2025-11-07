@@ -7,7 +7,7 @@ import json
 import eventlet
 eventlet.monkey_patch()
 
-from flask import Flask, render_template, request, make_response
+from flask import Flask, render_template, request, make_response, redirect, url_for
 from flask_socketio import SocketIO, emit
 from google import genai
 
@@ -71,12 +71,10 @@ def save_user_memory(username, fact):
 active_sessions = {}
 
 # --- Flask 路由 ---
-@app.route('/')
-def index():
+@app.route('/pico')
+def pico():
     response = make_response(render_template('index.html'))
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    response.headers['Pragma'] = 'no-cache'
-    response.headers['Expires'] = '0'
     return response
 
 # --- SocketIO 事件处理 ---
@@ -170,3 +168,4 @@ if __name__ == '__main__':
     print("Starting Server (Eventlet Stable Mode)...")
     # socketio.run 会自动使用 eventlet (如果它被导入并打了补丁)
     socketio.run(app, host='0.0.0.0', port=5000)
+
