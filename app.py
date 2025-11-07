@@ -82,7 +82,7 @@ def handle_connect():
         print(f"Client connected: {sid}")
         try:
             chat = client.chats.create(
-                model="gemini-1.5-flash",
+                model="gemini-2.5-flash",
                 config={"system_instruction": SYSTEM_INSTRUCTION}
             )
             chat_sessions[sid] = chat
@@ -134,3 +134,4 @@ if __name__ == '__main__':
     # 清理旧的音频文件 (可选)
     print("Starting server...")
     socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
+
