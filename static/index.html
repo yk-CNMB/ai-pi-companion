@@ -1,3 +1,4 @@
+<!-- templates/index.html (Gunicorn 稳定版) -->
 <!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -6,98 +7,175 @@
     <title>Pico AI</title>
     <style>
         body {
-            font-family: sans-serif; margin: 0; padding: 0; height: 100vh;
-            display: flex; flex-direction: column; background: #f0f0f0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0; padding: 0; height: 100vh;
+            background-color: #f0f2f5; display: flex; flex-direction: column;
         }
-        #header { background: #6c5ce7; color: white; padding: 15px; text-align: center; font-weight: bold; }
+        /* --- 登录界面 --- */
+        #login-view {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            height: 100%; padding: 20px; box-sizing: border-box;
+        }
+        #login-box {
+            background: white; padding: 30px; border-radius: 12px;
+            text-align: center; width: 90%; max-width: 320px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        }
+        #username-input {
+            width: calc(100% - 30px); padding: 15px; margin: 15px 0;
+            border: 1px solid #ddd; border-radius: 8px; font-size: 16px;
+        }
+        #login-btn {
+            background: #6c5ce7; color: white; border: none;
+            width: 100%; padding: 15px; border-radius: 8px; font-size: 18px;
+            cursor: pointer; transition: background 0.3s;
+        }
+        #login-btn:disabled { background: #ccc; }
+        #status-msg { margin-top: 15px; color: #d63031; font-size: 14px; }
+
+        /* --- 聊天界面 (默认隐藏) --- */
+        #chat-view {
+            display: none; flex-direction: column; height: 100%;
+        }
+        #header {
+            background-color: #6c5ce7; color: white; padding: 15px;
+            text-align: center; font-weight: bold; box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
         #chat-window { flex: 1; overflow-y: auto; padding: 15px; }
-        .message-container { margin-bottom: 10px; }
-        .pico { background: white; padding: 10px; border-radius: 15px; display: inline-block; max-width: 80%; }
-        .user { background: #6c5ce7; color: white; padding: 10px; border-radius: 15px; float: right; max-width: 80%; clear: both; }
-        #input-area { display: flex; padding: 10px; background: #ddd; }
-        #user-input { flex: 1; padding: 10px; font-size: 16px; border: none; border-radius: 5px; }
-        #send-btn { padding: 10px 20px; margin-left: 10px; background: #6c5ce7; color: white; border: none; border-radius: 5px; }
-        .clearfix { clear: both; }
-        /* 遮罩层，未登录时挡住聊天框 */
-        #loading-mask {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: #f0f0f0; z-index: 999; display: flex;
-            align-items: center; justify-content: center; font-size: 20px; color: #666;
+        .message-container { display: flex; margin-bottom: 12px; }
+        .user { justify-content: flex-end; }
+        .pico { justify-content: flex-start; }
+        .message {
+            padding: 10px 15px; border-radius: 18px; max-width: 75%;
+            word-wrap: break-word; line-height: 1.5;
+        }
+        .user .message { background: #6c5ce7; color: white; }
+        .pico .message { background: #e4e6eb; color: #050505; }
+        #input-area { display: flex; padding: 10px; background: white; border-top: 1px solid #ddd; }
+        #user-input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 20px; font-size: 16px; }
+        #send-btn {
+            background: #6c5ce7; color: white; border: none;
+            padding: 0 20px; margin-left: 10px; border-radius: 20px; font-weight: bold;
         }
     </style>
 </head>
 <body>
-    <div id="loading-mask">正在连接服务器...</div>
+    <!-- 视图 1: 登录 -->
+    <div id="login-view">
+        <div id="login-box">
+            <h2>登录 Pico AI</h2>
+            <input type="text" id="username-input" placeholder="输入你的昵称" autocomplete="off">
+            <button id="login-btn">连接并登录</button>
+            <p id="status-msg"></p>
+        </div>
+    </div>
 
-    <div id="header">🤖 Pico AI</div>
-    <div id="chat-window"></div>
-    <div id="input-area">
-        <input type="text" id="user-input" placeholder="发送消息...">
-        <button id="send-btn">发送</button>
+    <!-- 视图 2: 聊天 -->
+    <div id="chat-view">
+        <div id="header">🤖 Pico (聊天中)</div>
+        <div id="chat-window"></div>
+        <div id="input-area">
+            <input type="text" id="user-input" placeholder="发送消息...">
+            <button id="send-btn">发送</button>
+        </div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <script>
-        const socket = io({ reconnection: true });
-        const mask = document.getElementById('loading-mask');
+        // 元素引用
+        const loginView = document.getElementById('login-view');
+        const chatView = document.getElementById('chat-view');
+        const loginBtn = document.getElementById('login-btn');
+        const usernameInput = document.getElementById('username-input');
+        const statusMsg = document.getElementById('status-msg');
         const chatWindow = document.getElementById('chat-window');
-        let myUsername = "";
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+        const header = document.getElementById('header');
 
-        // 1. 连接成功后，立刻弹出输入框
-        socket.on('connect', () => {
-            mask.textContent = "连接成功！准备登录...";
-            // 稍微延迟一下，确保连接稳定
-            setTimeout(() => {
-                let name = prompt("请输入你的昵称开始聊天：", "");
-                if (name && name.trim() !== "") {
-                    mask.textContent = `正在以 [${name}] 身份登录...`;
-                    socket.emit('login', { username: name });
-                } else {
-                    mask.textContent = "你取消了登录，请刷新页面重试。";
+        let socket; // 我们将手动创建 Socket
+
+        // --- 1. 点击登录按钮 ---
+        loginBtn.addEventListener('click', () => {
+            const username = usernameInput.value.trim();
+            if (!username) {
+                statusMsg.textContent = '昵称不能为空！';
+                return;
+            }
+
+            // 禁用按钮，显示状态
+            loginBtn.disabled = true;
+            statusMsg.textContent = '正在连接服务器...';
+
+            // --- 手动创建连接 ---
+            // 这会触发后端的 'connect' (如果成功)
+            socket = io(); 
+
+            // --- 绑定核心事件 ---
+
+            // A. 连接成功
+            socket.on('connect', () => {
+                statusMsg.textContent = '连接成功！正在登录...';
+                // 连接成功后，立刻发送登录请求
+                socket.emit('login', { username: username });
+            });
+
+            // B. 登录成功 (由后端 'login_success' 触发)
+            socket.on('login_success', (data) => {
+                statusMsg.textContent = '登录成功！';
+                // 切换界面
+                loginView.style.display = 'none';
+                chatView.style.display = 'flex';
+                header.textContent = `🤖 Pico (与 ${data.username} 聊天中)`;
+            });
+
+            // C. 登录失败 (由后端 'login_failed' 触发)
+            socket.on('login_failed', (data) => {
+                statusMsg.textContent = `登录失败: ${data.error}`;
+                loginBtn.disabled = false;
+                socket.disconnect(); // 登录失败，断开连接
+            });
+
+            // D. 任何连接错误
+            socket.on('connect_error', (err) => {
+                statusMsg.textContent = '连接服务器失败！请检查网络和服务器日志。';
+                loginBtn.disabled = false;
+            });
+
+            // E. 断开连接
+            socket.on('disconnect', () => {
+                // 如果不是我们主动切换界面的，就显示登录界面
+                if (chatView.style.display === 'flex') {
+                    alert('与服务器的连接已断开，请重新登录。');
+                    location.reload(); // 强制刷新页面
                 }
-            }, 500);
-        });
+            });
 
-        // 2. 登录成功
-        socket.on('login_success', (data) => {
-            myUsername = data.username;
-            mask.style.display = 'none'; // 移除遮罩，显示聊天界面
-            document.getElementById('header').textContent = `🤖 Pico (当前用户: ${myUsername})`;
-            appendMessage(`系统: 登录成功！已加载 ${data.memory_count} 条记忆。`, 'pico');
-        });
-
-        // 3. 登录失败 (关键！)
-        socket.on('login_failed', (data) => {
-            alert("登录失败！\n原因: " + data.error);
-            mask.textContent = "登录失败，请检查服务器日志。";
-        });
-
-        // 4. 断线处理
-        socket.on('disconnect', () => {
-            mask.style.display = 'flex';
-            mask.textContent = "⚠️ 网络已断开，正在重连...";
+            // --- 绑定聊天事件 ---
+            socket.on('response', (data) => appendMessage(data.text, 'pico'));
+            socket.on('typing_status', (data) => { /* 可以在这里添加“正在输入” */ });
         });
 
         // --- 聊天功能 ---
         function appendMessage(text, sender) {
             const div = document.createElement('div');
-            div.className = `message-container`;
-            div.innerHTML = `<div class="${sender}">${text}</div><div class="clearfix"></div>`;
+            div.className = `message-container ${sender}`;
+            div.innerHTML = `<div class="message">${text}</div>`;
             chatWindow.appendChild(div);
             chatWindow.scrollTop = chatWindow.scrollHeight;
         }
 
-        document.getElementById('send-btn').addEventListener('click', sendMessage);
+        sendBtn.addEventListener('click', sendMessage);
+        userInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
+
         function sendMessage() {
-            const input = document.getElementById('user-input');
-            const text = input.value.trim();
-            if (text) {
+            const text = userInput.value.trim();
+            if (text && socket) {
                 appendMessage(text, 'user');
                 socket.emit('message', { text: text });
-                input.value = '';
+                userInput.value = '';
             }
         }
-        socket.on('response', (data) => appendMessage(data.text, 'pico'));
     </script>
 </body>
 </html>
