@@ -47,15 +47,17 @@ def handle_connect():
     if client:
         sid = request.sid
         print(f"Client connected: {sid}")
+        # 修正：将 system_instruction 放入 config 字典中
+        # 修正：将模型名称改为目前可用的 gemini-2.5-flash
         chat = client.chats.create(
             model="gemini-2.5-flash",
-            system_instruction=SYSTEM_INSTRUCTION
+            config={"system_instruction": SYSTEM_INSTRUCTION}
         )
         chat_sessions[sid] = chat
         emit('response', {'text': "🤖 Pico：嗨！我是Pico，很高兴在树莓派上和你聊天！", 'sender': 'Pico'})
     else:
         emit('response', {'text': "⚠️ Pico：我的大脑 (API Key) 似乎没连接好。", 'sender': 'Pico'})
-
+        
 @socketio.on('disconnect')
 def handle_disconnect():
     sid = request.sid
@@ -87,3 +89,4 @@ def handle_message(data):
 if __name__ == '__main__':
     print("Starting Flask-SocketIO server on http://0.0.0.0:5000...")
     socketio.run(app, host='0.0.0.0', port=5000, allow_unsafe_werkzeug=True)
+
