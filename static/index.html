@@ -3,94 +3,132 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pico AI Debug</title>
+    <title>Pico AI</title>
     <style>
         /* --- 基础样式 --- */
         body {
-            font-family: sans-serif; margin: 0; padding: 0;
-            display: flex; flex-direction: column; height: 100vh;
-            background-color: #f0f0f0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0; padding: 0; height: 100vh;
+            background-color: #f5f7fa; display: flex; flex-direction: column;
         }
-        /* 调试区域样式 */
-        #debug-log {
-            background: #333; color: #0f0; font-family: monospace;
-            padding: 5px; height: 60px; overflow-y: auto; font-size: 12px;
+        /* --- 登录层 --- */
+        #login-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); z-index: 100;
+            display: flex; align-items: center; justify-content: center;
         }
-        #chat-window { flex: 1; overflow-y: auto; padding: 10px; }
-        .message-container { margin-bottom: 10px; }
-        .pico { color: black; background: white; padding: 8px; border-radius: 10px; display: inline-block; max-width: 80%; }
-        .user { color: white; background: blue; padding: 8px; border-radius: 10px; float: right; max-width: 80%; clear: both; }
-        .audio-player { width: 100%; margin-top: 5px; height: 30px; }
-        #input-area { display: flex; padding: 10px; background: #eee; }
-        #user-input { flex: 1; padding: 10px; font-size: 16px; }
-        #send-button { padding: 10px 20px; font-size: 16px; }
-        .clearfix { clear: both; }
+        #login-box {
+            background: white; padding: 30px; border-radius: 15px;
+            text-align: center; width: 80%; max-width: 300px;
+        }
+        #username-input {
+            width: 90%; padding: 10px; margin: 15px 0;
+            border: 2px solid #6c5ce7; border-radius: 8px; font-size: 16px; text-align: center;
+        }
+        #login-btn {
+            background: #6c5ce7; color: white; border: none;
+            padding: 10px 30px; border-radius: 20px; font-size: 18px; cursor: pointer;
+        }
+
+        /* --- 聊天界面 (默认隐藏) --- */
+        #main-app { display: none; flex-direction: column; height: 100%; }
+        #header {
+            background-color: #6c5ce7; color: white; padding: 15px;
+            text-align: center; font-weight: bold;
+        }
+        #chat-window { flex: 1; overflow-y: auto; padding: 15px; }
+        .message-container { display: flex; margin-bottom: 15px; }
+        .user { justify-content: flex-end; }
+        .pico { justify-content: flex-start; }
+        .message {
+            padding: 12px 16px; border-radius: 18px; max-width: 75%;
+            word-wrap: break-word;
+        }
+        .user .message { background: #6c5ce7; color: white; border-bottom-right-radius: 4px; }
+        .pico .message { background: white; color: #333; border-bottom-left-radius: 4px; }
+        #input-area { display: flex; padding: 10px; background: white; border-top: 1px solid #eee; }
+        #user-input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 25px; font-size: 16px; }
+        #send-btn {
+            background: #6c5ce7; color: white; border: none;
+            padding: 10px 20px; margin-left: 10px; border-radius: 25px;
+        }
     </style>
 </head>
 <body>
-    <div id="debug-log">调试日志已启动...等待连接...</div>
-    <div id="chat-window"></div>
-    <div id="input-area">
-        <input type="text" id="user-input" placeholder="发送消息..." autocomplete="off">
-        <button id="send-button">发送</button>
+    <div id="login-overlay">
+        <div id="login-box">
+            <h2>你是谁？</h2>
+            <input type="text" id="username-input" placeholder="输入你的名字" maxlength="10">
+            <br>
+            <button id="login-btn">开始聊天</button>
+        </div>
+    </div>
+
+    <div id="main-app">
+        <div id="header">🤖 Pico</div>
+        <div id="chat-window"></div>
+        <div id="input-area">
+            <input type="text" id="user-input" placeholder="发送消息..." autocomplete="off">
+            <button id="send-btn">发送</button>
+        </div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <script>
         const socket = io();
-        const debugLog = document.getElementById('debug-log');
+        // 元素引用
+        const loginOverlay = document.getElementById('login-overlay');
+        const mainApp = document.getElementById('main-app');
+        const usernameInput = document.getElementById('username-input');
+        const loginBtn = document.getElementById('login-btn');
         const chatWindow = document.getElementById('chat-window');
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
 
-        // --- 调试日志函数 ---
-        function log(msg) {
-            const line = document.createElement('div');
-            line.textContent = `> ${new Date().toLocaleTimeString()}: ${msg}`;
-            debugLog.appendChild(line);
-            debugLog.scrollTop = debugLog.scrollHeight;
-        }
+        let currentUsername = "";
 
+        // --- 登录逻辑 ---
+        loginBtn.addEventListener('click', () => {
+            const name = usernameInput.value.trim();
+            if (name) {
+                currentUsername = name;
+                // 发送专门的登录事件，而不是仅仅连接
+                socket.emit('login', { username: name });
+            }
+        });
+
+        // 监听登录成功
+        socket.on('login_success', (data) => {
+            loginOverlay.style.display = 'none'; // 隐藏登录框
+            mainApp.style.display = 'flex';      // 显示聊天界面
+            document.getElementById('header').textContent = `🤖 Pico (与 ${data.username} 聊天中)`;
+        });
+
+        // --- 聊天逻辑 ---
         function appendMessage(text, sender) {
             const div = document.createElement('div');
-            div.className = `message-container`;
-            div.innerHTML = `<div class="${sender}">${text}</div><div class="clearfix"></div>`;
+            div.className = `message-container ${sender}`;
+            div.innerHTML = `<div class="message">${text}</div>`;
             chatWindow.appendChild(div);
             chatWindow.scrollTop = chatWindow.scrollHeight;
         }
 
-        // --- Socket 事件 ---
-        socket.on('connect', () => log("✅ 已连接到服务器"));
-        socket.on('disconnect', () => log("❌ 与服务器断开连接"));
-        socket.on('response', (data) => {
-            log("收到文字消息");
-            appendMessage(data.text, 'pico');
-        });
+        sendBtn.addEventListener('click', sendMessage);
+        userInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
 
-        // --- 核心音频调试 ---
-        socket.on('audio_response', (data) => {
-            log("🎵 收到音频信号! URL: " + data.audio);
-            
-            // 强制在聊天窗口最下方添加一个播放器，不依赖任何之前的元素
-            const audioDiv = document.createElement('div');
-            audioDiv.innerHTML = `
-                <div style="clear:both; margin-top: 5px;">
-                    <span style="font-size:12px; color:#666;">Pico 语音:</span>
-                    <audio class="audio-player" controls src="${data.audio}" autoplay></audio>
-                </div>
-            `;
-            chatWindow.appendChild(audioDiv);
-            chatWindow.scrollTop = chatWindow.scrollHeight;
-        });
-
-        // --- 发送 ---
-        document.getElementById('send-button').addEventListener('click', () => {
-            const text = document.getElementById('user-input').value;
+        function sendMessage() {
+            const text = userInput.value.trim();
             if (text) {
                 appendMessage(text, 'user');
-                socket.emit('message', {text});
-                document.getElementById('user-input').value = '';
-                log("已发送: " + text);
+                socket.emit('message', { text: text });
+                userInput.value = '';
             }
-        });
+        }
+
+        socket.on('response', (data) => appendMessage(data.text, 'pico'));
+
+        // 自动聚焦用户名输入框
+        window.onload = () => usernameInput.focus();
     </script>
 </body>
 </html>
