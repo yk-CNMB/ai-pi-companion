@@ -1,0 +1,6 @@
+# requirements.txt
+
+flask
+flask-socketio
+google-genai
+python-dotenv

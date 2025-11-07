@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pico AI Companion</title>
+    <style>
+        /* 移动设备优先的样式 */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background-color: #f0f2f5;
+        }
+
+        #chat-window {
+            flex-grow: 1;
+            padding: 15px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .message {
+            margin-bottom: 10px;
+            padding: 10px 15px;
+            border-radius: 20px;
+            max-width: 80%;
+            line-height: 1.4;
+            word-wrap: break-word;
+        }
+
+        .user {
+            align-self: flex-end;
+            background-color: #007bff;
+            color: white;
+            border-bottom-right-radius: 5px;
+        }
+
+        .pico {
+            align-self: flex-start;
+            background-color: #ffffff;
+            color: #333;
+            border: 1px solid #ddd;
+            border-bottom-left-radius: 5px;
+        }
+
+        #typing-indicator {
+            padding: 5px 15px;
+            color: #6c757d;
+            font-style: italic;
+            font-size: 0.9em;
+            display: none; /* 默认隐藏 */
+        }
+
+        #input-area {
+            display: flex;
+            padding: 10px;
+            background-color: #fff;
+            box-shadow: 0 -2px 5px rgba(0,0,0,0.1);
+        }
+
+        #user-input {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ced4da;
+            border-radius: 20px;
+            margin-right: 10px;
+            font-size: 16px;
+        }
+
+        #send-button {
+            padding: 10px 20px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+
+        #send-button:hover {
+            background-color: #1e7e34;
+        }
+
+        /* 顶部导航栏，用于显示角色信息 */
+        #header {
+            background-color: #343a40;
+            color: white;
+            padding: 15px;
+            text-align: center;
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="header">🤖 Pico AI Companion</div>
+    
+    <div id="chat-window">
+        </div>
+
+    <div id="typing-indicator">Pico 正在输入...</div>
+
+    <div id="input-area">
+        <input type="text" id="user-input" placeholder="和 Pico 聊天..." autofocus>
+        <button id="send-button">发送</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const chatWindow = document.getElementById('chat-window');
+        const userInput = document.getElementById('user-input');
+        const sendButton = document.getElementById('send-button');
+        const typingIndicator = document.getElementById('typing-indicator');
+
+        // --- 消息显示函数 ---
+        function appendMessage(text, sender) {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message', sender);
+            messageDiv.textContent = text;
+            chatWindow.appendChild(messageDiv);
+            // 自动滚动到底部
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+
+        // --- 消息发送函数 ---
+        function sendMessage() {
+            const text = userInput.value.trim();
+            if (text) {
+                appendMessage(text, 'user');
+                // 发送消息到树莓派服务器
+                socket.emit('message', { text: text });
+                userInput.value = ''; // 清空输入框
+                sendButton.disabled = true; // 发送后禁用按钮防止重复发送
+            }
+        }
+
+        // --- SocketIO 事件监听 ---
+
+        socket.on('connect', () => {
+            console.log('Connected to server.');
+            sendButton.disabled = false;
+        });
+
+        socket.on('response', (data) => {
+            // 收到 AI 回复
+            appendMessage(data.text, 'pico');
+            sendButton.disabled = false; // 解除禁用
+        });
+
+        socket.on('typing_status', (data) => {
+            // 处理 AI 正在输入状态
+            if (data.status === 'typing') {
+                typingIndicator.style.display = 'block';
+            } else {
+                typingIndicator.style.display = 'none';
+            }
+            chatWindow.scrollTop = chatWindow.scrollHeight; // 滚动到底部
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server.');
+            appendMessage('💔 连接已断开，请检查树莓派服务器状态。', 'pico');
+            sendButton.disabled = true;
+        });
+
+        // --- UI 事件绑定 ---
+        sendButton.addEventListener('click', sendMessage);
+        
+        userInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !sendButton.disabled) {
+                sendMessage();
+            }
+        });
+
+        // 首次加载时，让输入框获得焦点
+        window.onload = () => {
+            userInput.focus();
+        };
+
+    </script>
+</body>
+</html>
