@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Pico AI</title>
     <style>
-        /* 简单的现代化样式 */
+        /* 保持原有样式不变 */
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             margin: 0; padding: 0;
@@ -82,7 +82,6 @@
         const sendButton = document.getElementById('send-button');
         const typingIndicator = document.getElementById('typing-indicator');
 
-        // 简单的音频播放队列，防止多条语音同时播放
         let audioQueue = [];
         let isPlaying = false;
 
@@ -93,10 +92,10 @@
                 const audio = new Audio(audioUrl);
                 audio.onended = () => {
                     isPlaying = false;
-                    playNextAudio(); // 播放下一条
+                    playNextAudio();
                 };
                 audio.play().catch(e => {
-                    console.warn("自动播放被浏览器阻止，用户需要先进行交互。", e);
+                    console.warn("自动播放可能被阻止", e);
                     isPlaying = false;
                 });
             }
@@ -105,19 +104,16 @@
         function appendMessage(text, sender) {
             const container = document.createElement('div');
             container.className = `message-container ${sender}`;
-            
             if (sender === 'pico') {
                 const avatar = document.createElement('div');
                 avatar.className = 'avatar';
                 avatar.textContent = '🤖';
                 container.appendChild(avatar);
             }
-
             const messageDiv = document.createElement('div');
             messageDiv.className = 'message';
             messageDiv.textContent = text;
             container.appendChild(messageDiv);
-
             chatWindow.appendChild(container);
             chatWindow.scrollTop = chatWindow.scrollHeight;
         }
@@ -131,12 +127,16 @@
             }
         }
 
-        // --- Socket 事件 ---
-        socket.on('connect', () => console.log('已连接服务器'));
+        socket.on('connect', () => console.log('已连接'));
         
+        // 1. 接收文字消息
         socket.on('response', (data) => {
             appendMessage(data.text, 'pico');
-            // 如果有音频，加入播放队列
+        });
+
+        // 2. 接收语音消息 (新增)
+        socket.on('audio_response', (data) => {
+            console.log("收到语音:", data.audio);
             if (data.audio) {
                 audioQueue.push(data.audio);
                 playNextAudio();
@@ -147,17 +147,13 @@
             typingIndicator.className = data.status === 'typing' ? 'active' : '';
         });
 
-        // --- 交互绑定 ---
         sendButton.addEventListener('click', sendMessage);
         userInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') sendMessage();
         });
-        
-        // 移动端优化：点击输入框时滚动到底部
         userInput.addEventListener('focus', () => {
             setTimeout(() => chatWindow.scrollTop = chatWindow.scrollHeight, 300);
         });
-
     </script>
 </body>
 </html>
