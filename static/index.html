@@ -3,79 +3,33 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pico AI</title>
+    <title>Pico AI Debug</title>
     <style>
-        /* --- 样式保持不变 --- */
+        /* --- 基础样式 --- */
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            margin: 0; padding: 0;
+            font-family: sans-serif; margin: 0; padding: 0;
             display: flex; flex-direction: column; height: 100vh;
-            background-color: #f5f7fa; color: #333;
+            background-color: #f0f0f0;
         }
-        #header {
-            background-color: #6c5ce7; color: white;
-            padding: 15px; text-align: center; font-weight: bold;
-            font-size: 1.2rem; box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        /* 调试区域样式 */
+        #debug-log {
+            background: #333; color: #0f0; font-family: monospace;
+            padding: 5px; height: 60px; overflow-y: auto; font-size: 12px;
         }
-        #chat-window {
-            flex: 1; overflow-y: auto; padding: 15px;
-            scroll-behavior: smooth;
-        }
-        .message-container { display: flex; margin-bottom: 15px; flex-wrap: wrap; }
-        .message-container.user { justify-content: flex-end; }
-        .message-container.pico { justify-content: flex-start; }
-        .avatar {
-            width: 40px; height: 40px; border-radius: 50%;
-            margin-right: 10px; background-color: #eee;
-            display: flex; align-items: center; justify-content: center; font-size: 20px;
-        }
-        .message-content {
-            max-width: 75%;
-            display: flex; flex-direction: column;
-        }
-        .message {
-            padding: 12px 16px; border-radius: 18px;
-            line-height: 1.5; word-wrap: break-word;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-        }
-        .user .message {
-            background-color: #6c5ce7; color: white;
-            border-bottom-right-radius: 4px;
-        }
-        .pico .message {
-            background-color: white; color: #333;
-            border-bottom-left-radius: 4px;
-        }
-        /* 新增：音频播放器样式 */
-        .audio-player {
-            margin-top: 8px; width: 100%; height: 32px;
-            outline: none;
-        }
-        #typing-indicator {
-            padding: 5px 20px; color: #999; font-style: italic; font-size: 0.9rem;
-            opacity: 0; transition: opacity 0.3s;
-        }
-        #typing-indicator.active { opacity: 1; }
-        #input-area {
-            display: flex; padding: 10px; background: white;
-            border-top: 1px solid #eee;
-        }
-        #user-input {
-            flex: 1; padding: 12px; border: 1px solid #ddd;
-            border-radius: 25px; font-size: 16px; outline: none;
-            transition: border-color 0.3s;
-        }
-        #send-button {
-            background-color: #6c5ce7; color: white; border: none;
-            padding: 10px 20px; margin-left: 10px; border-radius: 25px;
-            font-weight: bold; cursor: pointer;
-        }
+        #chat-window { flex: 1; overflow-y: auto; padding: 10px; }
+        .message-container { margin-bottom: 10px; }
+        .pico { color: black; background: white; padding: 8px; border-radius: 10px; display: inline-block; max-width: 80%; }
+        .user { color: white; background: blue; padding: 8px; border-radius: 10px; float: right; max-width: 80%; clear: both; }
+        .audio-player { width: 100%; margin-top: 5px; height: 30px; }
+        #input-area { display: flex; padding: 10px; background: #eee; }
+        #user-input { flex: 1; padding: 10px; font-size: 16px; }
+        #send-button { padding: 10px 20px; font-size: 16px; }
+        .clearfix { clear: both; }
     </style>
 </head>
 <body>
-    <div id="header">🤖 Pico (语音修复版)</div>
+    <div id="debug-log">调试日志已启动...等待连接...</div>
     <div id="chat-window"></div>
-    <div id="typing-indicator">Pico 正在思考...</div>
     <div id="input-area">
         <input type="text" id="user-input" placeholder="发送消息..." autocomplete="off">
         <button id="send-button">发送</button>
@@ -84,87 +38,58 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <script>
         const socket = io();
+        const debugLog = document.getElementById('debug-log');
         const chatWindow = document.getElementById('chat-window');
-        const userInput = document.getElementById('user-input');
-        const sendButton = document.getElementById('send-button');
-        const typingIndicator = document.getElementById('typing-indicator');
 
-        let lastPicoMessageContent = null;
+        // --- 调试日志函数 ---
+        function log(msg) {
+            const line = document.createElement('div');
+            line.textContent = `> ${new Date().toLocaleTimeString()}: ${msg}`;
+            debugLog.appendChild(line);
+            debugLog.scrollTop = debugLog.scrollHeight;
+        }
 
         function appendMessage(text, sender) {
-            const container = document.createElement('div');
-            container.className = `message-container ${sender}`;
-            
-            if (sender === 'pico') {
-                const avatar = document.createElement('div');
-                avatar.className = 'avatar';
-                avatar.textContent = '🤖';
-                container.appendChild(avatar);
-            }
-
-            // 创建一个包裹消息和音频的容器
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'message-content';
-
-            const messageDiv = document.createElement('div');
-            messageDiv.className = 'message';
-            messageDiv.textContent = text;
-            
-            contentDiv.appendChild(messageDiv);
-            container.appendChild(contentDiv);
-            chatWindow.appendChild(container);
+            const div = document.createElement('div');
+            div.className = `message-container`;
+            div.innerHTML = `<div class="${sender}">${text}</div><div class="clearfix"></div>`;
+            chatWindow.appendChild(div);
             chatWindow.scrollTop = chatWindow.scrollHeight;
-
-            // 记录最后一条 Pico 的消息容器，以便稍后追加音频
-            if (sender === 'pico') {
-                lastPicoMessageContent = contentDiv;
-            }
         }
 
-        function sendMessage() {
-            const text = userInput.value.trim();
+        // --- Socket 事件 ---
+        socket.on('connect', () => log("✅ 已连接到服务器"));
+        socket.on('disconnect', () => log("❌ 与服务器断开连接"));
+        socket.on('response', (data) => {
+            log("收到文字消息");
+            appendMessage(data.text, 'pico');
+        });
+
+        // --- 核心音频调试 ---
+        socket.on('audio_response', (data) => {
+            log("🎵 收到音频信号! URL: " + data.audio);
+            
+            // 强制在聊天窗口最下方添加一个播放器，不依赖任何之前的元素
+            const audioDiv = document.createElement('div');
+            audioDiv.innerHTML = `
+                <div style="clear:both; margin-top: 5px;">
+                    <span style="font-size:12px; color:#666;">Pico 语音:</span>
+                    <audio class="audio-player" controls src="${data.audio}" autoplay></audio>
+                </div>
+            `;
+            chatWindow.appendChild(audioDiv);
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        });
+
+        // --- 发送 ---
+        document.getElementById('send-button').addEventListener('click', () => {
+            const text = document.getElementById('user-input').value;
             if (text) {
                 appendMessage(text, 'user');
-                socket.emit('message', { text: text });
-                userInput.value = '';
+                socket.emit('message', {text});
+                document.getElementById('user-input').value = '';
+                log("已发送: " + text);
             }
-        }
-
-        socket.on('connect', () => console.log('已连接服务器'));
-        socket.on('response', (data) => appendMessage(data.text, 'pico'));
-        socket.on('typing_status', (data) => {
-            typingIndicator.className = data.status === 'typing' ? 'active' : '';
-        });
-
-        // --- 核心修复：收到语音时的处理 ---
-        socket.on('audio_response', (data) => {
-            console.log("收到语音 URL:", data.audio);
-            if (data.audio && lastPicoMessageContent) {
-                // 1. 创建一个可见的音频播放器
-                const audioPlayer = document.createElement('audio');
-                audioPlayer.controls = true; // 显示播放/暂停按钮
-                audioPlayer.className = 'audio-player';
-                audioPlayer.src = data.audio;
-
-                // 2. 把它加到最后一条 Pico 消息下方
-                lastPicoMessageContent.appendChild(audioPlayer);
-                chatWindow.scrollTop = chatWindow.scrollHeight;
-
-                // 3. 尝试自动播放
-                audioPlayer.play().then(() => {
-                    console.log("自动播放成功");
-                    // 如果你想在自动播放成功时隐藏播放器，可以取消下面这行的注释
-                    // audioPlayer.style.display = 'none'; 
-                }).catch(e => {
-                    console.warn("自动播放被拦截，请用户手动点击播放器:", e);
-                    // 播放被拦截了，但因为我们显示了 controls，用户可以手动点播放
-                });
-            }
-        });
-
-        sendButton.addEventListener('click', sendMessage);
-        userInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') sendMessage();
         });
     </script>
 </body>
