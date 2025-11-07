@@ -1,7 +1,12 @@
-# app.py (多用户独立记忆 + 增强型登录)
+# app.py (多用户记忆 + 强制 Eventlet 稳定版)
 
 import os
 import json
+
+# 关键：导入 eventlet 并打上补丁，必须放在最前面！
+import eventlet
+eventlet.monkey_patch()
+
 from flask import Flask, render_template, request, make_response
 from flask_socketio import SocketIO, emit
 from google import genai
@@ -18,7 +23,9 @@ except FileNotFoundError:
 # --- Flask & SocketIO ---
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'default_secret_key')
-socketio = SocketIO(app, cors_allowed_origins="*")
+
+# 关键：强制指定 async_mode='eventlet'
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # --- 记忆系统 ---
 MEMORIES_DIR = "memories"
@@ -39,14 +46,11 @@ else:
 # --- 多用户记忆管理函数 ---
 
 def get_user_memory_file(username):
-    """获取指定用户的记忆文件路径"""
-    # 简单过滤，防止非法文件名
     safe_username = "".join([c for c in username if c.isalnum() or c in ('-', '_')]).lower()
     if not safe_username: safe_username = "default_user"
     return os.path.join(MEMORIES_DIR, f"{safe_username}.json")
 
 def load_user_memories(username):
-    """加载指定用户的记忆列表"""
     filepath = get_user_memory_file(username)
     try:
         with open(filepath, "r", encoding="utf-8") as f:
@@ -55,7 +59,6 @@ def load_user_memories(username):
         return []
 
 def save_user_memory(username, fact):
-    """保存一条新记忆到指定用户的文件"""
     memories = load_user_memories(username)
     if fact not in memories:
         memories.append(fact)
@@ -65,13 +68,11 @@ def save_user_memory(username, fact):
         return True
     return False
 
-# 存储每个连接的 {sid: {'chat': chat_obj, 'username': 'yk'}}
 active_sessions = {}
 
 # --- Flask 路由 ---
 @app.route('/')
 def index():
-    """渲染主页，并添加防缓存头部"""
     response = make_response(render_template('index.html'))
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     response.headers['Pragma'] = 'no-cache'
@@ -82,39 +83,32 @@ def index():
 
 @socketio.on('login')
 def handle_login(data):
-    """处理用户登录事件"""
     sid = request.sid
     username = data.get('username', 'Anonymous').strip()
-    # 防止空名字
-    if not username:
-        username = "匿名用户"
+    if not username: username = "匿名用户"
         
     print(f"🔑 [尝试登录] 用户: {username} (SID: {sid})")
 
     try:
-        # 1. 加载记忆
         user_memories = load_user_memories(username)
         print(f"📖 已加载记忆: {len(user_memories)} 条")
         memory_str = "\n".join([f"- {m}" for m in user_memories]) if user_memories else "暂无"
 
-        # 2. 构建指令
         system_instruction = (
             f"你是一个名为'Pico'的AI虚拟形象。你现在正在和用户【{username}】聊天。\n"
             f"【关于 {username} 的核心记忆】\n{memory_str}\n\n"
             "请在对话中自然地运用这些记忆，保持活泼傲娇的性格。"
         )
 
-        # 3. 创建 Gemini 会话 (最容易出错的步骤)
         if not client:
              raise Exception("Gemini API 未初始化 (可能是 Key 错误)")
              
         print("🤖 正在连接 Gemini 大脑...")
         chat = client.chats.create(
-            model="gemini-1.5-flash",
+            model="gemini-2.5-flash",
             config={"system_instruction": system_instruction}
         )
         
-        # 4. 成功！保存会话并通知前端
         active_sessions[sid] = {'chat': chat, 'username': username}
         print(f"✅ {username} 登录成功！")
         
@@ -123,7 +117,7 @@ def handle_login(data):
             'memory_count': len(user_memories)
         })
         
-        # 延迟一点点发送欢迎语，让前端有时间切换界面
+        # Eventlet 模式下用 socketio.sleep 更稳定
         socketio.sleep(0.5)
         welcome = f"嗨，{username}！Pico 准备好啦！"
         if user_memories: welcome += " (读取记忆完毕 🧠)"
@@ -132,7 +126,6 @@ def handle_login(data):
     except Exception as e:
         error_msg = f"登录失败: {str(e)}"
         print(f"❌ {error_msg}")
-        # 关键：一定要告诉前端失败了！
         emit('login_failed', {'error': error_msg})
 
 @socketio.on('disconnect')
@@ -142,7 +135,7 @@ def handle_disconnect():
         print(f"👋 用户断开: {active_sessions[sid]['username']}")
         del active_sessions[sid]
     else:
-        print(f"👋 未登录的客户端断开连接: {sid}")
+        print(f"👋 未登录的客户端断开连接: {sid}") # 就像你看到的那个
 
 @socketio.on('message')
 def handle_message(data):
@@ -156,7 +149,6 @@ def handle_message(data):
     username = session_data['username']
     msg = data['text']
 
-    # --- 记忆指令: /记 ---
     if msg.startswith("/记 "):
         fact = msg[3:].strip()
         if fact:
@@ -175,5 +167,6 @@ def handle_message(data):
         emit('typing_status', {'status': 'idle'})
 
 if __name__ == '__main__':
-    print("Starting Multi-User Memory Server...")
+    print("Starting Server (Eventlet Stable Mode)...")
+    # socketio.run 会自动使用 eventlet (如果它被导入并打了补丁)
     socketio.run(app, host='0.0.0.0', port=5000)
