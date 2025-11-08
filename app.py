@@ -1,5 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (终极语音 + 多用户记忆版)
+# Pico AI Server - app.py (终极语音 + 多用户记忆版)1
 # 
 # 启动命令 (确保在 .venv 虚拟环境下):
 # gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:5000 app:app
@@ -102,19 +102,25 @@ active_sessions = {}
 
 # --- 5. Web 路由 ---
 
+# ... (前面的代码不变)
+
+# --- 路由 ---
 @app.route('/')
 def index_redirect():
-    """强制将旧网址重定向到新网址"""
-    return redirect(url_for('pico'))
+    # 修改重定向目标
+    return redirect(url_for('pico_v3'))
 
-@app.route('/pico')
-def pico():
-    """主界面，强制禁用缓存"""
+# 修改路由名称和函数名称
+@app.route('/pico_v3')
+def pico_v3():
     response = make_response(render_template('chat.html'))
+    # 保留这些防缓存头，作为双重保险
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
     return response
+
+# ... (后面的代码不变)
 
 # --- 6. Socket.IO 事件 ---
 
@@ -182,3 +188,4 @@ def handle_message(data):
         emit('response', {'text': "大脑短路中...", 'sender': 'Pico'})
     finally:
         emit('typing_status', {'status': 'idle'})
+
