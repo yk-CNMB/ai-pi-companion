@@ -1,40 +1,37 @@
 #!/bin/bash
-# V3 稳定版下载脚本 - 只下载核心文件
+# 下载并安装更高级的 Hiyori 模型
 
-GH_RAW="https://raw.githubusercontent.com/guansss/pixi-live2d-display/master/test/assets/shizuku"
-TARGET="static/live2d/shizuku"
+echo "🚚 开始下载 Hiyori 模型..."
 
-echo "🗑️ 清理旧文件..."
-rm -rf "$TARGET"
-mkdir -p "$TARGET/shizuku.1024"
-mkdir -p "$TARGET/motions"
+# 1. 准备工作目录
+rm -rf temp_live2d
+mkdir -p temp_live2d
+cd temp_live2d
 
-dl() {
-    echo -e "\n⬇️ 下载: $2"
-    # 增加 -f 参数，遇到 404 直接报错退出
-    if curl -fL# -o "$TARGET/$2" "$GH_RAW/$1"; then
-        echo "✅ 成功"
-    else
-        echo "❌ 失败！源文件不存在: $1"
-        # 这里我们不退出，而是继续下载其他文件，确保能用的都下载下来
-    fi
-}
+# 2. 克隆包含 Hiyori 的仓库 (只克隆最近提交，速度快)
+# 如果这个 GitHub 地址慢，可以尝试换成 gitclone.com 的镜像
+git clone --depth=1 https://github.com/guansss/pixi-live2d-display.git
 
-# 1. 核心文件
-dl "shizuku.moc" "shizuku.moc"
-dl "shizuku.model.json" "shizuku.model.json"
-dl "shizuku.physics.json" "shizuku.physics.json"
-dl "shizuku.pose.json" "shizuku.pose.json"
+# 3. 检查是否克隆成功
+if [ ! -d "pixi-live2d-display" ]; then
+    echo "❌ 下载失败，请检查网络！"
+    cd ..
+    rm -rf temp_live2d
+    exit 1
+fi
 
-# 2. 纹理 (shizuku.1024)
-dl "shizuku.1024/texture_00.png" "shizuku.1024/texture_00.png"
-dl "shizuku.1024/texture_01.png" "shizuku.1024/texture_01.png"
-dl "shizuku.1024/texture_02.png" "shizuku.1024/texture_02.png"
-dl "shizuku.1024/texture_03.png" "shizuku.1024/texture_03.png"
-dl "shizuku.1024/texture_04.png" "shizuku.1024/texture_04.png"
-dl "shizuku.1024/texture_05.png" "shizuku.1024/texture_05.png"
+# 4. 安装 Hiyori 模型
+echo "📦 正在安装 Hiyori..."
+TARGET_DIR="../../static/live2d/hiyori"
+rm -rf "$TARGET_DIR"
+mkdir -p "$TARGET_DIR"
 
-# 3. 动作 (只下载确定的 idle)
-dl "motions/idle_01.mtn" "motions/idle_01.mtn"
+# 复制 hiyori 文件夹下的所有内容
+cp -r pixi-live2d-display/test/assets/hiyori/* "$TARGET_DIR/"
 
-echo -e "\n🎉 下载结束！快去刷新网页！"
+# 5. 清理临时文件
+cd ../..
+rm -rf temp_live2d
+
+echo "✅ Hiyori 模型安装完成！"
+echo "📂 模型位置: static/live2d/hiyori/"
