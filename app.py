@@ -142,7 +142,7 @@ def handle_login(data):
             "请用中文回复，保持活泼傲娇。回复尽量简短口语化，因为你要把这些话读出来。"
         )
         
-        chat = client.chats.create(model="gemini-1.5-flash", config={"system_instruction": system_prompt})
+        chat = client.chats.create(model="gemini-2.5-flash", config={"system_instruction": system_prompt})
         active_sessions[sid] = {'chat': chat, 'username': username}
         
         emit('login_success', {'username': username})
@@ -188,4 +188,5 @@ def handle_message(data):
         emit('response', {'text': "大脑短路中...", 'sender': 'Pico'})
     finally:
         emit('typing_status', {'status': 'idle'})
+
 
