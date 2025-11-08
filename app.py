@@ -146,7 +146,7 @@ def init_chatroom():
         "请用中文回复，保持活泼傲娇。回复时尽量提及你在和谁说话，例如：'小明你说得对！'。\n"
         "回复要简短口语化，方便语音合成。"
     )
-    chatroom_chat = client.chats.create(model="gemini-1.5-flash", config={"system_instruction": system_prompt})
+    chatroom_chat = client.chats.create(model="gemini-2.5-flash", config={"system_instruction": system_prompt})
     print("🏠 全局聊天室已初始化")
 
 @socketio.on('login')
@@ -223,3 +223,4 @@ def handle_message(data):
     except Exception as e:
         print(f"API Error: {e}")
         emit('system_message', {'text': "⚠️ Pico 大脑掉线了..."}, to='lobby')
+
