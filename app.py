@@ -1,5 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (终极自动化版)
+# Pico AI Server - app.py (多人聊天室版)
 # 
 # 启动命令:
 # gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:5000 app:app
@@ -9,28 +9,19 @@ import os
 import json
 import uuid
 import asyncio
-import time # 新增：用于生成时间戳版本号
-
-# 【关键】导入 eventlet 并打补丁
 import eventlet
 eventlet.monkey_patch()
-
 import edge_tts
 from flask import Flask, render_template, request, make_response, redirect, url_for
-from flask_socketio import SocketIO, emit
+# 新增导入 join_room, leave_room
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from google import genai
 
-# --- 1. 初始化与自动化版本号 ---
 app = Flask(__name__, static_folder='static')
-app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'default_secret')
+app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'secret')
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
-# 【核心魔法】每次服务器重启，这个版本号都会变！
-# 它是一个基于当前时间戳的字符串，例如 "1731081600"
-SERVER_VERSION = str(int(time.time()))
-print(f"🚀 服务器已启动！当前版本号: {SERVER_VERSION}")
-
-# --- 2. 目录与配置 ---
+# --- 目录与配置 ---
 MEMORIES_DIR = "memories"
 os.makedirs(MEMORIES_DIR, exist_ok=True)
 AUDIO_DIR = os.path.join("static", "audio")
@@ -45,11 +36,10 @@ client = None
 api_key = CONFIG.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
 if api_key and "在这里粘贴" not in api_key:
     try: client = genai.Client(api_key=api_key)
-    except Exception as e: print(f"❌ Gemini 初始化失败: {e}")
-else: print("❌ 未找到 GEMINI_API_KEY")
+    except: print("❌ Gemini 初始化失败")
+else: print("❌ 未找到 API Key")
 
-# --- 3. 功能函数 (记忆 & TTS) ---
-# (这部分代码与之前相同，为了节省篇幅，我简写了，请确保你用的是完整的)
+# --- 功能函数 ---
 def load_user_memories(username):
     safe_name = "".join([c for c in username if c.isalnum() or c in ('-','_')]).lower() or "default"
     try:
@@ -67,7 +57,8 @@ def save_user_memory(username, fact):
     return False
 
 TTS_VOICE = "zh-CN-XiaoxiaoNeural"
-def background_generate_audio(sid, text):
+def background_generate_audio(text, room=None, sid=None):
+    """后台生成语音，可发送给特定房间或特定用户"""
     filename = f"{uuid.uuid4()}.mp3"
     filepath = os.path.join(AUDIO_DIR, filename)
     try:
@@ -78,95 +69,105 @@ def background_generate_audio(sid, text):
         asyncio.set_event_loop(loop)
         loop.run_until_complete(_run())
         loop.close()
-        socketio.emit('audio_response', {'audio': f"/static/audio/{filename}"}, to=sid, namespace='/')
+        url = f"/static/audio/{filename}"
+        
+        # 如果指定了房间，就广播给房间；否则发给个人
+        if room:
+            socketio.emit('audio_response', {'audio': url}, to=room, namespace='/')
+        elif sid:
+            socketio.emit('audio_response', {'audio': url}, to=sid, namespace='/')
+            
     except Exception as e: print(f"❌ TTS失败: {e}")
 
-active_sessions = {}
+# --- 全局状态 ---
+active_users = {} # 存储 {sid: username}
+chatroom_chat = None # 全局聊天室会话
 
-# --- 4. 智能路由 (核心改动) ---
-
+# --- 路由 ---
 @app.route('/')
-def index_root():
-    """根路由：永远自动跳转到最新的版本号 URL"""
-    # 自动跳到 /pico/1731081600 这样的网址
-    return redirect(url_for('pico_dynamic', version=SERVER_VERSION))
+def index_redirect(): return redirect(url_for('pico'))
 
 @app.route('/pico')
-def pico_legacy():
-    """旧路由：也自动跳转到最新版本号"""
-    return redirect(url_for('pico_dynamic', version=SERVER_VERSION))
-
-# 新的动态路由，URL 里包含版本号
-@app.route('/pico/<version>')
-def pico_dynamic(version):
-    """
-    真正的处理函数。
-    虽然 URL 变了，但它们都加载同一个 templates/chat.html 文件。
-    浏览器看到 URL 变了，就会乖乖地重新加载，不会用缓存。
-    """
-    # 如果用户访问了旧的版本号，自动把他踢到最新的
-    if version != SERVER_VERSION:
-        return redirect(url_for('pico_dynamic', version=SERVER_VERSION))
-
+def pico():
     response = make_response(render_template('chat.html'))
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
     return response
 
-# --- 5. Socket.IO 事件 (保持不变) ---
-# (为了完整性，请确保你复制了完整的 handle_login, handle_disconnect, handle_message 函数)
-# ... (此处省略了与之前完全相同的 Socket.IO 代码，实际使用时请保留) ...
+# --- Socket.IO 事件 ---
+
+def init_chatroom():
+    """初始化全局聊天室的 AI 会话"""
+    global chatroom_chat
+    if not client: return
+    
+    system_prompt = (
+        "你是一个名为'Pico'的AI虚拟形象，正在一个多人聊天室中。\n"
+        "你会收到格式为【用户A】: 消息内容 的输入。\n"
+        "请用中文回复，保持活泼傲娇。回复时尽量提及你在和谁说话，例如：'小明你说得对！'。\n"
+        "如果有多人同时说话，你可以一起回复。"
+    )
+    chatroom_chat = client.chats.create(model="gemini-1.5-flash", config={"system_instruction": system_prompt})
+    print("🏠 全局聊天室已初始化")
+
 @socketio.on('login')
 def handle_login(data):
     sid = request.sid
     username = data.get('username', 'Anonymous').strip() or "匿名"
-    print(f"🔑 用户登录: {username}")
-    try:
-        if not client: raise Exception("API 未连接")
-        memories = load_user_memories(username)
-        mem_str = "\n".join([f"- {m}" for m in memories]) if memories else "暂无"
-        system_prompt = (
-            f"你是一个名为'Pico'的AI虚拟形象。正在和【{username}】聊天。\n"
-            f"【{username} 的记忆】\n{mem_str}\n\n"
-            "请用中文回复，保持活泼傲娇。回复尽量简短口语化，因为你要把这些话读出来。"
-        )
-        chat = client.chats.create(model="gemini-2.5-flash", config={"system_instruction": system_prompt})
-        active_sessions[sid] = {'chat': chat, 'username': username}
-        emit('login_success', {'username': username})
-        socketio.sleep(0.5)
-        welcome = f"嗨，{username}！Pico 准备好啦！(v{SERVER_VERSION})" # 欢迎语里也加上版本号，方便确认
-        emit('response', {'text': welcome, 'sender': 'Pico'})
-        socketio.start_background_task(background_generate_audio, sid, welcome)
-    except Exception as e:
-        print(f"❌ 登录错: {e}")
-        emit('login_failed', {'error': str(e)})
+    print(f"🔑 用户登录: {username} (SID: {sid})")
+    
+    active_users[sid] = username
+    
+    # 1. 加入全局大厅 "lobby"
+    join_room('lobby')
+    
+    # 2. 如果聊天室还没初始化，就初始化一个
+    global chatroom_chat
+    if not chatroom_chat:
+        init_chatroom()
+        
+    emit('login_success', {'username': username})
+    
+    # 3. 广播给大厅里的其他人：有人进来了
+    emit('system_message', {'text': f"🎉 欢迎 {username} 加入聊天室！"}, to='lobby', include_self=False)
+    
+    # 4. 给自己发个欢迎语
+    emit('response', {'text': f"嗨，{username}！欢迎来到 Pico 的聊天室！", 'sender': 'Pico'})
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    if request.sid in active_sessions: del active_sessions[request.sid]
+    sid = request.sid
+    if sid in active_users:
+        username = active_users[sid]
+        del active_users[sid]
+        # 广播离开消息
+        emit('system_message', {'text': f"💨 {username} 离开了聊天室。"}, to='lobby')
 
 @socketio.on('message')
 def handle_message(data):
     sid = request.sid
-    if sid not in active_sessions:
-        emit('response', {'text': "⚠️ 请刷新重新登录", 'sender': 'Pico'})
-        return
-    user = active_sessions[sid]['username']
+    if sid not in active_users: return
+    
+    sender_name = active_users[sid]
     msg = data['text']
-    if msg.startswith("/记 "):
-        fact = msg[3:].strip()
-        if fact and save_user_memory(user, fact):
-             emit('response', {'text': f"🧠 好的，记住了：{fact}", 'sender': 'Pico'})
-        return
-    emit('typing_status', {'status': 'typing'})
+    
+    # 1. 将用户的消息广播给房间里的所有人 (包括自己，这样前端好处理)
+    emit('chat_message', {'text': msg, 'sender': sender_name}, to='lobby')
+    
+    # 2. 构造带用户名的消息发给 AI
+    ai_prompt = f"【{sender_name}说】: {msg}"
+    
+    # 3. 调用 AI 并广播回复
     try:
-        resp = active_sessions[sid]['chat'].send_message(msg)
-        emit('response', {'text': resp.text, 'sender': 'Pico'})
-        socketio.start_background_task(background_generate_audio, sid, resp.text)
+        if not chatroom_chat: init_chatroom()
+        response = chatroom_chat.send_message(ai_prompt)
+        
+        # 广播文字回复
+        emit('response', {'text': response.text, 'sender': 'Pico'}, to='lobby')
+        # 广播语音回复
+        socketio.start_background_task(background_generate_audio, response.text, room='lobby')
+        
     except Exception as e:
         print(f"API Error: {e}")
-        emit('response', {'text': "大脑短路中...", 'sender': 'Pico'})
-    finally:
-        emit('typing_status', {'status': 'idle'})
-
+        emit('system_message', {'text': "⚠️ Pico 大脑掉线了..."}, to='lobby')
