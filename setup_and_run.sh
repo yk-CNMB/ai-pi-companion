@@ -2,7 +2,7 @@
 
 # ============================================
 # Pico AI 全能管家脚本
-# 功能：环境安装、依赖更新、一键启动
+# 功能：自动更新、环境安装、一键启动
 # ============================================
 
 # 定义颜色
@@ -19,6 +19,16 @@ echo -e "${BLUE}========================================${NC}"
 echo -e "${GREEN}🤖 欢迎使用 Pico AI 全能管家${NC}"
 echo -e "${BLUE}========================================${NC}"
 
+# --- 阶段 0: 自动更新 (新增) ---
+echo -e "🔄 正在检查 GitHub 更新..."
+# 尝试拉取更新，如果失败也不要阻断脚本运行
+if git pull; then
+    echo -e "${GREEN}✅ 项目已是最新版本${NC}"
+else
+    echo -e "${RED}⚠️ 自动更新失败 (可能是网络问题或本地有冲突)，将继续使用当前版本启动。${NC}"
+fi
+echo -e "${BLUE}----------------------------------------${NC}"
+
 # --- 阶段 1: 环境检查与安装 ---
 
 # 1.1 检查 Python 虚拟环境
@@ -30,9 +40,8 @@ fi
 # 1.2 激活虚拟环境
 source "$VENV_DIR/bin/activate"
 
-# 1.3 安装/更新依赖 (每次都检查一下，确保是最新版)
+# 1.3 安装/更新依赖
 echo -e "📦 正在检查依赖库..."
-# 临时创建一个 requirements.txt，包含所有需要的库
 cat > "$CDIR/requirements.txt" <<EOF
 flask
 flask-socketio
@@ -43,19 +52,29 @@ edge-tts
 eventlet
 gunicorn
 EOF
-pip install -r "$CDIR/requirements.txt" | grep -v "Requirement already satisfied"
+# 使用 -q 安静模式减少输出，只在有错误时显示
+pip install -r "$CDIR/requirements.txt" -q
+if [ $? -eq 0 ]; then
+    echo -e "${GREEN}✅ 依赖库检查完毕${NC}"
+else
+    echo -e "${RED}❌ 依赖安装失败，请检查网络！${NC}"
+    # 依赖失败可能导致无法启动，询问是否继续
+    read -p "是否尝试继续启动? (y/n) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        exit 1
+    fi
+fi
 
 # 1.4 检查 Cloudflared
 if [ ! -f "$CDIR/cloudflared" ]; then
     echo -e "🌐 未检测到 Cloudflared，正在下载..."
-    # 自动判断架构 (arm64 或 armhf/32位)
     ARCH=$(dpkg --print-architecture)
     if [ "$ARCH" == "arm64" ]; then
         wget -O cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64.deb
     else
         wget -O cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-armhf.deb
     fi
-    # 解压出二进制文件，不进行系统级安装，保持绿色环保
     dpkg-deb -x cloudflared.deb temp_cf
     mv temp_cf/usr/local/bin/cloudflared "$CDIR/"
     rm -rf cloudflared.deb temp_cf
@@ -83,7 +102,7 @@ for i in {1..5}; do
     fi
     sleep 1
     if [ $i -eq 5 ]; then
-        echo -e "${RED}❌ AI 大脑启动失败！请手动检查 'gunicorn app:app' 命令。${NC}"
+        echo -e "${RED}❌ AI 大脑启动失败！请手动运行 '.venv/bin/gunicorn app:app' 查看错误信息。${NC}"
         exit 1
     fi
 done
@@ -94,18 +113,4 @@ echo -e "${BLUE}👇 复制下方出现的 trycloudflare.com 网址即可访问 
 echo -e "${BLUE}========================================${NC}"
 
 # 启动隧道并实时过滤日志，只显示网址
-"$CDIR/cloudflared" tunnel --url http://localhost:5000 2>&1 | grep --line-buffered "trycloudflare.com"
-
-# 脚本到这里会一直运行，直到你按 Ctrl+C
-# 当你按 Ctrl+C 时，cloudflared 会停止，但后台的 Gunicorn 还在。
-# 下次运行脚本时会自动清理旧的 Gunicorn。
-```
-
----
-
-### 🚀 如何使用新版管家
-
-非常简单，以后你无论什么时候想玩 Pico，只需要做一件事：
-
-```bash
-./setup_and_run.sh
+"$CDIR/cloudflared" tunnel --url http://localhost:5000 2>&1 | 
