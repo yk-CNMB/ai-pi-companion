@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pico AI (Voice)</title>
+    <title>Pico Chatroom</title>
     <style>
-        /* --- 核心样式 --- */
+        /* --- 基础布局 --- */
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             margin: 0; padding: 0; height: 100vh;
@@ -17,76 +17,90 @@
         }
         #chat-window { flex: 1; overflow-y: auto; padding: 15px; scroll-behavior: smooth; }
         
-        /* --- 消息气泡 --- */
+        /* --- 消息通用样式 --- */
         .message-container { display: flex; margin-bottom: 15px; flex-direction: column; }
-        .message-container.user { align-items: flex-end; }
-        .message-container.pico { align-items: flex-start; }
+        .message-info { font-size: 12px; color: #999; margin-bottom: 4px; padding: 0 5px; }
         .message-bubble {
-            padding: 12px 16px; border-radius: 18px; max-width: 80%;
+            padding: 10px 14px; border-radius: 18px; max-width: 85%;
             word-wrap: break-word; box-shadow: 0 1px 2px rgba(0,0,0,0.05);
         }
-        .user .message-bubble { background: #6c5ce7; color: white; border-bottom-right-radius: 4px; }
-        .pico .message-bubble { background: white; color: #333; border-bottom-left-radius: 4px; }
         
-        /* --- 音频播放器 --- */
-        .audio-player {
-            margin-top: 8px; height: 36px; max-width: 80%;
-            border-radius: 18px; outline: none;
+        /* 自己的消息 (右侧，蓝色) */
+        .self { align-items: flex-end; }
+        .self .message-bubble { background: #6c5ce7; color: white; border-bottom-right-radius: 4px; }
+        .self .message-info { text-align: right; }
+        
+        /* 别人的消息 (左侧，白色) */
+        .other { align-items: flex-start; }
+        .other .message-bubble { background: white; color: #333; border-bottom-left-radius: 4px; }
+        
+        /* Pico 的消息 (左侧，粉色高亮) */
+        .pico { align-items: flex-start; }
+        .pico .message-info { color: #e84393; font-weight: bold; }
+        .pico .message-bubble { background: #fff0f6; color: #333; border: 2px solid #f8a5c2; border-bottom-left-radius: 4px; }
+
+        /* 系统通知 (中间，灰色药丸状) */
+        .system { align-items: center; margin: 10px 0; }
+        .system .message-bubble { 
+            background: rgba(0,0,0,0.05); color: #666; font-size: 12px; 
+            padding: 4px 12px; border-radius: 12px; box-shadow: none;
         }
+
+        /* 音频播放器 */
+        .audio-player { margin-top: 6px; height: 32px; max-width: 85%; border-radius: 16px; }
         
-        /* --- 底部输入区 --- */
+        /* --- 输入区 --- */
         #input-area { display: flex; padding: 10px; background: white; border-top: 1px solid #eee; }
         #user-input { 
             flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 25px; 
             font-size: 16px; outline: none; transition: border 0.3s;
         }
         #user-input:focus { border-color: #6c5ce7; }
-        #send-btn {
-            background: #6c5ce7; color: white; border: none;
-            padding: 10px 20px; margin-left: 10px; border-radius: 25px; font-weight: bold;
+        #send-btn { 
+            background: #6c5ce7; color: white; border: none; 
+            padding: 10px 20px; margin-left: 10px; border-radius: 25px; font-weight: bold; 
         }
 
-        /* --- 登录遮罩层 --- */
-        #login-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.85); z-index: 999;
-            display: flex; align-items: center; justify-content: center;
+        /* --- 登录层 --- */
+        #login-overlay { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: rgba(0,0,0,0.85); z-index: 999; 
+            display: flex; align-items: center; justify-content: center; 
         }
-        #login-box {
-            background: white; padding: 30px; border-radius: 20px;
-            text-align: center; width: 85%; max-width: 320px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        #login-box { 
+            background: white; padding: 30px; border-radius: 20px; 
+            text-align: center; width: 85%; max-width: 320px; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
         }
-        #username-input {
-            width: 80%; padding: 12px; margin: 20px 0;
+        #username-input { 
+            width: 80%; padding: 12px; margin: 20px 0; 
             border: 2px solid #6c5ce7; border-radius: 10px; 
             font-size: 18px; text-align: center; outline: none;
         }
-        #login-btn {
-            background: #6c5ce7; color: white; border: none;
-            padding: 12px 40px; border-radius: 30px; font-size: 18px; font-weight: bold;
+        #login-btn { 
+            background: #6c5ce7; color: white; border: none; 
+            padding: 12px 40px; border-radius: 30px; font-size: 18px; font-weight: bold; 
         }
-        #login-btn:disabled { opacity: 0.6; }
+        #login-btn:disabled { opacity: 0.6; cursor: not-allowed; }
     </style>
 </head>
 <body>
     <!-- 登录层 -->
     <div id="login-overlay">
         <div id="login-box">
-            <h2>欢迎来到 Pico AI</h2>
-            <p style="color:#666; font-size:14px;">请输入你的昵称以开始</p>
-            <input type="text" id="username-input" placeholder="例如: YK" maxlength="15" autocomplete="off">
-            <br>
-            <button id="login-btn">开始连接</button>
+            <h2>Pico 聊天室</h2>
+            <p style="color:#666; font-size:14px;">请输入昵称加入群聊</p>
+            <input type="text" id="username-input" placeholder="例如: YK" maxlength="10" autocomplete="off">
+            <br><button id="login-btn">加入</button>
         </div>
     </div>
 
-    <!-- 主界面 (默认隐藏) -->
+    <!-- 主界面 -->
     <div id="main-app" style="display: none; flex-direction: column; height: 100%;">
-        <div id="header">🤖 Pico AI</div>
+        <div id="header">🤖 Pico 多人聊天室</div>
         <div id="chat-window"></div>
         <div id="input-area">
-            <input type="text" id="user-input" placeholder="和 Pico 聊点什么..." autocomplete="off">
+            <input type="text" id="user-input" placeholder="说点什么..." autocomplete="off">
             <button id="send-btn">发送</button>
         </div>
     </div>
@@ -95,72 +109,88 @@
     <script>
         // 初始化 Socket.IO
         const socket = io({ reconnection: true });
+        let myUsername = "";
+        let lastPicoContainer = null;
 
-        // UI 元素引用
+        // UI 元素
         const loginOverlay = document.getElementById('login-overlay');
         const mainApp = document.getElementById('main-app');
-        const loginBtn = document.getElementById('login-btn');
-        const usernameInput = document.getElementById('username-input');
         const chatWindow = document.getElementById('chat-window');
         const userInput = document.getElementById('user-input');
+        const loginBtn = document.getElementById('login-btn');
         const header = document.getElementById('header');
 
-        let lastPicoContainer = null; // 记录最后一条 Pico 消息容器
-
-        // --- 1. 登录流程 ---
+        // --- 1. 登录 ---
         loginBtn.addEventListener('click', () => {
-            const name = usernameInput.value.trim();
+            const name = document.getElementById('username-input').value.trim();
             if (name) {
-                loginBtn.disabled = true;
-                loginBtn.textContent = "正在连接...";
+                myUsername = name;
                 socket.emit('login', { username: name });
+                loginBtn.textContent = "正在加入...";
+                loginBtn.disabled = true;
             }
         });
 
         socket.on('login_success', (data) => {
             loginOverlay.style.display = 'none';
             mainApp.style.display = 'flex';
-            header.textContent = `🤖 Pico (与 ${data.username} 聊天中)`;
+            header.textContent = `🤖 Pico 聊天室 (${myUsername})`;
         });
 
-        socket.on('login_failed', (data) => {
-            alert("登录失败: " + data.error);
-            loginBtn.disabled = false;
-            loginBtn.textContent = "重试";
-        });
-
-        // --- 2. 消息处理 ---
-        function appendMessage(text, sender) {
+        // --- 2. 核心：统一消息处理 ---
+        function appendMessage(text, senderName, type) {
             const container = document.createElement('div');
-            container.className = `message-container ${sender}`;
+            container.className = `message-container ${type}`;
             
+            // 如果不是系统消息，显示发送者名字
+            if (type !== 'system') {
+                const info = document.createElement('div');
+                info.className = 'message-info';
+                info.textContent = senderName;
+                container.appendChild(info);
+            }
+
             const bubble = document.createElement('div');
             bubble.className = 'message-bubble';
             bubble.textContent = text;
-            
             container.appendChild(bubble);
+
             chatWindow.appendChild(container);
             chatWindow.scrollTop = chatWindow.scrollHeight;
 
-            if (sender === 'pico') lastPicoContainer = container;
+            if (type === 'pico') lastPicoContainer = container;
         }
 
-        socket.on('response', (data) => appendMessage(data.text, 'pico'));
+        // --- 3. 监听各种消息事件 ---
+        
+        // 普通用户的消息
+        socket.on('chat_message', (data) => {
+            // 判断是不是自己发的
+            const type = (data.sender === myUsername) ? 'self' : 'other';
+            appendMessage(data.text, data.sender, type);
+        });
 
-        // --- 3. 语音处理 (核心) ---
+        // Pico 的回复
+        socket.on('response', (data) => {
+            appendMessage(data.text, '🤖 Pico', 'pico');
+        });
+
+        // 系统通知
+        socket.on('system_message', (data) => {
+            appendMessage(data.text, '系统', 'system');
+        });
+
+        // 语音消息
         socket.on('audio_response', (data) => {
-            console.log("收到语音:", data.audio);
             if (data.audio && lastPicoContainer) {
                 const audio = document.createElement('audio');
                 audio.className = 'audio-player';
                 audio.controls = true;
                 audio.src = data.audio;
-                
                 lastPicoContainer.appendChild(audio);
                 chatWindow.scrollTop = chatWindow.scrollHeight;
-                
-                // 尝试自动播放
-                audio.play().catch(() => console.log("自动播放需用户交互"));
+                // 尝试自动播放 (可能会被浏览器拦截)
+                audio.play().catch(() => {});
             }
         });
 
@@ -168,7 +198,7 @@
         function sendMessage() {
             const text = userInput.value.trim();
             if (text) {
-                appendMessage(text, 'user');
+                // 注意：这里不再本地直接显示，而是等待服务器广播回来，确保顺序一致
                 socket.emit('message', { text: text });
                 userInput.value = '';
             }
