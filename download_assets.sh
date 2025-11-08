@@ -1,43 +1,36 @@
 #!/bin/bash
-# 下载 Live2D 所需的所有本地资源
+# 使用 Git 克隆方式获取资源，比 curl/wget 更稳定
 
-echo "📦 开始下载本地资源..."
+echo "🚚 开始整箱搬运 Live2D 模型..."
 
-# 1. 创建目录
-mkdir -p static/js
-mkdir -p static/live2d/shizuku
+# 1. 创建一个临时目录
+mkdir -p temp_assets
+cd temp_assets
 
-# 2. 下载核心 JS 库 (保存到 static/js)
-echo "⬇️ 正在下载 JS 引擎..."
-wget -O static/js/live2dcubismcore.min.js https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js
-wget -O static/js/pixi.min.js https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js
-wget -O static/js/pixi-live2d-display.min.js https://cdn.jsdelivr.net/npm/pixi-live2d-display/dist/index.min.js
+# 2. 克隆包含 Shizuku 模型的仓库 (只克隆最近一次提交，减少下载量)
+# 如果 GitHub 慢，可以尝试用 fastgit 等镜像，但在德国应该没问题
+echo "⬇️ 正在克隆仓库 (可能需要一分钟)..."
+git clone --depth=1 https://github.com/guansss/pixi-live2d-display.git
 
-# 3. 下载一个简单的 Live2D 模型 (Shizuku)
-# 我们换一个文件少、更容易下载的模型，确保成功率
-echo "⬇️ 正在下载 Live2D 模型 (Shizuku)..."
-BASE_URL="https://raw.githubusercontent.com/guansss/pixi-live2d-display/master/test/assets/shizuku"
+# 3. 检查是否克隆成功
+if [ ! -d "pixi-live2d-display" ]; then
+    echo "❌ 克隆失败！请检查网络或尝试不带 --depth=1 参数重新运行。"
+    exit 1
+fi
 
-# 必须下载的文件列表
-wget -O static/live2d/shizuku/shizuku.model.json "$BASE_URL/shizuku.model.json"
-wget -O static/live2d/shizuku/shizuku.moc "$BASE_URL/shizuku.moc"
-wget -O static/live2d/shizuku/shizuku.physics.json "$BASE_URL/shizuku.physics.json"
-wget -O static/live2d/shizuku/shizuku.pose.json "$BASE_URL/shizuku.pose.json"
+# 4. 回到项目根目录
+cd ..
 
-# 下载纹理图片
-mkdir -p static/live2d/shizuku/textures
-wget -O static/live2d/shizuku/textures/shizuku_01.png "$BASE_URL/textures/shizuku_01.png"
-wget -O static/live2d/shizuku/textures/shizuku_02.png "$BASE_URL/textures/shizuku_02.png"
-wget -O static/live2d/shizuku/textures/shizuku_03.png "$BASE_URL/textures/shizuku_03.png"
+# 5. 创建目标目录
+mkdir -p static/live2d
 
-# 下载部分动作 (可选，为了让它能动)
-mkdir -p static/live2d/shizuku/motions
-wget -O static/live2d/shizuku/motions/idle_01.mtn "$BASE_URL/motions/idle_01.mtn"
-wget -O static/live2d/shizuku/motions/tap_body_01.mtn "$BASE_URL/motions/tap_body_01.mtn"
+# 6. 复制我们需要的部分 (Shizuku 模型)
+echo "📦 正在安装模型..."
+cp -r temp_assets/pixi-live2d-display/test/assets/shizuku static/live2d/
 
-echo "✅ 所有资源下载完成！"
-```
+# 7. 清理临时文件
+echo "🧹 清理垃圾..."
+rm -rf temp_assets
 
-3.  运行脚本：
-    ```bash
-    bash download_assets.sh
+echo "✅ 模型安装完成！请检查下方文件大小："
+ls -lh static/live2d/shizuku/
