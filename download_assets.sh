@@ -1,8 +1,8 @@
 #!/bin/bash
-# 使用 Eikanya 稳定源重新下载 Shizuku 模型
+# 直连 GitHub 源站下载 Shizuku 模型
 
-# 新的源地址
-BASE_URL="https://cdn.jsdelivr.net/gh/Eikanya/Live2d-model@master/Shizuku"
+# 使用 GitHub Raw 源站
+BASE_URL="https://raw.githubusercontent.com/Eikanya/Live2d-model/master/Shizuku"
 TARGET_DIR="static/live2d/shizuku"
 
 echo "🗑️ 清理旧文件..."
@@ -11,17 +11,18 @@ mkdir -p "$TARGET_DIR/textures"
 mkdir -p "$TARGET_DIR/motions"
 mkdir -p "$TARGET_DIR/expressions"
 
-echo "⬇️ 开始从新源下载..."
+echo "⬇️ 开始从 GitHub 源站下载..."
 
-# 定义下载函数 (使用 curl，失败自动退出)
+# 定义下载函数 (去掉 -s 以便看到错误信息)
 download() {
     local url="$1"
     local dest="$2"
-    echo -n "📦 下载 $(basename "$dest")... "
-    if curl -f -L -s -o "$dest" "$url"; then
+    echo "📦 正在下载 $(basename "$dest")..."
+    # -L: 跟随重定向, -f: 失败报错, --retry 3: 重试3次
+    if curl -L -f --retry 3 --retry-delay 2 -o "$dest" "$url"; then
         echo "✅ OK"
     else
-        echo "❌ 失败! (URL: $url)"
+        echo "❌ 失败! (请看上面的错误信息)"
         exit 1
     fi
 }
@@ -43,7 +44,7 @@ download "$BASE_URL/motions/tap_body_01.mtn" "$TARGET_DIR/motions/tap_body_01.mt
 download "$BASE_URL/motions/pinch_01.mtn" "$TARGET_DIR/motions/pinch_01.mtn"
 download "$BASE_URL/motions/shake_01.mtn" "$TARGET_DIR/motions/shake_01.mtn"
 
-# 4. 表情文件 (新增，让它更生动)
+# 4. 表情文件
 download "$BASE_URL/expressions/f01.exp.json" "$TARGET_DIR/expressions/f01.exp.json"
 download "$BASE_URL/expressions/f02.exp.json" "$TARGET_DIR/expressions/f02.exp.json"
 download "$BASE_URL/expressions/f03.exp.json" "$TARGET_DIR/expressions/f03.exp.json"
