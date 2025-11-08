@@ -1,36 +1,32 @@
 #!/bin/bash
-# 一键修复 Shizuku 模型的纹理问题
+echo "🔧 开始修复损坏的 Live2D 文件..."
 
-# 定义路径和源
-TEXTURE_DIR="static/live2d/shizuku/textures"
-CDN_URL="https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display@master/test/assets/shizuku/textures"
+# 定义高速镜像源基地址
+BASE_URL="https://cdn.jsdelivr.net/gh/guansss/pixi-live2d-display@master/test/assets/shizuku"
 
-echo "🔧 开始修复 Live2D 纹理..."
+# 1. 重新下载纹理图片
+echo "⬇️ 正在重新下载纹理 (1/3)..."
+rm -f static/live2d/shizuku/textures/shizuku_01.png
+wget -O static/live2d/shizuku/textures/shizuku_01.png "$BASE_URL/textures/shizuku_01.png"
 
-# 1. 清理旧目录 (无论它之前叫什么，先删了再说)
-echo "🧹 清理旧文件..."
-rm -rf "$TEXTURE_DIR"
-mkdir -p "$TEXTURE_DIR"
+echo "⬇️ 正在重新下载纹理 (2/3)..."
+rm -f static/live2d/shizuku/textures/shizuku_02.png
+wget -O static/live2d/shizuku/textures/shizuku_02.png "$BASE_URL/textures/shizuku_02.png"
 
-# 2. 进入目录
-cd "$TEXTURE_DIR" || exit
+echo "⬇️ 正在重新下载纹理 (3/3)..."
+rm -f static/live2d/shizuku/textures/shizuku_03.png
+wget -O static/live2d/shizuku/textures/shizuku_03.png "$BASE_URL/textures/shizuku_03.png"
 
-# 3. 强制下载三张标准纹理图
-echo "⬇️ 正在下载纹理 1/3..."
-wget -q --show-progress "$CDN_URL/shizuku_01.png"
+# 2. 重新下载动作文件
+echo "⬇️ 正在重新下载动作文件..."
+rm -f static/live2d/shizuku/motions/tap_body_01.mtn
+wget -O static/live2d/shizuku/motions/tap_body_01.mtn "$BASE_URL/motions/tap_body_01.mtn"
 
-echo "⬇️ 正在下载纹理 2/3..."
-wget -q --show-progress "$CDN_URL/shizuku_02.png"
-
-echo "⬇️ 正在下载纹理 3/3..."
-wget -q --show-progress "$CDN_URL/shizuku_03.png"
-
-# 4. 返回项目根目录并检查
-cd - > /dev/null
-echo "✅ 修复完成！请检查下方文件大小 (应为几百 KB)："
-ls -lh "$TEXTURE_DIR"
+echo "✅ 修复完成！请检查下方文件大小是否大于 0："
+ls -lh static/live2d/shizuku/textures/
+ls -lh static/live2d/shizuku/motions/tap_body_01.mtn
 ```
 
-**3. 运行脚本**
+#3. 运行修复脚本
 ```bash
-bash fix_textures.sh
+bash fix_assets.sh
