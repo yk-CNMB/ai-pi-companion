@@ -1,53 +1,62 @@
 #!/bin/bash
-# setup_and_run.sh
-# 树莓派项目一键部署和运行脚本
 
-PROJECT_DIR=$(pwd)
-VENV_DIR=".venv"
-ENV_FILE=".env"
+# 定义颜色，让输出好看点
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
-echo "--- 🤖 Pico AI Companion 部署脚本 ---"
+echo -e "${BLUE}========================================${NC}"
+echo -e "${GREEN}🤖 正在启动 Pico AI 服务器...${NC}"
+echo -e "${BLUE}========================================${NC}"
 
-# 1. 拉取最新的 GitHub 内容 (实现更新功能)
-echo "1. 正在拉取 GitHub 最新内容..."
-git pull
+# 1. 切换到脚本所在的目录 (确保路径正确)
+cd "$(dirname "$0")"
 
-# 2. 检查并创建/激活虚拟环境
-if [ ! -d "$VENV_DIR" ]; then
-    echo "2. 正在创建 Python 虚拟环境..."
-    python3 -m venv "$VENV_DIR"
-fi
+# 2. 杀死旧进程 (防止端口占用)
+echo -e "🔪 正在清理旧进程..."
+pkill -f "gunicorn.*app:app"
+pkill -f "cloudflared tunnel"
+sleep 2
 
-echo "3. 正在激活虚拟环境..."
-source "$VENV_DIR/bin/activate"
+# 3. 启动 Gunicorn (在后台运行，使用 & 符号)
+echo -e "🧠 正在启动 AI 大脑 (Gunicorn)..."
+# 必须使用完整路径来确保使用虚拟环境里的 gunicorn
+./.venv/bin/gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:5000 app:app --daemon
 
-# 4. 安装依赖
-echo "4. 正在安装 Python 依赖 (可能需要几分钟)..."
-pip install --upgrade pip
-pip install -r requirements.txt
+# 等待几秒确保 Gunicorn 启动成功
+sleep 5
 
-# 5. 配置环境变量 (API Key)
-if [ ! -f "$ENV_FILE" ]; then
-    echo "5. 配置 Gemini API Key..."
-    read -p "请输入您的 GEMINI_API_KEY: " API_KEY
-    echo "GEMINI_API_KEY=\"$API_KEY\"" > "$ENV_FILE"
-    echo "FLASK_SECRET_KEY=\"$(openssl rand -hex 16)\"" >> "$ENV_FILE"
-    echo "API Key 已保存到 $ENV_FILE"
+# 检查 Gunicorn 是否真的在运行
+if pgrep -f "gunicorn.*app:app" > /dev/null; then
+    echo -e "${GREEN}✅ AI 大脑启动成功！${NC}"
 else
-    echo "5. $ENV_FILE 文件已存在，跳过 Key 配置。"
+    echo -e "❌ AI 大脑启动失败，请检查日志！"
+    exit 1
 fi
 
-# 6. 获取树莓派的 IP 地址
-IP_ADDRESS=$(hostname -I | awk '{print $1}')
+echo -e "${BLUE}========================================${NC}"
+echo -e "${GREEN}🌐 正在建立公网隧道...${NC}"
+echo -e "请耐心等待几秒钟，下方会出现一个 ${GREEN}trycloudflare.com${NC} 的网址。"
+echo -e "复制那个网址，直接访问即可 (会自动跳转到最新版本)。"
+echo -e "${BLUE}========================================${NC}"
 
-# 7. 启动 Flask 服务器
-echo "--- 🚀 准备启动服务器 ---"
-echo "您可以从手机浏览器访问以下地址开始聊天："
-echo "   -> http://$IP_ADDRESS:5000"
-echo "----------------------------------"
+# 4. 启动隧道 (在前台运行，显示日志)
+# 我们使用 grep 过滤一下日志，只显示网址，让界面更清爽 (可选)
+./cloudflared tunnel --url http://localhost:5000 2>&1 | grep --line-buffered "trycloudflare.com"
 
-# 使用 exec 确保如果脚本被停止，Python 进程也会停止
-exec python app.py
+# 如果你不想过滤日志，想看全部输出，就用下面这行代替上面那行：
+# ./cloudflared tunnel --url http://localhost:5000
+```
 
-# 退出虚拟环境 (当程序停止后执行)
-# deactivate
+---
+
+### 🚀 如何使用
+
+1.  **创建脚本**：把上面的内容复制到 `start_pico.sh` 文件中。
+2.  **赋予执行权限**：
+    ```bash
+    chmod +x start_pico.sh
+    ```
+3.  **一键启动**：
+    ```bash
+    ./start_pico.sh
