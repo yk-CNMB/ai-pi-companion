@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pico Live (Hiyori)</title>
-    <!-- 核心库 -->
+    <title>Pico Live</title>
+    <!-- 核心库 (本地) -->
+    <script src="/static/js/live2d.min.js"></script>
     <script src="/static/js/live2dcubismcore.min.js"></script>
     <script src="/static/js/pixi.min.js"></script>
     <script src="/static/js/index.min.js"></script>
     <style>
-        /* --- 样式保持不变 (为了简洁这里省略了重复的 CSS，请保留你之前的 CSS) --- */
-        /* 如果你刚才不小心删了，可以从上一个完整版复制 style 标签里的内容 */
+        /* --- 保持样式不变 --- */
         body{font-family:"Segoe UI",sans-serif;margin:0;padding:0;height:100vh;background-color:#dff9fb;overflow:hidden}
         #live2d-canvas{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;height:100%;z-index:0;pointer-events:none}
         #main-app{position:relative;z-index:2;height:100%;display:flex;flex-direction:column;background:rgba(255,255,255,0)}
@@ -35,7 +35,7 @@
 </head>
 <body>
     <canvas id="live2d-canvas"></canvas>
-    <div id="login-overlay"><div id="login-box"><h2>Pico 直播间 (Hiyori版)</h2><input type="text" id="username-input" placeholder="你的昵称" maxlength="10" autocomplete="off"><br><button id="login-btn">进入</button></div></div>
+    <div id="login-overlay"><div id="login-box"><h2>Pico </h2><input type="text" id="username-input" placeholder="你的昵称" maxlength="10" autocomplete="off"><br><button id="login-btn">进入</button></div></div>
     <div id="main-app" style="display: none;"><div id="header">🤖 Pico Live</div><div id="chat-window"></div><div id="input-area"><input type="text" id="user-input" placeholder="发送弹幕..." autocomplete="off"><button id="send-btn">发送</button></div></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
@@ -43,73 +43,70 @@
         let app_pixi, model;
         let audioContext, analyser, dataArray, isTalking = false;
 
-        // --- Hiyori 模型初始化 ---
+        // --- Hiyori 初始化 ---
         async function initLive2D() {
             app_pixi = new PIXI.Application({
                 view: document.getElementById('live2d-canvas'),
                 autoStart: true, resizeTo: window, transparent: true
             });
             try {
-                // 【关键修改】指向 Hiyori 的新模型文件
-                model = await PIXI.live2d.Live2DModel.from('/static/live2d/hiyori/hiyori_pro_t10.model3.json');
+                // 【关键】这里使用了官方标准文件名 Hiyori.model3.json
+                // 如果你的文件名不一样，请手动修改这一行！
+                model = await PIXI.live2d.Live2DModel.from('/static/live2d/hiyori/Hiyori.model3.json');
+                
                 app_pixi.stage.addChild(model);
-
-                // Hiyori 比较高大，我们需要调整缩放和位置
-                const scale = Math.min(window.innerWidth / model.width, window.innerHeight / model.height) * 0.95;
+                const scale = Math.min(window.innerWidth/model.width, window.innerHeight/model.height) * 0.95;
                 model.scale.set(scale);
                 model.x = (window.innerWidth - model.width * scale) / 2;
                 model.y = window.innerHeight - model.height * scale;
-
+                
                 app_pixi.ticker.add(lipSyncLoop);
-                console.log("✅ Hiyori 模型加载成功");
-            } catch (e) { console.error("❌ 模型失败:", e); alert("Hiyori 加载失败，请检查 install_hiyori.sh 是否成功运行。"); }
+                console.log("✅ Hiyori 加载成功");
+            } catch (e) { 
+                console.error(e); 
+                alert("模型加载失败，请检查 chat.html 中的文件名是否与 static/live2d/hiyori/ 下的文件名一致。"); 
+            }
         }
         if (typeof PIXI !== 'undefined') initLive2D();
 
-        // --- Hiyori 专用动作映射 ---
+        // --- Hiyori 官方动作映射 ---
         function triggerMotion(emotion) {
             if (!model || !model.internalModel.motionManager) return;
-            console.log("🎭 触发情感:", emotion);
-            
-            // Hiyori 的动作组 (Motion Groups)
-            // 你可以在 static/live2d/hiyori/hiyori_pro_t10.model3.json 里找到所有可用的动作组
+            // 官方 Hiyori 的标准动作组：Idle, TapBody, PinchIn, PinchOut, Shake, FlickHead
             switch(emotion) {
                 case 'HAPPY':
-                    // 播放 "Charm" (魅力/开心) 动作组里的随机一个
-                    model.internalModel.motionManager.startRandomMotion('Charm');
+                    model.internalModel.motionManager.startRandomMotion('TapBody'); // 开心时做一些可爱的动作
                     break;
                 case 'ANGRY':
                 case 'SHOCK':
-                    // 播放 "Shame" (害羞/惊讶) 或自定义动作
-                    model.internalModel.motionManager.startRandomMotion('Shame');
+                    model.internalModel.motionManager.startRandomMotion('Shake'); // 生气/惊讶时摇头
                     break;
                 case 'SAD':
-                    // Hiyori 可能没有专门的 SAD，用 Idle 替代
-                    model.internalModel.motionManager.startRandomMotion('Idle');
+                    model.internalModel.motionManager.startRandomMotion('Idle'); // 悲伤时恢复平静
                     break;
                 case 'NORMAL':
                 default:
-                    // 播放基础互动动作
-                    model.internalModel.motionManager.startRandomMotion('TapBody');
+                    // 随机播放一个通用动作
+                    const randomMotions = ['TapBody', 'PinchIn', 'PinchOut', 'FlickHead'];
+                    const randomMotion = randomMotions[Math.floor(Math.random() * randomMotions.length)];
+                    model.internalModel.motionManager.startRandomMotion(randomMotion);
                     break;
             }
         }
 
-        // --- 口型同步 (Cubism 4 标准参数) ---
+        // --- 口型同步 ---
         function lipSyncLoop() {
             if (!model || !analyser || !isTalking) return;
             analyser.getByteFrequencyData(dataArray);
             let sum = 0; for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
             let average = sum / dataArray.length;
-            let mouthOpen = Math.min(1.0, average / 40); // 调整灵敏度
-
-            // 【关键修改】Cubism 4 使用统一的参数名 'ParamMouthOpenY'
+            // Cubism 4 标准口型参数
             if (model.internalModel && model.internalModel.coreModel) {
-                 model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', mouthOpen);
+                 model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', Math.min(1.0, average / 40));
             }
         }
 
-        // --- 以下是标准的聊天室逻辑 (保持不变) ---
+        // --- 业务逻辑 (保持不变) ---
         const socket = io({ reconnection: true });
         let myUser = "", lastPico = null;
         const overlay = document.getElementById('login-overlay'), main = document.getElementById('main-app'), chat = document.getElementById('chat-window'), input = document.getElementById('user-input'), head = document.getElementById('header');
@@ -132,7 +129,6 @@
         socket.on('chat_message', (d) => addMsg(d.text, d.sender, d.sender===myUser?'self':'other'));
         socket.on('system_message', (d) => addMsg(d.text, '系统', 'system'));
         socket.on('response', (d) => { addMsg(d.text, 'Pico', 'pico', d.emotion); triggerMotion(d.emotion||'NORMAL'); });
-        
         socket.on('audio_response', (d) => {
             if(d.audio && lastPico) {
                 let a=new Audio(); a.crossOrigin="anonymous"; a.src=d.audio;
@@ -144,8 +140,8 @@
                         let src = audioContext.createMediaElementSource(a);
                         src.connect(analyser); analyser.connect(audioContext.destination);
                         a.onplay=()=>{isTalking=true;}; 
-                        a.onpause=()=>{isTalking=false;model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',0);};
-                        a.onended=()=>{isTalking=false;model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',0);};
+                        a.onpause=()=>{isTalking=false;if(model)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',0);};
+                        a.onended=()=>{isTalking=false;if(model)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',0);};
                     } catch(e){}
                 }
                 a.play().catch(()=>{});
