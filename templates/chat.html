@@ -3,169 +3,232 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pico Live (Debug)</title>
+    <title>Pico Studio</title>
     <script src="/static/js/live2d.min.js"></script>
     <script src="/static/js/live2dcubismcore.min.js"></script>
     <script src="/static/js/pixi.min.js"></script>
     <script src="/static/js/index.min.js"></script>
+    <!-- 引入一个简单的图标库 (可选，这里用 emoji 代替了) -->
     <style>
-        body{font-family:"Segoe UI",sans-serif;margin:0;padding:0;height:100vh;background-color:#2d3436;display:flex;flex-direction:row;overflow:hidden}
-        #stage-container{flex:1;position:relative;background-image:radial-gradient(circle,#636e72 10%,#2d3436 90%);overflow:hidden}
-        #live2d-canvas{position:absolute;top:0;left:0;width:100%;height:100%}
-        #chat-container{width:400px;display:flex;flex-direction:column;background:rgba(255,255,255,0.95);z-index:2;box-shadow:-5px 0 15px rgba(0,0,0,0.2)}
-        @media(max-width:768px){body{flex-direction:column}#stage-container{flex:4}#chat-container{width:100%;flex:6;box-shadow:0 -5px 15px rgba(0,0,0,0.2)}}
-        #header{background:#6c5ce7;color:white;padding:15px;text-align:center;font-weight:bold;position:relative}
-        #settings-btn{position:absolute;right:15px;top:50%;transform:translateY(-50%);cursor:pointer;font-size:20px;opacity:0.8}
-        #settings-btn:hover{opacity:1}
-        #model-menu{position:absolute;top:50px;right:10px;background:white;border-radius:10px;box-shadow:0 5px 15px rgba(0,0,0,0.2);padding:10px;display:none;z-index:100;max-height:60vh;overflow-y:auto}
-        .model-item{padding:8px 12px;cursor:pointer;border-radius:5px;color:#333;white-space:nowrap}
-        .model-item:hover{background:#f0f0f0} .model-item.active{background:#6c5ce7;color:white}
-        #chat-window{flex:1;overflow-y:auto;padding:15px;background:linear-gradient(to bottom,rgba(255,255,255,0.5),rgba(255,255,255,0.8))}
-        #input-area{display:flex;padding:10px;background:white}
-        #user-input{flex:1;padding:10px;border-radius:20px;border:2px solid #eee;outline:none}
-        #send-btn{background:#6c5ce7;color:white;border:none;padding:0 20px;margin-left:10px;border-radius:20px}
-        #login-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);z-index:999;display:flex;align-items:center;justify-content:center}
-        #login-box{background:white;padding:30px;border-radius:20px;text-align:center;width:80%;max-width:300px}
-        #username-input{width:80%;padding:10px;margin:20px 0;border-radius:10px;border:2px solid #6c5ce7;text-align:center}
-        #login-btn{background:#6c5ce7;color:white;border:none;padding:10px 30px;border-radius:20px}
-        .message-bubble{padding:10px;border-radius:15px;margin-bottom:10px;max-width:85%;word-wrap:break-word;background:white;box-shadow:0 1px 2px rgba(0,0,0,0.1)}
-        .self{align-items:flex-end} .self .message-bubble{background:#6c5ce7;color:white}
-        .message-container{display:flex;flex-direction:column}
-        .message-info{font-size:12px;color:#999;margin-bottom:4px;padding:0 5px}
-        .audio-player{width:80%;height:30px;margin-top:5px;opacity:0.8}
+        /* --- 全局 & 布局 --- */
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; height: 100vh; background-color: #2d3436; display: flex; flex-direction: row; overflow: hidden; color: #333; }
+        #stage-container { flex: 1; position: relative; background-image: radial-gradient(circle, #636e72 10%, #2d3436 90%); overflow: hidden; }
+        #live2d-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        #chat-container { width: 400px; display: flex; flex-direction: column; background: rgba(255,255,255,0.95); z-index: 2; box-shadow: -5px 0 15px rgba(0,0,0,0.2); }
+        @media(max-width:768px) { body { flex-direction: column; } #stage-container { flex: 4; } #chat-container { width: 100%; flex: 6; } }
+
+        /* --- 聊天组件 --- */
+        #header { background: #6c5ce7; color: white; padding: 15px; text-align: center; font-weight: bold; position: relative; display: flex; justify-content: space-between; align-items: center; }
+        #studio-btn { cursor: pointer; font-size: 20px; padding: 5px 10px; border-radius: 5px; background: rgba(0,0,0,0.1); }
+        #chat-window { flex: 1; overflow-y: auto; padding: 15px; background: #f5f7fa; }
+        .message-container { display: flex; margin-bottom: 15px; flex-direction: column; }
+        .message-info { font-size: 12px; color: #999; margin-bottom: 4px; padding: 0 5px; }
+        .message-bubble { padding: 10px 14px; border-radius: 16px; max-width: 85%; word-wrap: break-word; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+        .self { align-items: flex-end; } .self .message-bubble { background: #6c5ce7; color: white; border-bottom-right-radius: 4px; }
+        .other { align-items: flex-start; } .other .message-bubble { background: white; color: #333; border-bottom-left-radius: 4px; }
+        .pico { align-items: flex-start; } .pico .message-info { color: #e84393; font-weight: bold; } .pico .message-bubble { background: #fff0f6; color: #333; border: 2px solid #f8a5c2; border-bottom-left-radius: 4px; }
+        .system { align-items: center; margin: 10px 0; } .system .message-bubble { background: #eee; color: #666; font-size: 12px; padding: 4px 12px; border-radius: 12px; box-shadow: none; }
+        #input-area { display: flex; padding: 10px; background: white; border-top: 1px solid #eee; }
+        #user-input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 25px; font-size: 16px; outline: none; }
+        #send-btn { background: #6c5ce7; color: white; border: none; padding: 0 20px; margin-left: 10px; border-radius: 20px; font-weight: bold; }
+
+        /* --- 浮层 (登录 & 工作室) --- */
+        .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 999; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(5px); }
+        .modal-box { background: white; padding: 25px; border-radius: 20px; width: 90%; max-width: 500px; max-height: 80vh; overflow-y: auto; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
         
-        /* --- 调试信息样式 --- */
-        #debug-status {
-            position: absolute; top: 10px; left: 10px; color: #0f0;
-            background: rgba(0,0,0,0.6); padding: 5px 10px; border-radius: 5px;
-            font-family: monospace; font-size: 12px; pointer-events: none; z-index: 999;
-            max-width: 300px; word-break: break-all;
-        }
+        /* --- 工作室界面 --- */
+        #studio-overlay { display: none; } /* 默认隐藏 */
+        .studio-section { margin-bottom: 25px; }
+        .studio-title { font-size: 18px; font-weight: bold; margin-bottom: 15px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        .model-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px; }
+        .model-card { background: #f5f7fa; border: 2px solid transparent; border-radius: 10px; padding: 10px; text-align: center; cursor: pointer; transition: all 0.2s; }
+        .model-card:hover { border-color: #a29bfe; }
+        .model-card.active { border-color: #6c5ce7; background: #e9e9ff; font-weight: bold; }
+        .model-actions { margin-top: 5px; display: flex; justify-content: space-around; font-size: 12px; }
+        .btn-del { color: #ff7675; cursor: pointer; }
+        #persona-text { width: 100%; height: 150px; padding: 10px; border: 1px solid #ddd; border-radius: 10px; resize: vertical; font-family: monospace; }
+        .btn-primary { background: #6c5ce7; color: white; border: none; padding: 10px 25px; border-radius: 20px; cursor: pointer; font-weight: bold; }
+        .download-chips { display: flex; flex-wrap: wrap; gap: 10px; }
+        .chip { background: #eee; padding: 8px 15px; border-radius: 20px; cursor: pointer; }
+        .chip:hover { background: #dfe6e9; }
+
+        /* --- Toast 提示 --- */
+        #toast-container { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 10000; }
+        .toast { background: rgba(0,0,0,0.8); color: white; padding: 10px 20px; border-radius: 25px; margin-bottom: 10px; font-size: 14px; animation: fadeOut 3s forwards; }
+        @keyframes fadeOut { 0% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
     </style>
 </head>
 <body>
-    <div id="login-overlay"><div id="login-box"><h2>AI妙妙屋</h2><input id="username-input" placeholder="昵称"><br><button id="login-btn">进入</button></div></div>
-    
-    <div id="stage-container">
-        <canvas id="live2d-canvas"></canvas>
-        <div id="debug-status">等待初始化...</div>
+    <div id="toast-container"></div>
+
+    <!-- 登录层 -->
+    <div id="login-overlay" class="overlay">
+        <div class="modal-box" style="text-align: center; max-width: 300px;">
+            <h2>Pico 直播间</h2>
+            <input id="username-input" placeholder="你的昵称" style="width: 80%; padding: 12px; margin: 20px 0; border: 2px solid #6c5ce7; border-radius: 10px; text-align: center; outline: none;">
+            <br><button id="login-btn" class="btn-primary">进入</button>
+        </div>
     </div>
 
+    <!-- 工作室层 (新增) -->
+    <div id="studio-overlay" class="overlay">
+        <div class="modal-box">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <h2 style="margin:0;">🛠️ Pico 工作室</h2>
+                <button onclick="closeStudio()" style="background:none; border:none; font-size:24px; cursor:pointer;">×</button>
+            </div>
+
+            <div class="studio-section">
+                <div class="studio-title">🎭 模型选择</div>
+                <div id="model-list" class="model-list">加载中...</div>
+            </div>
+
+            <div class="studio-section">
+                <div class="studio-title">🧠 人设编辑 (<span id="persona-model-name">当前模型</span>)</div>
+                <textarea id="persona-text" placeholder="在这里输入这个模型的人设..."></textarea>
+                <div style="text-align: right; margin-top: 10px;">
+                    <button id="save-persona-btn" class="btn-primary">保存人设</button>
+                </div>
+            </div>
+
+            <div class="studio-section">
+                <div class="studio-title">☁️ 下载新模型</div>
+                <div class="download-chips">
+                    <div class="chip" onclick="downloadModel('Mao')">Mao (猫耳娘)</div>
+                    <div class="chip" onclick="downloadModel('Natori')">Natori (军装)</div>
+                    <div class="chip" onclick="downloadModel('Rice')">Rice (米娘)</div>
+                    <div class="chip" onclick="downloadModel('Wanko')">Wanko (兽耳)</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主界面 -->
+    <div id="stage-container"><canvas id="live2d-canvas"></canvas></div>
     <div id="chat-container">
-        <div id="header">互动区 <div id="settings-btn">⚙️</div></div>
-        <div id="model-menu">加载中...</div>
+        <div id="header">
+            <span id="room-title">🤖 互动区</span>
+            <div id="studio-btn" title="打开工作室">🛠️ 设置</div>
+        </div>
         <div id="chat-window"></div>
         <div id="input-area"><input id="user-input" placeholder="发送弹幕..."><button id="send-btn">发送</button></div>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <script>
-        // =========================================
-        // 🔧 全局调试 & 微调区
-        // =========================================
-        const DEBUG = true;        // 是否显示左上角的绿色调试文字
-        const MODEL_SCALE =1.5;   // 全局缩放系数 (0.5 ~ 1.5)
-        const OFFSET_X = -250;        // 全局左右平移 (负左正右)
-        const OFFSET_Y = -600;        // 全局上下平移 (负上正下)
-        // =========================================
-
-        let app_pixi, model, audioContext, analyser, dataArray, isTalking=false;
+        // --- 全局变量 ---
         const socket = io({reconnection:true});
-        let myUser="", lastPico=null;
+        let app_pixi, model, myUser="", currentModelId="";
+        let audioContext, analyser, dataArray, isTalking=false;
 
-        function showStatus(msg, isError=false) {
-            if(!DEBUG) return;
-            const el = document.getElementById('debug-status');
-            el.style.display = 'block';
-            el.innerHTML = msg;
-            el.style.color = isError ? '#ff4757' : '#2ed573';
-            console.log("[Debug]", msg.replace(/<br>/g, ' '));
-            if(!isError && msg.includes("成功")) setTimeout(()=>el.style.display='none', 3000);
-        }
-
-        async function initPixi() {
-            showStatus("1. 初始化图形引擎...");
-            app_pixi = new PIXI.Application({
-                view: document.getElementById('live2d-canvas'),
-                autoStart: true, resizeTo: document.getElementById('stage-container'), transparent: true
-            });
-        }
-        if(typeof PIXI!=='undefined') initPixi(); else showStatus("❌ 核心库未加载", true);
-
+        // --- Live2D 引擎 ---
         async function loadModel(path) {
-            if(!app_pixi) return;
-            showStatus(`2. 正在加载模型: ${path.split('/').pop()}...`);
+            if(!app_pixi) app_pixi = new PIXI.Application({ view:document.getElementById('live2d-canvas'), autoStart:true, resizeTo:document.getElementById('stage-container'), transparent:true });
             try {
                 if(model) app_pixi.stage.removeChild(model);
+                console.log("Load:", path);
                 model = await PIXI.live2d.Live2DModel.from(path);
                 app_pixi.stage.addChild(model);
                 resizeModel();
-                showStatus("✅ 模型加载成功！");
+                app_pixi.ticker.remove(lipSync); app_pixi.ticker.add(lipSync);
                 if(model.internalModel.motionManager) model.internalModel.motionManager.startRandomMotion('Idle');
-            } catch(e) {
-                console.error(e);
-                showStatus(`❌ 加载失败: ${path}<br>请检查文件是否存在`, true);
-            }
+            } catch(e) { console.error(e); showToast("❌ 模型加载失败", "error"); }
         }
-
-        function resizeModel() {
-            if(!model||!app_pixi) return;
-            const stage = document.getElementById('stage-container');
-            // 自动计算最佳缩放比，然后乘上用户的微调系数
-            const scale = Math.min(stage.clientWidth/model.width, stage.clientHeight/model.height) * MODEL_SCALE;
-            model.scale.set(scale);
-            // 居中 + 底对齐 + 用户微调偏移
-            model.x = (stage.clientWidth - model.width*scale)/2 + OFFSET_X;
-            model.y = (stage.clientHeight - model.height*scale) + OFFSET_Y;
-        }
+        function resizeModel() { if(model&&app_pixi) { 
+            const st = document.getElementById('stage-container');
+            const sc = Math.min(st.clientWidth/model.width, st.clientHeight/model.height) * 0.9;
+            model.scale.set(sc); model.x=(st.clientWidth-model.width*sc)/2; model.y=st.clientHeight-model.height*sc; 
+        }}
         window.onresize = resizeModel;
 
-        // --- 口型与动作 ---
-        app_pixi.ticker.add(() => {
+        // --- 动作与口型 ---
+        function lipSync() {
             if(!model||!analyser||!isTalking)return;
             analyser.getByteFrequencyData(dataArray);
             let sum=0; for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];
             if(model.internalModel?.coreModel) model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', Math.min(1.0, (sum/dataArray.length)/30));
-        });
+        }
         function triggerMotion(emo) {
             if(!model?.internalModel?.motionManager)return;
             try {
+                let m = model.internalModel.motionManager;
                 switch(emo) {
-                    case 'HAPPY': model.expression('F05'); model.internalModel.motionManager.startRandomMotion('Charm'); break;
-                    case 'ANGRY': model.expression('F04'); model.internalModel.motionManager.startRandomMotion('Shame'); break;
-                    case 'SHOCK': model.expression('F06'); model.internalModel.motionManager.startRandomMotion('Shake'); break;
-                    case 'SAD':   model.expression('F02'); model.internalModel.motionManager.startRandomMotion('Idle'); break;
-                    default:      model.expression('F01'); model.internalModel.motionManager.startRandomMotion('TapBody'); break;
+                    case 'HAPPY': if(m.motionGroups.includes('Charm')) m.startRandomMotion('Charm'); else m.startRandomMotion('TapBody'); break;
+                    case 'ANGRY': case 'SHOCK': if(m.motionGroups.includes('Shame')) m.startRandomMotion('Shame'); else m.startRandomMotion('Shake'); break;
+                    default: m.startRandomMotion('Idle'); break;
                 }
             } catch(e){}
         }
 
-        // --- UI & Socket ---
-        const settingsBtn = document.getElementById('settings-btn');
-        const modelMenu = document.getElementById('model-menu');
-        settingsBtn.onclick = (e) => { e.stopPropagation(); if(modelMenu.style.display==='block') modelMenu.style.display='none'; else { socket.emit('get_models'); modelMenu.style.display='block'; }};
-        document.onclick = () => modelMenu.style.display='none';
-        socket.on('models_list', (d) => {
-            modelMenu.innerHTML=""; d.models.forEach(m=>{
-                let item=document.createElement('div'); item.className=`model-item ${m.path===d.current?'active':''}`;
-                item.textContent=m.name; item.onclick=()=>socket.emit('change_model',{path:m.path});
-                modelMenu.appendChild(item);
+        // --- 工作室 UI 逻辑 ---
+        document.getElementById('studio-btn').onclick = openStudio;
+        function openStudio() {
+            document.getElementById('studio-overlay').style.display='flex';
+            socket.emit('get_studio_data');
+        }
+        function closeStudio() { document.getElementById('studio-overlay').style.display='none'; }
+        
+        socket.on('studio_data', (d) => {
+            const list = document.getElementById('model-list');
+            list.innerHTML = "";
+            currentModelId = d.current_id;
+            d.models.forEach(m => {
+                let card = document.createElement('div');
+                card.className = `model-card ${m.id===d.current_id ? 'active' : ''}`;
+                card.innerHTML = `<div>${m.name}</div>`;
+                if(m.id !== d.current_id) { // 只能删除非当前模型
+                    card.innerHTML += `<div class="model-actions"><span class="btn-del" onclick="deleteModel('${m.id}', event)">🗑️删除</span></div>`;
+                }
+                card.onclick = () => switchModel(m.id);
+                list.appendChild(card);
+
+                if(m.id === d.current_id) {
+                    document.getElementById('persona-model-name').textContent = m.name;
+                    document.getElementById('persona-text').value = m.persona;
+                }
             });
         });
-        socket.on('model_changed', (d) => loadModel(d.path));
 
-        document.getElementById('login-btn').onclick=()=>{let n=document.getElementById('username-input').value;if(n){socket.emit('login',{username:n});if(!audioContext)try{audioContext=new(window.AudioContext||window.webkitAudioContext)();analyser=audioContext.createAnalyser();analyser.fftSize=512;dataArray=new Uint8Array(analyser.frequencyBinCount);}catch(e){}}};
-        socket.on('login_success',(d)=>{document.getElementById('login-overlay').style.display='none'; if(d.current_model)loadModel(d.current_model);});
-        socket.on('login_failed',(d)=>alert(d.error));
-        function addMsg(t,u,y,e){let d=document.createElement('div');d.className=`message-container ${y}`;d.innerHTML=`<div class="message-info">${u} ${e?`[${e}]`:''}</div><div class="message-bubble">${t}</div>`;document.getElementById('chat-window').appendChild(d);document.getElementById('chat-window').scrollTop=99999;if(y==='pico')lastPico=d;}
-        socket.on('chat_message',(d)=>addMsg(d.text,d.sender,d.sender===document.getElementById('username-input').value?'self':'other'));
-        socket.on('system_message',(d)=>addMsg(d.text,'系统','system'));
-        socket.on('response',(d)=>{addMsg(d.text,'Pico','pico',d.emotion);triggerMotion(d.emotion||'NORMAL');});
-        socket.on('audio_response',(d)=>{if(d.audio&&lastPico){let a=new Audio();a.crossOrigin="anonymous";a.src=d.audio;let ui=document.createElement('audio');ui.className='audio-player';ui.controls=true;ui.src=d.audio;lastPico.appendChild(ui);if(audioContext){if(audioContext.state==='suspended')audioContext.resume();try{let src=audioContext.createMediaElementSource(a);src.connect(analyser);analyser.connect(audioContext.destination);a.onplay=()=>{isTalking=true};a.onpause=a.onended=()=>{isTalking=false;if(model)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',0)};}catch(e){}}a.play().catch(()=>{});}});
-        document.getElementById('send-btn').onclick=()=>{let i=document.getElementById('user-input');if(i.value){socket.emit('message',{text:i.value});i.value='';}};
+        function switchModel(id) { if(id!==currentModelId) socket.emit('switch_model', {id}); }
+        function deleteModel(id, e) { e.stopPropagation(); if(confirm('确定要删除这个模型吗？')) socket.emit('delete_model', {id}); }
+        function downloadModel(name) { socket.emit('download_model', {name}); }
+        document.getElementById('save-persona-btn').onclick = () => {
+            socket.emit('save_persona', {id: currentModelId, text: document.getElementById('persona-text').value});
+        };
+
+        // --- 基础交互 ---
+        document.getElementById('login-btn').onclick=()=>{let n=document.getElementById('username-input').value.trim();if(n){myUser=n;socket.emit('login',{username:n});if(!audioContext)try{audioContext=new(window.AudioContext||window.webkitAudioContext)();analyser=audioContext.createAnalyser();analyser.fftSize=512;dataArray=new Uint8Array(analyser.frequencyBinCount);}catch(e){}}};
+        
+        socket.on('login_success', (d) => {
+            document.getElementById('login-overlay').style.display='none';
+            document.getElementById('main-app').style.display='flex'; // 确保主界面显示
+            document.getElementById('room-title').textContent = `🤖 ${d.current_model.name} 直播间 (${myUser})`;
+            loadModel(d.current_model.path);
+        });
+        socket.on('model_switched', (m) => { 
+            loadModel(m.path); 
+            document.getElementById('room-title').textContent = `🤖 ${m.name} 直播间 (${myUser})`;
+            if(document.getElementById('studio-overlay').style.display==='flex') socket.emit('get_studio_data'); // 刷新工作室界面
+            showToast(`✨ 模型已切换为 ${m.name}`, 'success');
+        });
+
+        // 【关键修复】使用 myUser 变量来判断消息发送者
+        socket.on('chat', (d) => addMsg(d.text, d.sender, d.sender===myUser?'self':'other'));
+        socket.on('sys', (d) => addMsg(d.text, '系统', 'system'));
+        socket.on('response', (d) => { addMsg(d.text, 'Pico', 'pico', d.emotion); triggerMotion(d.emotion||'NORMAL'); });
+        socket.on('audio_response', (d) => {
+            if(d.audio&&lastPico){let a=new Audio();a.crossOrigin="anonymous";a.src=d.audio;let ui=document.createElement('audio');ui.className='audio-player';ui.controls=true;ui.src=d.audio;lastPico.appendChild(ui);document.getElementById('chat-window').scrollTop=99999;if(audioContext){if(audioContext.state==='suspended')audioContext.resume();try{let s=audioContext.createMediaElementSource(a);s.connect(analyser);analyser.connect(audioContext.destination);a.onplay=()=>{isTalking=true};a.onpause=a.onended=()=>{isTalking=false;if(model?.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',0)};}catch(e){}}a.play().catch(()=>{});}
+        });
+        socket.on('toast', (d) => showToast(d.text, d.type));
+
+        function addMsg(t,u,y,e){let d=document.createElement('div');d.className=`message-container ${y}`;if(y!=='system')d.innerHTML=`<div class="message-info">${u} ${e?`[${e}]`:''}</div>`;d.innerHTML+=`<div class="message-bubble">${t}</div>`;document.getElementById('chat-window').appendChild(d);document.getElementById('chat-window').scrollTop=99999;if(y==='pico')lastPico=d;}
+        function showToast(text, type) {
+            let t = document.createElement('div'); t.className='toast'; t.textContent=text; t.style.backgroundColor=type==='error'?'#d63031':(type==='info'?'#0984e3':'#00b894');
+            document.getElementById('toast-container').appendChild(t); setTimeout(()=>t.remove(), 3500);
+        }
+        document.getElementById('send-btn').onclick=()=>{let i=document.getElementById('user-input');if(i.value.trim()){socket.emit('message',{text:i.value.trim()});i.value='';}};
+        document.getElementById('user-input').onkeypress=(e)=>{if(e.key==='Enter')document.getElementById('send-btn').click();};
     </script>
 </body>
 </html>
-
-
 
