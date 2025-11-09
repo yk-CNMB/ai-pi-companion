@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pico AI 智能管家 (网址保持版)
+# Pico AI 智能管家 (最终修复版)
 
 CDIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$CDIR/.venv"
@@ -8,46 +8,80 @@ URL_FILE="$CDIR/public_url.txt"
 
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
+RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${GREEN}🤖 Pico AI 智能启动中...${NC}"
 
-# --- 1. 优先处理 AI 大脑 (Gunicorn) ---
-# 大脑需要经常重启以应用更新，所以我们总是先杀掉旧的
+# --- 0. 简易自动更新 ---
+# 如果需要强制更新，取消下面两行的注释
+# git reset --hard HEAD
+# git pull
+
+# --- 1. 环境检查 ---
+if [ ! -d "$VENV_DIR" ]; then
+    echo "📦 创建虚拟环境..."
+    python3 -m venv "$VENV_DIR"
+fi
+source "$VENV_DIR/bin/activate"
+
+if [ ! -f "$CDIR/cloudflared" ]; then
+    echo "🌐 下载 Cloudflared..."
+    ARCH=$(dpkg --print-architecture)
+    # 简化判断逻辑
+    if [[ "$ARCH" == "arm64" ]]; then
+        URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64.deb"
+    else
+        URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-armhf.deb"
+    fi
+    wget -q -O cloudflared.deb "$URL"
+    dpkg-deb -x cloudflared.deb temp_cf
+    find temp_cf -name cloudflared -type f -exec mv {} "$CDIR/" \;
+    chmod +x "$CDIR/cloudflared"
+    rm -rf cloudflared.deb temp_cf
+fi
+
+# --- 2. 优先重启 AI 大脑 ---
 echo -e "🧠 正在重启 AI 大脑..."
 pkill -9 -f "gunicorn"
 sleep 1
-# 后台启动新的大脑
 nohup "$VENV_DIR/bin/gunicorn" --worker-class eventlet -w 1 --bind 0.0.0.0:5000 app:app >> "$LOG_FILE" 2>&1 &
 
-# --- 2. 智能处理公网隧道 (Cloudflared) ---
-# 检查隧道是否已经在运行
-if pgrep -f "cloudflared tunnel" > /dev/null; then
-    echo -e "🌉 检测到隧道已在运行，将保持现有连接 (网址不变)。"
-    # 尝试从之前的记录文件中读取网址
-    if [ -f "$URL_FILE" ]; then
-        CURRENT_URL=$(cat "$URL_FILE")
-    fi
+# --- 3. 智能处理隧道 ---
+if pgrep -f "cloudflared_linux" > /dev/null || pgrep -f "cloudflared tunnel" > /dev/null; then
+    echo -e "🌉 隧道已在运行，保持连接。"
+    if [ -f "$URL_FILE" ]; then CURRENT_URL=$(cat "$URL_FILE"); fi
 else
-    echo -e "🌐 未检测到隧道，正在新建..."
-    # 启动新隧道，日志追加到文件
+    echo -e "🌐 正在新建隧道..."
+    pkill -9 -f cloudflared # 确保旧的死透了
     nohup "$CDIR/cloudflared" tunnel --url http://127.0.0.1:5000 >> "$LOG_FILE" 2>&1 &
-    echo "⏳ 等待获取新网址 (约 10 秒)..."
-    sleep 12
-    # 从日志中提取最新的 trycloudflare 网址
+    echo "⏳ 等待获取新网址 (约 15 秒)..."
+    sleep 15
     CURRENT_URL=$(grep -o 'https://.*\.trycloudflare\.com' "$LOG_FILE" | tail -n 1)/pico
-    # 保存到文件
     echo "$CURRENT_URL" > "$URL_FILE"
 fi
 
-# --- 3. 显示结果 ---
+# --- 4. 结果 ---
 echo -e "${BLUE}========================================${NC}"
-if [ -n "$CURRENT_URL" ]; then
-    echo -e "${GREEN}✅ Pico 已在线！你的访问地址是：${NC}"
+if [[ "$CURRENT_URL" == *"trycloudflare.com/pico" ]]; then
+    echo -e "${GREEN}✅ Pico 已在线！访问地址：${NC}"
     echo -e "\n    $CURRENT_URL\n"
-    echo -e "💡 提示：只要不重启树莓派，这个网址通常不会变。"
 else
-    echo -e "❌ 获取网址失败，请查看 server.log 排查问题。"
+    echo -e "❌ 获取网址失败，请稍后重新运行脚本，或查看 server.log"
 fi
 echo -e "${BLUE}========================================${NC}"
+```
+
+### 🛡️ 步骤 2：执行“驱魔仪式” (非常重要！)
+
+在你保存了上面的文件后，**一定要先运行下面这条命令**，再运行脚本！它会杀死所有的 `\r` 幽灵。
+
+```bash
+sed -i 's/\r$//' setup_and_run.sh
+```
+
+### 🚀 步骤 3：启动
+
+```bash
+bash setup_and_run.sh
