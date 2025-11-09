@@ -1,8 +1,7 @@
 # =======================================================================
-# Pico AI Server - app.py (情感引擎 + 口型同步支持版)
+# Pico AI Server - app.py (终极版 + 模型管理)
 # 
-# 启动命令:
-# gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:5000 app:app
+# 启动命令: gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:5000 app:app
 # =======================================================================
 
 import os
@@ -10,7 +9,7 @@ import json
 import uuid
 import asyncio
 import time
-import re # 新增：用于解析情感标签
+import glob # 新增：用于文件扫描
 
 import eventlet
 eventlet.monkey_patch()
@@ -25,136 +24,136 @@ app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'secret')
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 SERVER_VERSION = str(int(time.time()))
 
-# --- 目录 ---
+# --- 目录 & 配置 ---
 os.makedirs("memories", exist_ok=True)
-AUDIO_DIR = os.path.join("static", "audio")
-os.makedirs(AUDIO_DIR, exist_ok=True)
-
-# --- 配置 ---
+os.makedirs("static/audio", exist_ok=True)
 CONFIG = {}
 try:
     with open("config.json", "r") as f: CONFIG = json.load(f)
 except: pass
+client = None
 api_key = CONFIG.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
-if api_key and "在这里粘贴" not in api_key:
-    client = genai.Client(api_key=api_key)
-else:
-    client = None
-    print("❌ 未找到有效 API KEY")
+if api_key and "在这里" not in api_key:
+    try: client = genai.Client(api_key=api_key)
+    except: print("❌ Gemini 初始化失败")
+else: print("❌ 未找到 API KEY")
 
-# --- 核心函数 ---
+# --- 模型管理核心 ---
+CURRENT_MODEL_PATH = "" # 当前选中的模型路径
+
+def scan_models():
+    """扫描 static/live2d 目录下所有的 .model3.json 文件"""
+    models = []
+    # 递归查找所有 .model3.json 文件
+    for model_file in glob.glob("static/live2d/**/*.model3.json", recursive=True):
+        # 转换为相对于 static 的 Web 路径
+        web_path = "/" + model_file.replace("\\", "/")
+        # 用文件夹名作为模型名称 (例如 static/live2d/Haru/Haru.model3.json -> Haru)
+        model_name = os.path.basename(os.path.dirname(model_file))
+        models.append({"name": model_name, "path": web_path})
+    return sorted(models, key=lambda x: x['name'])
+
+# 初始化默认模型 (优先找 Hiyori，找不到就用第一个)
+available_models = scan_models()
+if available_models:
+    # 尝试找到 Hiyori
+    hiyori = next((m for m in available_models if "hiyori" in m['name'].lower()), None)
+    CURRENT_MODEL_PATH = hiyori['path'] if hiyori else available_models[0]['path']
+    print(f"🤖 默认模型已设置为: {CURRENT_MODEL_PATH}")
+
+# --- 功能函数 ---
 TTS_VOICE = "zh-CN-XiaoxiaoNeural"
-
-def background_generate_audio(text, room=None, sid=None):
-    """后台生成语音"""
-    # 如果文本里还有残留的情感标签，清理掉再读，防止读出 "[HAPPY]"
-    clean_text = re.sub(r'\[(.*?)\]', '', text).strip()
-    if not clean_text: return # 如果没话可读就跳过
-
-    filename = f"{uuid.uuid4()}.mp3"
-    filepath = os.path.join(AUDIO_DIR, filename)
+def bg_tts(text, room=None, sid=None):
+    fname = f"{uuid.uuid4()}.mp3"
+    fpath = os.path.join("static/audio", fname)
     try:
         async def _run():
-            cm = edge_tts.Communicate(clean_text, TTS_VOICE)
-            await cm.save(filepath)
+            cm = edge_tts.Communicate(text, TTS_VOICE)
+            await cm.save(fpath)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(_run())
         loop.close()
-        
-        url = f"/static/audio/{filename}"
+        url = f"/static/audio/{fname}"
         if room: socketio.emit('audio_response', {'audio': url}, to=room, namespace='/')
         elif sid: socketio.emit('audio_response', {'audio': url}, to=sid, namespace='/')
-    except Exception as e: print(f"❌ TTS失败: {e}")
+    except Exception as e: print(f"TTS Error: {e}")
 
 # --- 路由 ---
 @app.route('/')
-def index_redirect(): return redirect(url_for('pico_dynamic', version=SERVER_VERSION))
+def idx(): return redirect(url_for('pico_v', v=SERVER_VERSION))
 @app.route('/pico')
-def pico_legacy(): return redirect(url_for('pico_dynamic', version=SERVER_VERSION))
-@app.route('/pico/<version>')
-def pico_dynamic(version):
-    if version != SERVER_VERSION: return redirect(url_for('pico_dynamic', version=SERVER_VERSION))
-    response = make_response(render_template('chat.html'))
-    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    response.headers['Pragma'] = 'no-cache'
-    response.headers['Expires'] = '0'
-    return response
+def pico(): return redirect(url_for('pico_v', v=SERVER_VERSION))
+@app.route('/pico/<v>')
+def pico_v(v):
+    if v!=SERVER_VERSION: return redirect(url_for('pico_v', v=SERVER_VERSION))
+    r = make_response(render_template('chat.html'))
+    r.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return r
 
-# --- Socket.IO ---
-active_users = {}
-chatroom_chat = None
-
-def init_chatroom():
-    global chatroom_chat
-    if not client: return
-    # 【关键修改】系统提示词增加了情感指令
-    prompt = (
-        "你是一个名为'Pico'的AI虚拟主播，正在直播间和大家聊天。\n"
-        "请用中文回复，保持活泼、傲娇、表情丰富的性格。\n"
-        "【重要】你必须在每句话的开头加上唯一的情感标签，格式为 [EMOTION]。\n"
-        "可选标签: [HAPPY] (开心/大笑), [ANGRY] (生气/吐槽), [SAD] (悲伤/同情), [SHOCK] (惊讶/没想到), [NORMAL] (平静/普通)。\n"
-        "例如: [HAPPY] 哈哈，你说得太对了！\n"
-        "例如: [ANGRY] 哼，我才没有笨手笨脚呢！"
-    )
-    chatroom_chat = client.chats.create(model="gemini-2.5-flash", config={"system_instruction": prompt})
-    print("🏠 情感引擎已加载 (v2.5)")
+# --- SocketIO ---
+users = {}
+chat = None
 
 @socketio.on('login')
-def handle_login(data):
-    sid = request.sid
-    username = data.get('username', 'Anonymous').strip() or "匿名"
-    active_users[sid] = username
+def on_login(d):
+    sid, name = request.sid, d.get('username','').strip() or "匿名"
+    users[sid] = name
     join_room('lobby')
-    
-    global chatroom_chat
-    if not chatroom_chat: init_chatroom()
-        
-    emit('login_success', {'username': username})
-    emit('system_message', {'text': f"🎉 欢迎 {username} 进入直播间！"}, to='lobby', include_self=False)
-    
-    welcome = "嗨，欢迎来到 Pico 的直播间！"
-    # 开场白默认开心
-    emit('response', {'text': welcome, 'sender': 'Pico', 'emotion': 'HAPPY'})
-    socketio.start_background_task(background_generate_audio, welcome, sid=sid)
+    emit('login_success', {'username': name, 'current_model': CURRENT_MODEL_PATH}) # 发送当前模型
+    emit('sys', {'text': f"🎉 {name} 加入了！"}, to='lobby', include_self=False)
 
 @socketio.on('disconnect')
-def handle_disconnect():
-    if request.sid in active_users:
-        username = active_users.pop(request.sid)
+def on_disconnect():
+    if request.sid in users:
+        name = users.pop(request.sid)
         leave_room('lobby')
-        emit('system_message', {'text': f"💨 {username} 离开了。"}, to='lobby')
+        emit('sys', {'text': f"💨 {name} 离开了。"}, to='lobby')
 
 @socketio.on('message')
-def handle_message(data):
+def on_message(d):
     sid = request.sid
-    if sid not in active_users: return
-    sender = active_users[sid]
-    msg = data['text']
+    if sid not in users: return
+    msg = d['text']
+    emit('chat', {'text': msg, 'sender': users[sid]}, to='lobby')
     
-    emit('chat_message', {'text': msg, 'sender': sender}, to='lobby')
-    
+    global chat
     try:
-        if not chatroom_chat: init_chatroom()
-        response = chatroom_chat.send_message(f"【{sender}说】: {msg}")
-        raw_text = response.text
+        if not chat and client:
+            chat = client.chats.create(model="gemini-2.5-flash", config={"system_instruction": "你是Pico，一个活泼可爱的虚拟主播。请用中文简短回复，每句话开头加上情感标签：[HAPPY],[ANGRY],[SAD],[SHOCK],[NORMAL]。"})
         
-        # 【核心逻辑】解析情感标签
-        emotion = 'NORMAL' # 默认情感
-        match = re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', raw_text)
-        if match:
-            emotion = match.group(1)
-            # 把标签从显示的文字中去掉，不然看起来很怪
-            display_text = raw_text.replace(match.group(0), '').strip()
-        else:
-            display_text = raw_text
-
-        # 发送带有 emotion 字段的回复
-        emit('response', {'text': display_text, 'sender': 'Pico', 'emotion': emotion}, to='lobby')
-        # 语音读的是干净的文本
-        socketio.start_background_task(background_generate_audio, display_text, room='lobby')
-        
+        if chat:
+            resp = chat.send_message(f"【{users[sid]}说】: {msg}")
+            # 解析情感
+            import re
+            emo = 'NORMAL'
+            match = re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
+            clean_text = resp.text
+            if match:
+                emo = match.group(1)
+                clean_text = resp.text.replace(match.group(0), '').strip()
+            
+            emit('response', {'text': clean_text, 'sender': 'Pico', 'emotion': emo}, to='lobby')
+            socketio.start_background_task(bg_tts, clean_text, room='lobby')
     except Exception as e:
-        print(f"API Error: {e}")
-        emit('system_message', {'text': "⚠️ Pico 大脑短路中..."}, to='lobby')
+        print(f"AI Error: {e}")
+        emit('sys', {'text': "⚠️ 大脑短路中..."}, to='lobby')
 
+# --- 新增：模型管理事件 ---
+@socketio.on('get_models')
+def on_get_models():
+    """前端请求可用模型列表"""
+    # 重新扫描，以便发现新加的模型
+    models = scan_models()
+    emit('models_list', {'models': models, 'current': CURRENT_MODEL_PATH})
+
+@socketio.on('change_model')
+def on_change_model(data):
+    """前端请求切换模型"""
+    global CURRENT_MODEL_PATH
+    new_path = data.get('path')
+    if new_path:
+        CURRENT_MODEL_PATH = new_path
+        print(f"🔄 模型切换为: {new_path}")
+        # 广播给所有人切换模型！
+        emit('model_changed', {'path': CURRENT_MODEL_PATH}, to='lobby')
