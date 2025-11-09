@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pico Live (Hiyori)</title>
+    <title>Pico Live</title>
     <!-- 核心库 -->
     <script src="/static/js/live2d.min.js"></script>
     <script src="/static/js/live2dcubismcore.min.js"></script>
     <script src="/static/js/pixi.min.js"></script>
     <script src="/static/js/index.min.js"></script>
     <style>
-        /* --- 样式保持不变 --- */
+        /* --- 样式区 (保持不变) --- */
         body{font-family:"Segoe UI",sans-serif;margin:0;padding:0;height:100vh;background-color:#dff9fb;overflow:hidden}
         #live2d-canvas{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;height:100%;z-index:0;pointer-events:none}
         #main-app{position:relative;z-index:2;height:100%;display:flex;flex-direction:column;background:rgba(255,255,255,0)}
@@ -40,52 +40,45 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <script>
-        // =========================================
-        // 🔧 位置微调区域 (如果位置不对，改这里！)
-        // =========================================
-        const MODEL_SCALE = 1.1;  // 缩放比例 (越大越近)
-        const OFFSET_X = 0;       // 左右平移 (负数向左，正数向右)
-        const OFFSET_Y = 100;     // 上下平移 (负数向上，正数向下)
-        // =========================================
-
         let app_pixi, model;
         let audioContext, analyser, dataArray, isTalking = false;
 
         async function initLive2D() {
-            app_pixi = new PIXI.Application({
-                view: document.getElementById('live2d-canvas'),
-                autoStart: true, resizeTo: window, transparent: true
-            });
+            app_pixi = new PIXI.Application({ view: document.getElementById('live2d-canvas'), autoStart: true, resizeTo: window, transparent: true });
             try {
-                model = await PIXI.live2d.Live2DModel.from('/static/live2d/hiyori/Hiyori.model3.json');
+                // 【注意】新下载的模型文件名可能是 hiyori.model3.json (小写)
+                model = await PIXI.live2d.Live2DModel.from('/static/live2d/hiyori/hiyori.model3.json');
                 app_pixi.stage.addChild(model);
-                resizeModel(); // 初始化时调整一次位置
+                const scale = Math.min(window.innerWidth/model.width, window.innerHeight/model.height) * 0.95;
+                model.scale.set(scale);
+                model.x = (window.innerWidth - model.width * scale) / 2;
+                model.y = window.innerHeight - model.height * scale;
                 app_pixi.ticker.add(lipSyncLoop);
-                console.log("✅ 模型加载成功");
-            } catch (e) { console.error(e); alert("模型加载失败，请检查文件名。"); }
+                console.log("✅ Hiyori (完整版) 加载成功");
+            } catch (e) { 
+                console.error(e); 
+                alert("模型加载失败，请检查 chat.html 里的文件名是否与下载的一致！"); 
+            }
         }
         if (typeof PIXI !== 'undefined') initLive2D();
 
-        // --- 核心：更精确的位置调整函数 ---
-        function resizeModel() {
-            if (model) {
-                // 1. 计算缩放
-                const scale = Math.min(window.innerWidth / model.width, window.innerHeight / model.height) * MODEL_SCALE;
-                model.scale.set(scale);
-                
-                // 2. 计算居中位置
-                // (屏幕宽度 - 模型实际宽度) / 2 = 水平居中
-                model.x = (window.innerWidth - model.width) / 2 + OFFSET_X;
-                // (屏幕高度 - 模型实际高度) = 对齐底部，再加偏移量
-                model.y = (window.innerHeight - model.height) + OFFSET_Y;
-            }
-        }
-        // 监听窗口大小改变，实时调整
-        window.addEventListener('resize', resizeModel);
-
-        // --- Hiyori 动作 ---
+        // --- 情感驱动 (适配新模型) ---
         function triggerMotion(emotion) {
             if (!model || !model.internalModel.motionManager) return;
+            
+            // 1. 先尝试设置表情 (Expression)
+            // 新模型的表情名通常是 F01, F02... 需要根据实际文件名调整
+            try {
+                switch(emotion) {
+                    case 'HAPPY': model.expression('F05'); break; // 大笑
+                    case 'ANGRY': model.expression('F04'); break; // 生气
+                    case 'SHOCK': model.expression('F06'); break; // 惊讶
+                    case 'SAD':   model.expression('F02'); break; // 悲伤
+                    case 'NORMAL': default: model.expression('F01'); break; // 平静
+                }
+            } catch (e) { console.warn("表情设置失败:", e); }
+
+            // 2. 再触发身体动作 (Motion)
             switch(emotion) {
                 case 'HAPPY': model.internalModel.motionManager.startRandomMotion('Charm'); break;
                 case 'ANGRY': case 'SHOCK': model.internalModel.motionManager.startRandomMotion('Shame'); break;
@@ -94,18 +87,17 @@
             }
         }
 
-        // --- 口型同步 ---
         function lipSyncLoop() {
             if (!model || !analyser || !isTalking) return;
             analyser.getByteFrequencyData(dataArray);
             let sum = 0; for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
             let avg = sum / dataArray.length;
             if (model.internalModel && model.internalModel.coreModel) {
-                 model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', Math.min(1.0, avg / 40));
+                 model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', Math.min(1.0, avg / 30));
             }
         }
 
-        // --- 业务逻辑 (保持不变) ---
+        // --- 基础逻辑 (保持不变) ---
         const socket = io({ reconnection: true });
         let myUser = "", lastPico = null;
         const overlay = document.getElementById('login-overlay'), main = document.getElementById('main-app'), chat = document.getElementById('chat-window'), input = document.getElementById('user-input'), head = document.getElementById('header');
@@ -115,7 +107,6 @@
             if (name) { myUser = name; socket.emit('login', { username: name }); initAudio(); }
         };
         function initAudio() { if(!audioContext) { try { audioContext = new (window.AudioContext||window.webkitAudioContext)(); analyser=audioContext.createAnalyser(); analyser.fftSize=512; dataArray=new Uint8Array(analyser.frequencyBinCount); } catch(e){} } }
-        
         socket.on('login_success', (d) => { overlay.style.display='none'; main.style.display='flex'; head.textContent=`🤖 Pico (${myUser})`; });
         socket.on('login_failed', (d) => { alert(d.error); });
         function addMsg(txt, user, type, emo) {
@@ -147,20 +138,10 @@
             }
         });
         document.getElementById('send-btn').onclick = () => { if(input.value.trim()) { socket.emit('message', {text: input.value.trim()}); input.value=''; }};
-        document.getElementById('user-input').onkeypress = (e) => { if(e.key==='Enter') document.getElementById('send-btn').click(); };
+        window.addEventListener('resize', () => { if (model) { 
+            const scale = Math.min(window.innerWidth/model.width, window.innerHeight/model.height)*0.95;
+            model.scale.set(scale); model.x=(window.innerWidth-model.width*scale)/2; model.y=window.innerHeight-model.height*scale;
+        }});
     </script>
 </body>
 </html>
-```
-
-### 🛠️ 如何调节位置
-
-如果刷新后位置还是不对，你只需要在树莓派上用 `nano templates/chat.html` 打开文件，找到最上面的这几行：
-
-```javascript
-        // =========================================
-        // 🔧 位置微调区域 (如果位置不对，改这里！)
-        // =========================================
-        const MODEL_SCALE = 1.1;  // 缩放比例 (越大越近)
-        const OFFSET_X = 0;       // 左右平移 (负数向左，正数向右)
-        const OFFSET_Y = 100;     // 上下平移 (负数向上，正数向下)
