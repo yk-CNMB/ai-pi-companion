@@ -1,40 +1,35 @@
 #!/bin/bash
-# Hiyori 表情补全脚本
+# Hiyori 完整版下载 (包含表情包) - 使用 SVN
 
-TARGET_DIR="static/live2d/hiyori/expressions"
-BASE_URL="https://cdn.jsdelivr.net/gh/Eikanya/Live2d-model@master/Live2D%20v3/Hiyori/expressions"
+TARGET_DIR="static/live2d/hiyori"
+echo "🚚 准备下载完整版 Hiyori (含表情包)..."
 
-echo "🔧 开始为 Hiyori 安装表情包..."
+# 1. 清理旧文件
+echo "🗑️ 清理旧模型..."
+rm -rf "$TARGET_DIR"
+mkdir -p "$(dirname "$TARGET_DIR")"
 
-# 1. 创建缺失的目录
-if [ ! -d "$TARGET_DIR" ]; then
-    echo "📂 创建 expressions 文件夹..."
-    mkdir -p "$TARGET_DIR"
-fi
+# 2. 使用 SVN 下载完整文件夹
+# 这个源包含了 motions, expressions, textures 等所有必要文件
+SVN_URL="https://github.com/imuncle/live2d-models/trunk/models/hiyori"
 
-# 2. 定义下载函数
-download_exp() {
-    file="$1"
-    echo -n "⬇️ 下载 $file... "
-    # 使用 curl -L -f -s (静音但失败时报错)
-    if curl -L -f -s -o "$TARGET_DIR/$file" "$BASE_URL/$file"; then
-        echo "✅ 成功"
-    else
-        echo "❌ 失败!"
+echo "⬇️ 开始下载 (可能需要一分钟)..."
+if svn export --force -q "$SVN_URL" "$TARGET_DIR"; then
+    echo "✅ Hiyori 完整版下载成功！"
+    
+    # 3. 验证关键文件
+    echo "----------------------------------------"
+    echo "🔍 检查表情包..."
+    ls -1 "$TARGET_DIR/expressions" | head -n 3
+    echo "... (应显示 F01.exp3.json 等)"
+    
+    echo "----------------------------------------"
+    # 自动查找主模型文件名
+    MODEL_FILE=$(find "$TARGET_DIR" -name "*.model3.json" | head -n 1)
+    if [ -n "$MODEL_FILE" ]; then
+        echo -e "🎉 主文件锁定: \033[0;32m$(basename "$MODEL_FILE")\033[0m"
     fi
-}
-
-# 3. 开始下载 8 个标准表情
-download_exp "f01.exp3.json" # 平静
-download_exp "f02.exp3.json" # 认真/悲伤
-download_exp "f03.exp3.json" # 害羞
-download_exp "f04.exp3.json" # 生气
-download_exp "f05.exp3.json" # 开心
-download_exp "f06.exp3.json" # 惊讶
-download_exp "f07.exp3.json" # 鄙视
-download_exp "f08.exp3.json" # 严肃
-
-echo "----------------------------------------"
-echo "🎉 表情安装完毕！当前表情列表："
-ls -lh "$TARGET_DIR"
-```
+else
+    echo "❌ 下载失败！请检查网络。"
+    exit 1
+fi
