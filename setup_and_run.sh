@@ -16,8 +16,8 @@ echo -e "${GREEN}🤖 Pico AI 智能启动中...${NC}"
 
 # --- 0. 简易自动更新 ---
 # 如果需要强制更新，取消下面两行的注释
-# git reset --hard HEAD
-# git pull
+git reset --hard HEAD
+git pull
 
 # --- 1. 环境检查 ---
 if [ ! -d "$VENV_DIR" ]; then
@@ -85,3 +85,4 @@ sed -i 's/\r$//' setup_and_run.sh
 
 ```bash
 bash setup_and_run.sh
+
