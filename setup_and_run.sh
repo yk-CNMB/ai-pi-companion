@@ -1,8 +1,8 @@
 #!/bin/bash
-# 下面这行是核心：脚本一运行就会自动清除自身的 Windows 换行符
+# [自我修复] 自动清除 Windows 换行符，防止报错
 sed -i 's/\r$//' "$0" 2>/dev/null || true
 
-# --- 定义变量与颜色 ---
+# --- 定义变量 ---
 CDIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$CDIR/.venv"
 LOG_FILE="$CDIR/server.log"
@@ -14,6 +14,16 @@ NC='\033[0m'
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${GREEN}🤖 Pico AI 智能启动中...${NC}"
+
+# --- 0. 自动更新 (已找回!) ---
+echo -e "🔄 检查更新..."
+# 尝试拉取最新代码，如果失败（比如没网）则跳过，继续运行旧版
+if git pull --rebase --autostash; then
+    echo -e "${GREEN}✅ 已是最新版本${NC}"
+else
+    echo -e "${RED}⚠️ 更新失败，将使用当前版本启动${NC}"
+fi
+echo -e "${BLUE}----------------------------------------${NC}"
 
 # --- 1. 环境检查 ---
 if [ ! -d "$VENV_DIR" ]; then
@@ -42,7 +52,7 @@ pkill -9 -f cloudflared
 sleep 2
 
 echo -e "🧠 启动 AI 大脑 (Gunicorn)..."
-# 使用 nohup 后台运行，日志写入 server.log
+# 使用 nohup 后台运行
 nohup "$VENV_DIR/bin/gunicorn" --worker-class eventlet -w 1 --bind 0.0.0.0:5000 app:app > "$LOG_FILE" 2>&1 &
 
 sleep 5
@@ -51,23 +61,22 @@ if ! pgrep -f gunicorn > /dev/null; then
     exit 1
 fi
 
-echo -e "🌐 建立公网隧道 (Cloudflare)..."
+echo -e "🌐 建立公网隧道..."
 # 【关键】强制使用 127.0.0.1 避免 502 错误
 nohup "$CDIR/cloudflared" tunnel --url http://127.0.0.1:5000 >> "$LOG_FILE" 2>&1 &
 
 echo -e "⏳ 正在获取公网地址，请稍候 (约 15 秒)..."
 sleep 15
 
-# --- 3. 提取并显示网址 ---
+# --- 3. 显示网址 ---
 CURRENT_URL=$(grep -o 'https://.*\.trycloudflare\.com' "$LOG_FILE" | tail -n 1)/pico
 
 echo -e "${BLUE}========================================${NC}"
 if [[ "$CURRENT_URL" == *"trycloudflare.com/pico" ]]; then
     echo "$CURRENT_URL" > "$URL_FILE"
-    echo -e "${GREEN}✅ Pico 已在线！你的访问地址是：${NC}"
+    echo -e "${GREEN}✅ Pico 已在线！访问地址：${NC}"
     echo -e "\n    $CURRENT_URL\n"
-    echo -e "💡 提示：此网址已保存到 public_url.txt，并不受终端关闭影响。"
 else
-    echo -e "${RED}❌ 获取网址失败，请稍后再次运行脚本，或检查 server.log${NC}"
+    echo -e "${RED}❌ 获取网址失败，请稍后再次运行，或检查 server.log${NC}"
 fi
 echo -e "${BLUE}========================================${NC}"
