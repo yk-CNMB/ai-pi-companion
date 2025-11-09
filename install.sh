@@ -1,35 +1,53 @@
 #!/bin/bash
-# Hiyori 完整版下载 (包含表情包) - 使用 SVN
+# Hiyori 下载脚本 (最终版) - 使用 Git Sparse-Checkout
 
+REPO_URL="https://github.com/imuncle/live2d-models.git"
 TARGET_DIR="static/live2d/hiyori"
-echo "🚚 准备下载完整版 Hiyori (含表情包)..."
+TEMP_DIR="temp_hiyori_git"
 
-# 1. 清理旧文件
-echo "🗑️ 清理旧模型..."
-rm -rf "$TARGET_DIR"
+echo "🚚 准备通过 Git 稀疏检出下载 Hiyori..."
+
+# 1. 清理环境
+rm -rf "$TARGET_DIR" "$TEMP_DIR"
 mkdir -p "$(dirname "$TARGET_DIR")"
+mkdir -p "$TEMP_DIR"
+cd "$TEMP_DIR" || exit
 
-# 2. 使用 SVN 下载完整文件夹
-# 这个源包含了 motions, expressions, textures 等所有必要文件
-SVN_URL="https://github.com/imuncle/live2d-models/trunk/models/hiyori"
+# 2. 初始化 Git 并设置过滤
+echo "⚙️ 正在配置 Git..."
+git init -q
+git remote add -f origin "$REPO_URL"
 
-echo "⬇️ 开始下载 (可能需要一分钟)..."
-if svn export --force -q "$SVN_URL" "$TARGET_DIR"; then
-    echo "✅ Hiyori 完整版下载成功！"
+# 开启稀疏检出功能
+git config core.sparseCheckout true
+
+# 告诉 Git 我们只想要 models/hiyori 这个文件夹
+echo "models/hiyori" >> .git/info/sparse-checkout
+
+# 3. 开始拉取 (只拉取最近一次提交，速度最快)
+echo "⬇️ 开始拉取 (可能需要 1-2 分钟，请耐心等待)..."
+if git pull --depth=1 origin master -q; then
+    echo "✅ 拉取成功！"
     
-    # 3. 验证关键文件
+    # 4. 移动到目标位置
+    cd ..
+    mv "$TEMP_DIR/models/hiyori" "$TARGET_DIR"
+    rm -rf "$TEMP_DIR"
+    
+    # 5. 最终验证
     echo "----------------------------------------"
-    echo "🔍 检查表情包..."
+    echo "🎉 Hiyori 安装完毕！"
+    echo "📂 表情包检查 (应显示 F01.exp3.json 等):"
     ls -1 "$TARGET_DIR/expressions" | head -n 3
-    echo "... (应显示 F01.exp3.json 等)"
     
-    echo "----------------------------------------"
-    # 自动查找主模型文件名
     MODEL_FILE=$(find "$TARGET_DIR" -name "*.model3.json" | head -n 1)
     if [ -n "$MODEL_FILE" ]; then
-        echo -e "🎉 主文件锁定: \033[0;32m$(basename "$MODEL_FILE")\033[0m"
+        echo -e "🔍 模型主文件名为: \033[0;31m$(basename "$MODEL_FILE")\033[0m"
+        echo "👉 请确保 templates/chat.html 里用的是这个名字！"
     fi
 else
-    echo "❌ 下载失败！请检查网络。"
+    echo "❌ 下载失败！请检查网络连接。"
+    cd ..
+    rm -rf "$TEMP_DIR"
     exit 1
 fi
