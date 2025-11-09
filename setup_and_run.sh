@@ -20,10 +20,12 @@ echo -e "${GREEN}🤖 Pico AI 智能管家启动...${NC}"
 
 # --- 0. 自动更新 ---
 echo -e "🔄 检查更新..."
-if git pull --rebase --autostash; then
-    echo -e "${GREEN}✅ 已是最新版本${NC}"
+# 使用强力模式：丢弃本地修改，强制与远程同步，避免冲突
+git fetch --all > /dev/null 2>&1
+if git reset --hard origin/main > /dev/null 2>&1; then
+    echo -e "${GREEN}✅ 已强制同步到最新版本${NC}"
 else
-    echo -e "${RED}⚠️ 更新失败，继续使用当前版本${NC}"
+    echo -e "${YELLOW}⚠️ 更新跳过 (可能是网络问题)，继续使用当前版本${NC}"
 fi
 
 # --- 1. 环境检查 ---
@@ -65,7 +67,7 @@ if pgrep -f "cloudflared tunnel" > /dev/null; then
 else
     echo -e "${GREEN}🌐 正在新建公网隧道...${NC}"
     pkill -9 -f cloudflared # 确保杀干净
-    nohup "$CDIR/cloudflared" tunnel --url http://127.0.0.1:5000 > "$LOG_FILE" 2>&1 &
+    nohup "$CDIR/cloudflared" tunnel --url http://127.0.0.1:5000 >> "$LOG_FILE" 2>&1 &
     echo "⏳ 等待网址生成 (约15秒)..."
     sleep 15
     # 提取新网址并保存
