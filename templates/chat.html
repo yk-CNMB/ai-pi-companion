@@ -2,6 +2,7 @@
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
+    <!-- 关键：禁止用户缩放网页，防止移动端错乱 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Pico Live</title>
     <script src="/static/js/live2d.min.js"></script>
@@ -10,67 +11,113 @@
     <script src="/static/js/index.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <style>
-        /* --- 样式 (保持不变) --- */
-        body{font-family:"Segoe UI",sans-serif;margin:0;padding:0;height:100vh;background-color:#2d3436;display:flex;flex-direction:row;overflow:hidden;color:#333}
-        #stage-container{flex:1;position:relative;background-image:radial-gradient(circle,#636e72 10%,#2d3436 90%);overflow:hidden;touch-action:none;} /* touch-action: none 非常重要，防止浏览器默认缩放 */
-        #live2d-canvas{position:absolute;top:0;left:0;width:100%;height:100%}
-        #chat-container{width:400px;display:flex;flex-direction:column;background:rgba(255,255,255,0.95);z-index:10;box-shadow:-5px 0 15px rgba(0,0,0,0.2)}
-        @media(max-width:768px){body{flex-direction:column}#stage-container{flex:4}#chat-container{width:100%;flex:6}}
-        #header{background:#6c5ce7;color:white;padding:15px;text-align:center;font-weight:bold;position:relative;display:flex;justify-content:space-between;align-items:center}
-        #studio-btn,#reset-btn{cursor:pointer;padding:5px 10px;background:rgba(0,0,0,0.1);border-radius:5px}
-        #chat-window{flex:1;overflow-y:auto;padding:15px;background:#f5f7fa}
-        .message-container{display:flex;margin-bottom:15px;flex-direction:column}
-        .message-info{font-size:12px;color:#999;margin-bottom:4px;padding:0 5px}
-        .message-bubble{padding:10px 14px;border-radius:16px;max-width:85%;word-wrap:break-word;box-shadow:0 1px 2px rgba(0,0,0,0.1)}
-        .self{align-items:flex-end} .self .message-bubble{background:#6c5ce7;color:white;border-bottom-right-radius:4px}
-        .other{align-items:flex-start} .other .message-bubble{background:white;color:#333;border-bottom-left-radius:4px}
-        .pico{align-items:flex-start} .pico .message-info{color:#e84393;font-weight:bold} .pico .message-bubble{background:#fff0f6;color:#333;border:2px solid #f8a5c2;border-bottom-left-radius:4px}
-        .system{align-items:center;margin:10px 0} .system .message-bubble{background:#eee;color:#666;font-size:12px;padding:4px 12px;border-radius:12px;box-shadow:none}
-        #input-area{display:flex;padding:10px;background:white;border-top:1px solid #eee}
-        #user-input{flex:1;padding:12px;border:1px solid #ddd;border-radius:25px;font-size:16px;outline:none}
-        #send-btn{background:#6c5ce7;color:white;border:none;padding:0 20px;margin-left:10px;border-radius:25px;font-weight:bold}
-        #login-overlay,#studio-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(5px)}
-        #studio-overlay{z-index:8888;display:none}
-        .modal-box{background:white;padding:25px;border-radius:20px;width:90%;max-width:500px;max-height:80vh;overflow-y:auto}
-        #username-input{width:80%;padding:12px;margin:20px 0;border:2px solid #6c5ce7;border-radius:10px;font-size:18px;text-align:center;outline:none}
-        #login-btn{background:#6c5ce7;color:white;border:none;padding:12px 40px;border-radius:30px;font-size:18px;font-weight:bold;transition:all 0.3s}
-        #login-btn:disabled{background:#b2bec3;cursor:not-allowed;opacity:0.7}
-        .model-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:10px;margin-top:10px}
-        .model-card{background:#f0f0f0;padding:10px;border-radius:8px;text-align:center;cursor:pointer;border:2px solid transparent}
-        .model-card.active{border-color:#6c5ce7;background:#e0dfff}
-        .chip{background:#eee;padding:5px 10px;border-radius:15px;cursor:pointer;margin:5px;display:inline-block}
-        #toast-container{position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:11000}
-        .toast{background:rgba(0,0,0,0.8);color:white;padding:10px 20px;border-radius:25px;margin-bottom:10px;font-size:14px;animation:fadeOut 3s forwards 2s}
-        @keyframes fadeOut{to{opacity:0;visibility:hidden}}
-        .audio-player{margin-top:8px;height:32px;width:100%;opacity:0.8;border-radius:16px}
+        /* --- 全局固定 --- */
+        html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; background-color: #2d3436; font-family: "Segoe UI", sans-serif; }
+        body { display: flex; flex-direction: row; color: #333; }
+
+        /* --- 左侧舞台 --- */
+        #stage-container {
+            flex: 1; position: relative; overflow: hidden;
+            background-image: radial-gradient(circle at 50% 70%, #636e72 10%, #2d3436 90%);
+        }
+        #live2d-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+
+        /* --- 右侧聊天 --- */
+        #chat-container {
+            width: 400px; display: flex; flex-direction: column;
+            background: rgba(255,255,255,0.95); z-index: 10;
+            box-shadow: -5px 0 15px rgba(0,0,0,0.2);
+        }
+
+        /* === 📱 移动端核心优化 === */
+        @media (max-width: 768px) {
+            body { flex-direction: column; }
+            #stage-container {
+                flex: 4; /* 默认占 40% 高度 */
+                min-height: 35vh; /* 【关键】键盘弹起时，至少保留 35% 的屏幕给模型 */
+                transition: flex 0.3s; /* 平滑过渡 */
+            }
+            #chat-container {
+                flex: 6; width: 100%;
+                border-radius: 20px 20px 0 0; /* 顶部圆角，更好看 */
+            }
+        }
+
+        /* --- 聊天组件 --- */
+        #header { background: #6c5ce7; color: white; padding: 15px; display: flex; justify-content: space-between; align-items: center; font-weight: bold; }
+        .icon-btn { padding: 5px 10px; background: rgba(0,0,0,0.15); border-radius: 5px; cursor: pointer; }
+        #chat-window { flex: 1; overflow-y: auto; padding: 15px; background: #f5f7fa; scroll-behavior: smooth; }
+        .message-container { display: flex; flex-direction: column; margin-bottom: 15px; }
+        .message-info { font-size: 12px; color: #999; margin-bottom: 4px; padding: 0 8px; }
+        .message-bubble { padding: 12px 16px; border-radius: 18px; max-width: 85%; word-wrap: break-word; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .self { align-items: flex-end; } .self .message-bubble { background: #6c5ce7; color: white; border-bottom-right-radius: 4px; }
+        .other { align-items: flex-start; } .other .message-bubble { background: white; color: #333; border-bottom-left-radius: 4px; }
+        .pico { align-items: flex-start; } .pico .message-info { color: #e84393; font-weight: bold; } .pico .message-bubble { background: #fff0f6; color: #333; border: 2px solid #f8a5c2; border-bottom-left-radius: 4px; }
+        .system { align-items: center; margin: 10px 0; } .system .message-bubble { background: #eee; color: #666; font-size: 12px; padding: 4px 12px; }
+        #input-area { display: flex; padding: 10px; background: white; border-top: 1px solid #eee; }
+        #user-input { flex: 1; padding: 12px; border: 2px solid #eee; border-radius: 25px; font-size: 16px; outline: none; }
+        #user-input:focus { border-color: #6c5ce7; }
+        #send-btn { background: #6c5ce7; color: white; border: none; padding: 0 20px; margin-left: 10px; border-radius: 20px; font-weight: bold; }
+
+        /* --- 浮层 --- */
+        .overlay { position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(5px); }
+        .modal-box { background: white; padding: 25px; border-radius: 20px; width: 85%; max-width: 400px; max-height: 80vh; overflow-y: auto; }
+        #login-overlay { z-index: 10000; } #studio-overlay { display: none; }
+        #username-input { width: 80%; padding: 12px; margin: 20px 0; border: 2px solid #6c5ce7; border-radius: 10px; font-size: 18px; text-align: center; outline: none; }
+        #login-btn { background: #6c5ce7; color: white; border: none; padding: 12px 40px; border-radius: 30px; font-size: 18px; font-weight: bold; width: 80%; }
+        #login-btn:disabled { background: #b2bec3; opacity: 0.7; }
+        .model-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px; margin-top: 15px; }
+        .model-card { background: #f8f9fa; padding: 10px; border-radius: 10px; text-align: center; border: 2px solid transparent; cursor: pointer; }
+        .model-card.active { border-color: #6c5ce7; background: #e0dfff; font-weight: bold; }
+        .chip { display: inline-block; background: #eee; padding: 6px 12px; border-radius: 15px; margin: 5px; font-size: 14px; cursor: pointer; }
+        #toast-container { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 11000; text-align: center; width: 100%; }
+        .toast { display: inline-block; background: rgba(0,0,0,0.8); color: white; padding: 8px 20px; border-radius: 20px; margin-top: 10px; animation: fadeOut 3s forwards 2s; }
+        @keyframes fadeOut { to { opacity: 0; visibility: hidden; } }
     </style>
 </head>
 <body>
     <div id="toast-container"></div>
-    <div id="login-overlay" class="overlay"><div class="modal-box" style="text-align:center;max-width:320px"><h2>Pico 直播间</h2><input id="username-input" placeholder="请输入昵称" maxlength="12" autocomplete="off"><br><button id="login-btn" disabled>连接中...</button></div></div>
-    <div id="studio-overlay" class="overlay"><div class="modal-box"><div style="display:flex;justify-content:space-between;margin-bottom:15px;"><h3>🛠️ 工作室</h3><button onclick="document.getElementById('studio-overlay').style.display='none'" style="border:none;background:none;font-size:24px;">×</button></div><div id="model-list" class="model-list">加载中...</div><hr><h3>🧠 人设编辑</h3><textarea id="persona-text" style="width:100%;height:100px;margin-bottom:10px;"></textarea><button id="save-persona-btn" style="width:100%;padding:10px;background:#6c5ce7;color:white;border:none;border-radius:10px;">保存人设</button><hr><h3>☁️ 下载更多</h3><div><span class="chip" onclick="dlModel('Mao')">Mao</span><span class="chip" onclick="dlModel('Natori')">Natori</span><span class="chip" onclick="dlModel('Rice')">Rice</span><span class="chip" onclick="dlModel('Wanko')">Wanko</span></div></div></div>
+    <div id="login-overlay" class="overlay"><div class="modal-box" style="text-align:center"><h2>Pico 直播间</h2><input id="username-input" placeholder="请输入昵称" maxlength="12" autocomplete="off"><br><button id="login-btn" disabled>连接中...</button></div></div>
+    <div id="studio-overlay" class="overlay"><div class="modal-box"><div style="display:flex;justify-content:space-between;align-items:center"><h3>🛠️ 工作室</h3><div onclick="document.getElementById('studio-overlay').style.display='none'" style="font-size:24px;padding:0 10px;cursor:pointer">×</div></div><div id="model-list" class="model-list">加载中...</div><hr><h4>🧠 人设</h4><textarea id="persona-text" style="width:100%;height:80px;padding:8px;border-radius:8px;border:1px solid #ddd"></textarea><button id="save-persona-btn" style="width:100%;padding:10px;margin-top:10px;background:#6c5ce7;color:white;border:none;border-radius:10px">保存人设</button><hr><h4>☁️ 下载</h4><div><span class="chip" onclick="dlModel('Mao')">Mao</span><span class="chip" onclick="dlModel('Natori')">Natori</span><span class="chip" onclick="dlModel('Rice')">Rice</span><span class="chip" onclick="dlModel('Wanko')">Wanko</span></div></div></div>
+
     <div id="stage-container"><canvas id="live2d-canvas"></canvas></div>
-    <div id="chat-container"><div id="header"><span id="room-title">🤖 互动区</span><div style="display:flex;gap:10px"><div id="reset-btn" title="模型归位">🎯</div><div id="studio-btn" title="打开工作室">🛠️</div></div></div><div id="chat-window"></div><div id="input-area"><input id="user-input" placeholder="发送弹幕..."><button id="send-btn">发送</button></div></div>
+    <div id="chat-container">
+        <div id="header">
+            <span>🤖 互动区</span>
+            <div style="display:flex;gap:10px">
+                <div class="icon-btn" id="reset-btn" title="归位">🎯</div>
+                <div class="icon-btn" id="studio-btn" title="设置">🛠️</div>
+            </div>
+        </div>
+        <div id="chat-window"></div>
+        <div id="input-area"><input id="user-input" placeholder="发送弹幕..." autocomplete="off"><button id="send-btn">发送</button></div>
+    </div>
 
     <script>
         const socket = io({reconnection:true});
         let app_pixi, model, myUser="", currentModelId="", audioCtx, analyser, dataArray, isTalking=false;
-        let isDragging=false, dragData, initialScale, initialDist; // 触摸相关变量
+        let isDragging=false, dragData, initialScale, initialDist;
 
-        // --- 连接 ---
+        // --- 1. 连接 & 登录 ---
         const loginBtn = document.getElementById('login-btn');
         socket.on('connect', ()=>{});
-        socket.on('server_ready', ()=>{loginBtn.textContent="进入直播间";loginBtn.disabled=false;});
-        socket.on('disconnect', ()=>{loginBtn.textContent="已断开...";loginBtn.disabled=true;});
-        loginBtn.onclick=()=>{let n=document.getElementById('username-input').value.trim();if(n){myUser=n;loginBtn.disabled=true;loginBtn.textContent="登录中...";socket.emit('login',{username:n});initAudio();}};
-        socket.on('login_success',(d)=>{document.getElementById('login-overlay').style.display='none';document.getElementById('room-title').textContent=`🤖 ${d.current_model.name}`;if(d.current_model.path)loadModel(d.current_model.path);});
-        socket.on('login_failed',(d)=>{alert(d.error);loginBtn.disabled=false;loginBtn.textContent="重试";});
+        socket.on('server_ready', ()=>{ loginBtn.textContent="进入直播间"; loginBtn.disabled=false; });
+        socket.on('disconnect', ()=>{ loginBtn.textContent="已断开..."; loginBtn.disabled=true; });
+        loginBtn.onclick = () => {
+            let n = document.getElementById('username-input').value.trim();
+            if(n) { myUser=n; loginBtn.disabled=true; loginBtn.textContent="登录中..."; socket.emit('login',{username:n}); initAudio(); }
+        };
+        socket.on('login_success', (d) => {
+            document.getElementById('login-overlay').style.display='none';
+            if(d.current_model.path) loadModel(d.current_model.path);
+        });
+        socket.on('login_failed', (d) => { alert(d.error); loginBtn.disabled=false; loginBtn.textContent="重试"; });
 
-        // --- Live2D 核心 ---
+        // --- 2. Live2D 核心 (移动端优化版) ---
         async function loadModel(path) {
             if(!app_pixi) {
                 app_pixi = new PIXI.Application({ view:document.getElementById('live2d-canvas'), autoStart:true, resizeTo:document.getElementById('stage-container'), transparent:true });
-                initInteraction(); // 初始化交互事件
+                initInteraction();
             }
             try {
                 if(model) app_pixi.stage.removeChild(model);
@@ -81,24 +128,34 @@
                 if(model.internalModel.motionManager) model.internalModel.motionManager.startRandomMotion('Idle');
             } catch(e) { console.error(e); showToast("❌ 模型加载失败","error"); }
         }
-        function resetModel() { if(model&&app_pixi){const st=document.getElementById('stage-container');const sc=Math.min(st.clientWidth/model.width,st.clientHeight/model.height)*0.95;model.scale.set(sc);model.x=(st.clientWidth-model.width*sc)/2;model.y=st.clientHeight-model.height*sc;} }
-        document.getElementById('reset-btn').onclick=resetModel;
-        window.addEventListener('resize',()=>setTimeout(resetModel,100));
 
-        // --- 【核心新增】移动端触控支持 ---
+        function resetModel() {
+            if(!model||!app_pixi) return;
+            const st = document.getElementById('stage-container');
+            const isPortrait = st.clientHeight > st.clientWidth;
+            // 移动端(竖屏)给更小的缩放，防止爆框
+            const scaleFactor = isPortrait ? 0.85 : 0.95; 
+            const scale = Math.min(st.clientWidth/model.width, st.clientHeight/model.height) * scaleFactor;
+            
+            model.scale.set(scale);
+            model.x = (st.clientWidth - model.width*scale)/2;
+            model.y = st.clientHeight - model.height*scale;
+            
+            // 移动端稍微抬高一点，防止被聊天框圆角遮住脚
+            if(isPortrait) model.y -= 20;
+        }
+        // 绑定归位按钮
+        document.getElementById('reset-btn').onclick = resetModel;
+        window.addEventListener('resize', () => setTimeout(resetModel, 100));
+
         function initInteraction() {
             const stage = document.getElementById('stage-container');
-            // 鼠标滚轮缩放
-            stage.addEventListener('wheel', (e) => { e.preventDefault(); if(model){ model.scale.x*=(e.deltaY<0?1.1:0.9); model.scale.y=model.scale.x; } }, {passive:false});
-            
-            // Pixi 交互 (用于单指/鼠标拖拽)
             app_pixi.stage.interactive = true;
             app_pixi.stage.on('pointerdown', onDragStart).on('pointerup', onDragEnd).on('pointerupoutside', onDragEnd).on('pointermove', onDragMove);
-
-            // 原生 Touch 事件 (用于双指缩放)
+            // 双指缩放支持
             stage.addEventListener('touchstart', (e) => {
                 if (e.touches.length === 2 && model) {
-                    isDragging = false; // 双指时禁用拖拽
+                    isDragging = false;
                     initialDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
                     initialScale = model.scale.x;
                 }
@@ -107,8 +164,7 @@
                 if (e.touches.length === 2 && model && initialDist) {
                     e.preventDefault();
                     const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                    const scale = initialScale * (dist / initialDist);
-                    model.scale.set(scale);
+                    model.scale.set(initialScale * (dist / initialDist));
                 }
             });
         }
@@ -116,23 +172,40 @@
         function onDragEnd() { isDragging=false; if(model)model.alpha=1; }
         function onDragMove() { if(isDragging&&model){ const p=dragData.getLocalPosition(model.parent); model.x=p.x-model.width/2; model.y=p.y-model.height/2; } }
 
-        // --- 其他逻辑 (保持不变) ---
-        function lipSync(){if(!model||!analyser||!isTalking)return;analyser.getByteFrequencyData(dataArray);let sum=0;for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];if(model.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',Math.min(1.0,(sum/dataArray.length)/30));}
-        function triggerMotion(emo){if(!model?.internalModel?.motionManager)return;try{let m=model.internalModel.motionManager;switch(emo){case 'HAPPY':m.startRandomMotion(m.motionGroups.includes('Charm')?'Charm':'TapBody');break;case 'ANGRY':case 'SHOCK':m.startRandomMotion(m.motionGroups.includes('Shame')?'Shame':'Shake');break;default:m.startRandomMotion('Idle');}if(model.internalModel.settings.expressions){let idx=0;if(emo==='SAD')idx=1;else if(emo==='ANGRY')idx=3;else if(emo==='HAPPY')idx=4;else if(emo==='SHOCK')idx=5;if(model.internalModel.settings.expressions[idx])model.expression(model.internalModel.settings.expressions[idx].Name);}}catch(e){}}
+        // --- 3. 功能函数 ---
+        function lipSync() {
+            if(!model||!analyser||!isTalking)return;
+            analyser.getByteFrequencyData(dataArray);
+            let sum=0; for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];
+            if(model.internalModel?.coreModel) model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', Math.min(1.0,(sum/dataArray.length)/30));
+        }
+        function triggerMotion(emo) {
+            if(!model?.internalModel?.motionManager)return;
+            try {
+                let m=model.internalModel.motionManager;
+                switch(emo){ case 'HAPPY':m.startRandomMotion(m.motionGroups.includes('Charm')?'Charm':'TapBody');break; case 'ANGRY':case 'SHOCK':m.startRandomMotion(m.motionGroups.includes('Shame')?'Shame':'Shake');break; default:m.startRandomMotion('Idle'); }
+                if(model.internalModel.settings.expressions){ let idx=0;if(emo==='SAD')idx=1;else if(emo==='ANGRY')idx=3;else if(emo==='HAPPY')idx=4;else if(emo==='SHOCK')idx=5; if(model.internalModel.settings.expressions[idx])model.expression(model.internalModel.settings.expressions[idx].Name); }
+            } catch(e){}
+        }
+
+        // --- 4. UI & 消息 ---
         document.getElementById('studio-btn').onclick=()=>{document.getElementById('studio-overlay').style.display='flex';socket.emit('get_studio_data');};
-        socket.on('studio_data',(d)=>{const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id;d.models.forEach(m=>{let el=document.createElement('div');el.className=`model-card ${m.id===d.current_id?'active':''}`;el.innerHTML=`<div>${m.name}</div>${m.id!==d.current_id?`<span class="btn-del" onclick="delModel('${m.id}',event)">🗑️</span>`:''}`;el.onclick=()=>socket.emit('switch_model',{id:m.id});list.appendChild(el);if(m.id===d.current_id)document.getElementById('persona-text').value=m.persona;});});
-        socket.on('model_switched',(m)=>{loadModel(m.path);document.getElementById('room-title').textContent=`🤖 ${m.name} (${myUser})`;if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');showToast(`✨ 已切换为 ${m.name}`);});
+        socket.on('studio_data',(d)=>{const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id;d.models.forEach(m=>{let el=document.createElement('div');el.className=`model-card ${m.id===d.current_id?'active':''}`;el.innerHTML=`<div>${m.name}</div>${m.id!==d.current_id?`<div class="btn-del" onclick="delModel('${m.id}',event)">🗑️</div>`:''}`;el.onclick=()=>socket.emit('switch_model',{id:m.id});list.appendChild(el);if(m.id===d.current_id)document.getElementById('persona-text').value=m.persona;});});
+        socket.on('model_switched',(m)=>{loadModel(m.path);if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');showToast(`✨ 切换为 ${m.name}`);});
         window.delModel=(id,e)=>{e.stopPropagation();if(confirm('删除？'))socket.emit('delete_model',{id});};window.dlModel=(n)=>socket.emit('download_model',{name:n});
         document.getElementById('save-persona-btn').onclick=()=>socket.emit('save_persona',{id:currentModelId,text:document.getElementById('persona-text').value});
+
         socket.on('chat_message',(d)=>addMsg(d.text,d.sender,d.sender===myUser?'self':'other'));
         socket.on('system_message',(d)=>addMsg(d.text,'系统','system'));
         socket.on('response',(d)=>{addMsg(d.text,'Pico','pico',d.emotion);triggerMotion(d.emotion||'NORMAL');});
-        socket.on('audio_response',(d)=>{if(d.audio&&lastPico){let a=new Audio();a.crossOrigin="anonymous";a.src=d.audio;let ui=document.createElement('audio');ui.className='audio-player';ui.controls=true;ui.src=d.audio;lastPico.appendChild(ui);document.getElementById('chat-window').scrollTop=99999;if(audioCtx){if(audioCtx.state==='suspended')audioCtx.resume();try{let s=audioCtx.createMediaElementSource(a);s.connect(analyser);analyser.connect(audioCtx.destination);a.onplay=()=>{isTalking=true};a.onpause=a.onended=()=>{isTalking=false;if(model?.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',0)};}catch(e){}}a.play().catch(()=>{});}});
-        socket.on('toast',(d)=>showToast(d.text,d.type));
-        function initAudio(){if(!audioCtx)try{audioCtx=new(window.AudioContext||window.webkitAudioContext)();analyser=audioCtx.createAnalyser();analyser.fftSize=512;dataArray=new Uint8Array(analyser.frequencyBinCount);}catch(e){}}
+        
         let lastPico=null;
+        socket.on('audio_response',(d)=>{if(d.audio&&lastPico){let a=new Audio();a.crossOrigin="anonymous";a.src=d.audio;let ui=document.createElement('audio');ui.className='audio-player';ui.controls=true;ui.src=d.audio;lastPico.appendChild(ui);document.getElementById('chat-window').scrollTop=99999;if(audioCtx){if(audioCtx.state==='suspended')audioCtx.resume();try{let s=audioCtx.createMediaElementSource(a);s.connect(analyser);analyser.connect(audioCtx.destination);a.onplay=()=>{isTalking=true};a.onpause=a.onended=()=>{isTalking=false;if(model?.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',0)};}catch(e){}}a.play().catch(()=>{});}});
+
+        function initAudio(){if(!audioCtx)try{audioCtx=new(window.AudioContext||window.webkitAudioContext)();analyser=audioCtx.createAnalyser();analyser.fftSize=512;dataArray=new Uint8Array(analyser.frequencyBinCount);}catch(e){}}
         function addMsg(t,u,y,e){let d=document.createElement('div');d.className=`message-container ${y}`;if(y!=='system')d.innerHTML=`<div class="message-info">${u} ${e?`[${e}]`:''}</div>`;d.innerHTML+=`<div class="message-bubble">${t}</div>`;document.getElementById('chat-window').appendChild(d);document.getElementById('chat-window').scrollTop=99999;if(y==='pico')lastPico=d;}
-        function showToast(m,t='success'){let d=document.createElement('div');d.className='toast';d.textContent=m;if(t==='error'||t==='info')d.style.backgroundColor=t==='error'?'#d63031':(t==='info'?'#0984e3':'#00b894');document.getElementById('toast-container').appendChild(d);setTimeout(()=>d.remove(),3500);}
+        function showToast(m,t='success'){let d=document.createElement('div');d.className='toast';d.textContent=m;if(t==='error'||t==='info')d.style.backgroundColor=t==='error'?'#d63031':'#0984e3';document.getElementById('toast-container').appendChild(d);setTimeout(()=>d.remove(),3500);}
+        
         const send=()=>{let i=document.getElementById('user-input');if(i.value.trim()){socket.emit('message',{text:i.value.trim()});i.value='';}};
         document.getElementById('send-btn').onclick=send; document.getElementById('user-input').onkeypress=(e)=>{if(e.key==='Enter')send();};
     </script>
