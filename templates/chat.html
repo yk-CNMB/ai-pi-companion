@@ -2,9 +2,8 @@
 <html lang="zh">
 <head>
     <meta charset="UTF-8">
-    <!-- 关键：禁止用户缩放网页，防止移动端错乱 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pico Live</title>
+    <title>Pico Studio</title>
     <script src="/static/js/live2d.min.js"></script>
     <script src="/static/js/live2dcubismcore.min.js"></script>
     <script src="/static/js/pixi.min.js"></script>
@@ -15,64 +14,74 @@
         html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; background-color: #2d3436; font-family: "Segoe UI", sans-serif; }
         body { display: flex; flex-direction: row; color: #333; }
 
-        /* --- 左侧舞台 --- */
+        /* --- 舞台区 --- */
         #stage-container {
-            flex: 1; position: relative; overflow: hidden;
+            flex: 1; /* 电脑上占满剩余空间 */
+            position: relative; overflow: hidden;
             background-image: radial-gradient(circle at 50% 70%, #636e72 10%, #2d3436 90%);
         }
-        #live2d-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        #live2d-canvas { position: absolute; top:0; left:0; width:100%; height:100%; }
 
-        /* --- 右侧聊天 --- */
+        /* --- 聊天区 --- */
         #chat-container {
             width: 400px; display: flex; flex-direction: column;
             background: rgba(255,255,255,0.95); z-index: 10;
             box-shadow: -5px 0 15px rgba(0,0,0,0.2);
         }
 
-        /* === 📱 移动端核心优化 === */
+        /* === 📱 移动端核心修复 === */
         @media (max-width: 768px) {
             body { flex-direction: column; }
             #stage-container {
-                flex: 4; /* 默认占 40% 高度 */
-                min-height: 35vh; /* 【关键】键盘弹起时，至少保留 35% 的屏幕给模型 */
-                transition: flex 0.3s; /* 平滑过渡 */
+                flex: 0 0 45%; /* 固定占 45% 高度，不许伸缩 */
+                min-height: 250px; /* 最小高度保障 */
             }
             #chat-container {
-                flex: 6; width: 100%;
-                border-radius: 20px 20px 0 0; /* 顶部圆角，更好看 */
+                flex: 1; /* 剩下空间全给它 */
+                width: 100%;
+                min-height: 0; /* 【关键】允许它在必要时缩小，防止溢出 */
             }
         }
 
         /* --- 聊天组件 --- */
-        #header { background: #6c5ce7; color: white; padding: 15px; display: flex; justify-content: space-between; align-items: center; font-weight: bold; }
-        .icon-btn { padding: 5px 10px; background: rgba(0,0,0,0.15); border-radius: 5px; cursor: pointer; }
-        #chat-window { flex: 1; overflow-y: auto; padding: 15px; background: #f5f7fa; scroll-behavior: smooth; }
+        #header { background: #6c5ce7; color: white; padding: 12px 15px; font-weight: bold; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+        #chat-window {
+            flex: 1; /* 占满中间区域 */
+            overflow-y: auto; /* 允许内部滚动 */
+            padding: 15px; background: #f5f7fa;
+            overscroll-behavior: contain; /* 防止滚动穿透 */
+        }
+        #input-area {
+            display: flex; padding: 10px; background: white;
+            border-top: 1px solid #eee; flex-shrink: 0; /* 防止被压扁 */
+        }
+
+        /* --- 其他通用样式 --- */
+        .icon-btn { cursor: pointer; padding: 5px 10px; background: rgba(0,0,0,0.15); border-radius: 5px; }
         .message-container { display: flex; flex-direction: column; margin-bottom: 15px; }
-        .message-info { font-size: 12px; color: #999; margin-bottom: 4px; padding: 0 8px; }
-        .message-bubble { padding: 12px 16px; border-radius: 18px; max-width: 85%; word-wrap: break-word; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .message-info { font-size: 12px; color: #999; margin-bottom: 4px; padding: 0 5px; }
+        .message-bubble { padding: 10px 14px; border-radius: 16px; max-width: 85%; word-wrap: break-word; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
         .self { align-items: flex-end; } .self .message-bubble { background: #6c5ce7; color: white; border-bottom-right-radius: 4px; }
         .other { align-items: flex-start; } .other .message-bubble { background: white; color: #333; border-bottom-left-radius: 4px; }
         .pico { align-items: flex-start; } .pico .message-info { color: #e84393; font-weight: bold; } .pico .message-bubble { background: #fff0f6; color: #333; border: 2px solid #f8a5c2; border-bottom-left-radius: 4px; }
-        .system { align-items: center; margin: 10px 0; } .system .message-bubble { background: #eee; color: #666; font-size: 12px; padding: 4px 12px; }
-        #input-area { display: flex; padding: 10px; background: white; border-top: 1px solid #eee; }
+        .system { align-items: center; margin: 10px 0; } .system .message-bubble { background: #eee; color: #666; font-size: 12px; padding: 4px 12px; border-radius: 12px; }
         #user-input { flex: 1; padding: 12px; border: 2px solid #eee; border-radius: 25px; font-size: 16px; outline: none; }
         #user-input:focus { border-color: #6c5ce7; }
-        #send-btn { background: #6c5ce7; color: white; border: none; padding: 0 20px; margin-left: 10px; border-radius: 20px; font-weight: bold; }
-
-        /* --- 浮层 --- */
-        .overlay { position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(5px); }
-        .modal-box { background: white; padding: 25px; border-radius: 20px; width: 85%; max-width: 400px; max-height: 80vh; overflow-y: auto; }
-        #login-overlay { z-index: 10000; } #studio-overlay { display: none; }
+        #send-btn { background: #6c5ce7; color: white; border: none; padding: 0 20px; margin-left: 10px; border-radius: 25px; font-weight: bold; }
+        .overlay { position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:9999; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(5px); }
+        .modal-box { background: white; padding: 25px; border-radius: 20px; width: 90%; max-width: 450px; max-height: 80vh; overflow-y: auto; }
+        #login-overlay { z-index: 10000; } #studio-overlay { display: none; z-index: 9000; }
         #username-input { width: 80%; padding: 12px; margin: 20px 0; border: 2px solid #6c5ce7; border-radius: 10px; font-size: 18px; text-align: center; outline: none; }
-        #login-btn { background: #6c5ce7; color: white; border: none; padding: 12px 40px; border-radius: 30px; font-size: 18px; font-weight: bold; width: 80%; }
+        #login-btn { background: #6c5ce7; color: white; border: none; padding: 12px 40px; border-radius: 30px; font-size: 18px; font-weight: bold; }
         #login-btn:disabled { background: #b2bec3; opacity: 0.7; }
-        .model-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px; margin-top: 15px; }
-        .model-card { background: #f8f9fa; padding: 10px; border-radius: 10px; text-align: center; border: 2px solid transparent; cursor: pointer; }
-        .model-card.active { border-color: #6c5ce7; background: #e0dfff; font-weight: bold; }
-        .chip { display: inline-block; background: #eee; padding: 6px 12px; border-radius: 15px; margin: 5px; font-size: 14px; cursor: pointer; }
-        #toast-container { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 11000; text-align: center; width: 100%; }
-        .toast { display: inline-block; background: rgba(0,0,0,0.8); color: white; padding: 8px 20px; border-radius: 20px; margin-top: 10px; animation: fadeOut 3s forwards 2s; }
-        @keyframes fadeOut { to { opacity: 0; visibility: hidden; } }
+        .model-list { display: grid; grid-template-columns: repeat(auto-fill,minmax(90px,1fr)); gap:10px; margin-top:15px; }
+        .model-card { background:#f8f9fa; padding:10px; border-radius:10px; text-align:center; border:2px solid transparent; }
+        .model-card.active { border-color:#6c5ce7; background:#e0dfff; font-weight:bold; }
+        .chip { display:inline-block; background:#eee; padding:6px 12px; border-radius:15px; margin:5px; cursor:pointer; }
+        #toast-container { position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:11000; width:80%; text-align:center; }
+        .toast { display:inline-block; background:rgba(0,0,0,0.8); color:white; padding:8px 20px; border-radius:20px; margin-bottom:10px; animation:fadeOut 3s forwards 2s; }
+        @keyframes fadeOut{to{opacity:0;visibility:hidden}}
+        .audio-player { margin-top:8px; height:32px; width:100%; opacity:0.8; border-radius:16px; }
     </style>
 </head>
 <body>
@@ -98,22 +107,16 @@
         let app_pixi, model, myUser="", currentModelId="", audioCtx, analyser, dataArray, isTalking=false;
         let isDragging=false, dragData, initialScale, initialDist;
 
-        // --- 1. 连接 & 登录 ---
+        // --- 连接 ---
         const loginBtn = document.getElementById('login-btn');
         socket.on('connect', ()=>{});
         socket.on('server_ready', ()=>{ loginBtn.textContent="进入直播间"; loginBtn.disabled=false; });
         socket.on('disconnect', ()=>{ loginBtn.textContent="已断开..."; loginBtn.disabled=true; });
-        loginBtn.onclick = () => {
-            let n = document.getElementById('username-input').value.trim();
-            if(n) { myUser=n; loginBtn.disabled=true; loginBtn.textContent="登录中..."; socket.emit('login',{username:n}); initAudio(); }
-        };
-        socket.on('login_success', (d) => {
-            document.getElementById('login-overlay').style.display='none';
-            if(d.current_model.path) loadModel(d.current_model.path);
-        });
-        socket.on('login_failed', (d) => { alert(d.error); loginBtn.disabled=false; loginBtn.textContent="重试"; });
+        loginBtn.onclick=()=>{let n=document.getElementById('username-input').value.trim();if(n){myUser=n;loginBtn.disabled=true;loginBtn.textContent="登录中...";socket.emit('login',{username:n});initAudio();}};
+        socket.on('login_success',(d)=>{document.getElementById('login-overlay').style.display='none';if(d.current_model.path)loadModel(d.current_model.path);});
+        socket.on('login_failed',(d)=>{alert(d.error);loginBtn.disabled=false;loginBtn.textContent="重试";});
 
-        // --- 2. Live2D 核心 (移动端优化版) ---
+        // --- Live2D ---
         async function loadModel(path) {
             if(!app_pixi) {
                 app_pixi = new PIXI.Application({ view:document.getElementById('live2d-canvas'), autoStart:true, resizeTo:document.getElementById('stage-container'), transparent:true });
@@ -128,84 +131,52 @@
                 if(model.internalModel.motionManager) model.internalModel.motionManager.startRandomMotion('Idle');
             } catch(e) { console.error(e); showToast("❌ 模型加载失败","error"); }
         }
-
-        function resetModel() {
-            if(!model||!app_pixi) return;
-            const st = document.getElementById('stage-container');
-            const isPortrait = st.clientHeight > st.clientWidth;
-            // 移动端(竖屏)给更小的缩放，防止爆框
-            const scaleFactor = isPortrait ? 0.85 : 0.95; 
-            const scale = Math.min(st.clientWidth/model.width, st.clientHeight/model.height) * scaleFactor;
-            
-            model.scale.set(scale);
-            model.x = (st.clientWidth - model.width*scale)/2;
-            model.y = st.clientHeight - model.height*scale;
-            
-            // 移动端稍微抬高一点，防止被聊天框圆角遮住脚
-            if(isPortrait) model.y -= 20;
+        function resetModel() { 
+            if(model&&app_pixi){
+                const st=document.getElementById('stage-container');
+                const isPortrait = st.clientHeight > st.clientWidth;
+                // 移动端(竖屏)缩放更小一点，位置再抬高一点
+                const scaleFactor = isPortrait ? 0.8 : 0.95; 
+                const scale=Math.min(st.clientWidth/model.width,st.clientHeight/model.height)*scaleFactor;
+                model.scale.set(scale);
+                model.x=(st.clientWidth-model.width*scale)/2;
+                model.y=st.clientHeight-model.height*scale;
+                if(isPortrait) model.y -= 50; // 移动端额外抬高
+            } 
         }
-        // 绑定归位按钮
-        document.getElementById('reset-btn').onclick = resetModel;
-        window.addEventListener('resize', () => setTimeout(resetModel, 100));
+        document.getElementById('reset-btn').onclick=resetModel;
+        window.addEventListener('resize',()=>setTimeout(resetModel,100));
 
         function initInteraction() {
             const stage = document.getElementById('stage-container');
-            app_pixi.stage.interactive = true;
-            app_pixi.stage.on('pointerdown', onDragStart).on('pointerup', onDragEnd).on('pointerupoutside', onDragEnd).on('pointermove', onDragMove);
-            // 双指缩放支持
-            stage.addEventListener('touchstart', (e) => {
-                if (e.touches.length === 2 && model) {
-                    isDragging = false;
-                    initialDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                    initialScale = model.scale.x;
-                }
-            });
-            stage.addEventListener('touchmove', (e) => {
-                if (e.touches.length === 2 && model && initialDist) {
-                    e.preventDefault();
-                    const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                    model.scale.set(initialScale * (dist / initialDist));
-                }
-            });
-        }
-        function onDragStart(e) { if(model && e.data.originalEvent.touches?.length !== 2){ isDragging=true; dragData=e.data; model.alpha=0.8; } }
-        function onDragEnd() { isDragging=false; if(model)model.alpha=1; }
-        function onDragMove() { if(isDragging&&model){ const p=dragData.getLocalPosition(model.parent); model.x=p.x-model.width/2; model.y=p.y-model.height/2; } }
-
-        // --- 3. 功能函数 ---
-        function lipSync() {
-            if(!model||!analyser||!isTalking)return;
-            analyser.getByteFrequencyData(dataArray);
-            let sum=0; for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];
-            if(model.internalModel?.coreModel) model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', Math.min(1.0,(sum/dataArray.length)/30));
-        }
-        function triggerMotion(emo) {
-            if(!model?.internalModel?.motionManager)return;
-            try {
-                let m=model.internalModel.motionManager;
-                switch(emo){ case 'HAPPY':m.startRandomMotion(m.motionGroups.includes('Charm')?'Charm':'TapBody');break; case 'ANGRY':case 'SHOCK':m.startRandomMotion(m.motionGroups.includes('Shame')?'Shame':'Shake');break; default:m.startRandomMotion('Idle'); }
-                if(model.internalModel.settings.expressions){ let idx=0;if(emo==='SAD')idx=1;else if(emo==='ANGRY')idx=3;else if(emo==='HAPPY')idx=4;else if(emo==='SHOCK')idx=5; if(model.internalModel.settings.expressions[idx])model.expression(model.internalModel.settings.expressions[idx].Name); }
-            } catch(e){}
+            app_pixi.stage.interactive=true;
+            app_pixi.stage.on('pointerdown',(e)=>{if(model&&(!e.data.originalEvent.touches||e.data.originalEvent.touches.length===1)){isDragging=true;dragData=e.data;model.alpha=0.8;}});
+            app_pixi.stage.on('pointerup',()=>{isDragging=false;if(model)model.alpha=1;}).on('pointerupoutside',()=>{isDragging=false;if(model)model.alpha=1;});
+            app_pixi.stage.on('pointermove',()=>{if(isDragging&&model){const p=dragData.getLocalPosition(model.parent);model.x=p.x-model.width/2;model.y=p.y-model.height/2;}});
+            stage.addEventListener('wheel',(e)=>{e.preventDefault();if(model){model.scale.x*=(e.deltaY<0?1.1:0.9);model.scale.y=model.scale.x;}},{passive:false});
+            stage.addEventListener('touchstart',(e)=>{if(e.touches.length===2&&model){isDragging=false;initialDist=Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY);initialScale=model.scale.x;}});
+            stage.addEventListener('touchmove',(e)=>{if(e.touches.length===2&&model&&initialDist){e.preventDefault();const dist=Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY);model.scale.set(initialScale*(dist/initialDist));}});
         }
 
-        // --- 4. UI & 消息 ---
+        // --- 业务 ---
+        function lipSync(){if(!model||!analyser||!isTalking)return;analyser.getByteFrequencyData(dataArray);let sum=0;for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];if(model.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',Math.min(1.0,(sum/dataArray.length)/30));}
+        function triggerMotion(emo){if(!model?.internalModel?.motionManager)return;try{let m=model.internalModel.motionManager;switch(emo){case 'HAPPY':if(m.motionGroups.includes('Charm'))m.startRandomMotion('Charm');else m.startRandomMotion('TapBody');break;case 'ANGRY':case 'SHOCK':if(m.motionGroups.includes('Shame'))m.startRandomMotion('Shame');else m.startRandomMotion('Shake');break;default:m.startRandomMotion('Idle');}if(model.internalModel.settings.expressions){let idx=0;if(emo==='SAD')idx=1;else if(emo==='ANGRY')idx=3;else if(emo==='HAPPY')idx=4;else if(emo==='SHOCK')idx=5;if(model.internalModel.settings.expressions[idx])model.expression(model.internalModel.settings.expressions[idx].Name);}}catch(e){}}
         document.getElementById('studio-btn').onclick=()=>{document.getElementById('studio-overlay').style.display='flex';socket.emit('get_studio_data');};
         socket.on('studio_data',(d)=>{const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id;d.models.forEach(m=>{let el=document.createElement('div');el.className=`model-card ${m.id===d.current_id?'active':''}`;el.innerHTML=`<div>${m.name}</div>${m.id!==d.current_id?`<div class="btn-del" onclick="delModel('${m.id}',event)">🗑️</div>`:''}`;el.onclick=()=>socket.emit('switch_model',{id:m.id});list.appendChild(el);if(m.id===d.current_id)document.getElementById('persona-text').value=m.persona;});});
-        socket.on('model_switched',(m)=>{loadModel(m.path);if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');showToast(`✨ 切换为 ${m.name}`);});
+        socket.on('model_switched',(m)=>{loadModel(m.path);if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');showToast(`✨ 已切换为 ${m.name}`);});
         window.delModel=(id,e)=>{e.stopPropagation();if(confirm('删除？'))socket.emit('delete_model',{id});};window.dlModel=(n)=>socket.emit('download_model',{name:n});
         document.getElementById('save-persona-btn').onclick=()=>socket.emit('save_persona',{id:currentModelId,text:document.getElementById('persona-text').value});
 
         socket.on('chat_message',(d)=>addMsg(d.text,d.sender,d.sender===myUser?'self':'other'));
         socket.on('system_message',(d)=>addMsg(d.text,'系统','system'));
         socket.on('response',(d)=>{addMsg(d.text,'Pico','pico',d.emotion);triggerMotion(d.emotion||'NORMAL');});
-        
         let lastPico=null;
         socket.on('audio_response',(d)=>{if(d.audio&&lastPico){let a=new Audio();a.crossOrigin="anonymous";a.src=d.audio;let ui=document.createElement('audio');ui.className='audio-player';ui.controls=true;ui.src=d.audio;lastPico.appendChild(ui);document.getElementById('chat-window').scrollTop=99999;if(audioCtx){if(audioCtx.state==='suspended')audioCtx.resume();try{let s=audioCtx.createMediaElementSource(a);s.connect(analyser);analyser.connect(audioCtx.destination);a.onplay=()=>{isTalking=true};a.onpause=a.onended=()=>{isTalking=false;if(model?.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',0)};}catch(e){}}a.play().catch(()=>{});}});
+        socket.on('toast',(d)=>showToast(d.text,d.type));
 
         function initAudio(){if(!audioCtx)try{audioCtx=new(window.AudioContext||window.webkitAudioContext)();analyser=audioCtx.createAnalyser();analyser.fftSize=512;dataArray=new Uint8Array(analyser.frequencyBinCount);}catch(e){}}
         function addMsg(t,u,y,e){let d=document.createElement('div');d.className=`message-container ${y}`;if(y!=='system')d.innerHTML=`<div class="message-info">${u} ${e?`[${e}]`:''}</div>`;d.innerHTML+=`<div class="message-bubble">${t}</div>`;document.getElementById('chat-window').appendChild(d);document.getElementById('chat-window').scrollTop=99999;if(y==='pico')lastPico=d;}
-        function showToast(m,t='success'){let d=document.createElement('div');d.className='toast';d.textContent=m;if(t==='error'||t==='info')d.style.backgroundColor=t==='error'?'#d63031':'#0984e3';document.getElementById('toast-container').appendChild(d);setTimeout(()=>d.remove(),3500);}
-        
+        function showToast(m,t='success'){let d=document.createElement('div');d.className='toast';d.textContent=m;if(t==='error'||t==='info')d.style.backgroundColor=t==='error'?'#d63031':(t==='info'?'#0984e3':'#00b894');document.getElementById('toast-container').appendChild(d);setTimeout(()=>d.remove(),3500);}
         const send=()=>{let i=document.getElementById('user-input');if(i.value.trim()){socket.emit('message',{text:i.value.trim()});i.value='';}};
         document.getElementById('send-btn').onclick=send; document.getElementById('user-input').onkeypress=(e)=>{if(e.key==='Enter')send();};
     </script>
