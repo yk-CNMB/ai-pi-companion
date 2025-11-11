@@ -132,7 +132,7 @@ def on_message(d):
     msg = d['text']
 
     # --- 权限指令 ---
-    if msg.strip() == "/管理员":
+    if msg.strip() == "/好像要个姐姐摸我的头说我已经做的很好了":
         if sender_name == "YK":
             users[sid]['is_admin'] = True
             emit('admin_unlocked') # 发送解锁信号
@@ -236,3 +236,4 @@ def on_dl(d):
     if name in ["Mao", "Natori", "Rice", "Wanko"]:
         emit('toast', {'text': f'🚀 开始下载 {name}...', 'type': 'info'})
         socketio.start_background_task(bg_dl_task, name)
+
