@@ -7,12 +7,12 @@
 
 
 作者言：
-1，网址（现在）是:https://huge-polished-powerful-refuse.trycloudflare.com/ 来玩哦
-2，我前端会做但是难看的像坨屎，所以是ai做的，懒得看代码修bug，所以除了基础部分以外其他的也是ai写的
-没有高中毕业所以懒得写介绍也是ai做的，你要骂我冲着我来，别伤害我ai叠。
-3，会考虑买域名的，本来就想买结果cloudflare慢的和啥一样
-4，没有合适的live2d和语音，所以都是随便找的一些...后面肯定会更新的，有好的也给我推荐一下
-
+1，网址（现在）是:https://huge-polished-powerful-refuse.trycloudflare.com/  来玩哦
+  2，我前端会做但是难看的像坨屎，所以是ai做的，懒得看代码修bug，所以除了基础部分以外其他的也是ai写的
+  没有高中毕业所以懒得写介绍也是ai做的，你要骂我冲着我来，别伤害我ai叠。
+  3，会考虑买域名的，本来就想买结果cloudflare慢的和啥一样
+  4，没有合适的live2d和语音，所以都是随便找的一些...后面肯定会更新的，有好的也给我推荐一下
+  5，/记  是记录重要记忆用的，普通记忆也记但是怕垃圾信息多了拖慢响应
 
 🎮 如何使用：Pico 指南
 
@@ -302,5 +302,6 @@ bash setup_and_run.sh
 cd ~/ai-pi-companion
 
 ./setup\_and\_run.sh
+
 
 
