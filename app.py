@@ -1,6 +1,6 @@
 # =======================================================================
-# Pico AI Server - app.py (本地存储版)
-# 后端不再存储任何公共聊天记录，只负责实时转发
+# Pico AI Server - app.py (无状态版)
+# 后端不再存储任何个人记忆或聊天记录
 # =======================================================================
 import os, json, uuid, asyncio, time, glob, shutil, re
 import eventlet
@@ -17,10 +17,10 @@ SERVER_VERSION = str(int(time.time()))
 
 # --- 目录 & 配置 ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MEMORIES_DIR = os.path.join(BASE_DIR, "memories")
+# 【移除】不再需要 MEMORIES_DIR
 AUDIO_DIR = os.path.join(BASE_DIR, "static", "audio")
 MODELS_DIR = os.path.join(BASE_DIR, "static", "live2d")
-for d in [MEMORIES_DIR, AUDIO_DIR, MODELS_DIR]: os.makedirs(d, exist_ok=True)
+for d in [AUDIO_DIR, MODELS_DIR]: os.makedirs(d, exist_ok=True)
 
 CONFIG = {}
 try:
@@ -31,22 +31,9 @@ if CONFIG.get("GEMINI_API_KEY"):
     try: client = genai.Client(api_key=CONFIG.get("GEMINI_API_KEY"))
     except Exception as e: print(f"API Error: {e}")
 
-# --- 功能函数 (记忆, TTS, 模型扫描) ---
-def load_user_memories(u):
-    try:
-        p = os.path.join(MEMORIES_DIR, f"{''.join([c for c in u if c.isalnum()]).lower() or 'default'}.json")
-        with open(p, "r", encoding="utf-8") as f: return json.load(f)
-    except: return []
-def save_user_memory(u, f_text):
-    p = os.path.join(MEMORIES_DIR, f"{''.join([c for c in u if c.isalnum()]).lower() or 'default'}.json")
-    m = load_user_memories(u); m.append(f_text) # 修复: 之前版本保存的是对象，现在只存文本
-    with open(p, "w", encoding="utf-8") as f: json.dump(m[-50:], f, ensure_ascii=False)
-    return True
-def clear_user_memory(u):
-    p = os.path.join(MEMORIES_DIR, f"{''.join([c for c in u if c.isalnum()]).lower() or 'default'}.json")
-    if os.path.exists(p): os.remove(p); return True
-    return False
+# --- 【移除】所有本地记忆函数 (load/save/clear) ---
 
+# --- 模型管理 (保持不变) ---
 CURRENT_MODEL = {"id": "default", "path": "", "persona": ""}
 def scan_models():
     ms = []
@@ -65,6 +52,7 @@ def init_model():
     if t: CURRENT_MODEL = t
 init_model()
 
+# --- TTS ---
 def bg_tts(text, room=None, sid=None):
     clean = re.sub(r'\[(.*?)\]', '', text).strip()
     if not clean: return
@@ -92,18 +80,16 @@ def pico_v(v):
     return r
 
 # --- SocketIO ---
-users = {} # {sid: {'username': 'YK', 'is_admin': False}}
-chatroom_chat = None # 依然保留群聊上下文
-
-# 【核心删除】
-# chatroom_history = [] 
-# add_to_history()
-# 这两个函数已经不需要了
+users = {}
+chatroom_chat = None # 群聊会话依然在服务器，但*不*包含个人记忆
 
 def init_chatroom():
     global chatroom_chat
     if not client: return
-    chatroom_chat = client.chats.create(model="gemini-2.5-flash", config={"system_instruction": CURRENT_MODEL['persona']})
+    chatroom_chat = client.chats.create(
+        model="gemini-2.5-flash",
+        config={"system_instruction": CURRENT_MODEL['persona']}
+    )
     print(f"🏠 聊天室已重置 (人设: {CURRENT_MODEL['name']})")
 
 @socketio.on('connect')
@@ -111,8 +97,7 @@ def on_connect(): emit('server_ready', {'status': 'ok'})
 @socketio.on('disconnect')
 def on_disconnect():
     if request.sid in users:
-        data = {'text': f"💨 {users.pop(request.sid)['username']} 离开了。"}
-        emit('system_message', data, to='lobby') # 依然广播，让前端存入历史
+        emit('system_message', {'text': f"💨 {users.pop(request.sid)['username']} 离开了。"}, to='lobby')
 
 @socketio.on('login')
 def on_login(d):
@@ -121,15 +106,11 @@ def on_login(d):
     join_room('lobby')
     if not chatroom_chat: init_chatroom()
     
-    # 【核心删除】不再发送 emit('chat_history', ...)
     emit('login_success', {'username': u, 'current_model': CURRENT_MODEL})
+    emit('system_message', {'text': f"🎉 欢迎 {u} 加入！"}, to='lobby', include_self=False)
     
-    # 广播加入消息，让前端存入历史
-    join_data = {'text': f"🎉 欢迎 {u} 加入！"}
-    emit('system_message', join_data, to='lobby', include_self=False)
-    
-    # 个人欢迎语 (这个不存历史)
-    welcome = f"[HAPPY] 嗨 {u}！我是{CURRENT_MODEL['name']}。\n聊天记录会保存在你的浏览器本地哦！"
+    # 开场白更新
+    welcome = f"[HAPPY] 嗨 {u}！我是{CURRENT_MODEL['name']}。\n你的聊天记录和个人记忆都会保存在你自己的浏览器上哦！\n发送 /清除记忆 就可以忘掉它们。"
     emit('response', {'text': welcome, 'sender': 'Pico', 'emotion': 'HAPPY'}, to=request.sid)
 
 @socketio.on('message')
@@ -138,29 +119,33 @@ def on_message(d):
     if sid not in users: return
     sender_name = users[sid]['username']
     msg = d['text']
+    # 【核心】接收前端发来的本地记忆
+    user_memories = d.get('memories', [])
 
-    if msg.strip() == "/管理员": # ... (管理员逻辑保持不变)
+    # --- 权限指令 ---
+    if msg.strip() == "/管理员":
         if sender_name == "YK":
             users[sid]['is_admin'] = True
-            emit('admin_unlocked'); emit('system_message', {'text': f"👑 管理员 {sender_name} 已上线！"}, to=sid)
+            emit('admin_unlocked')
+            emit('system_message', {'text': f"👑 管理员 {sender_name} 已上线！"}, to=sid)
         else:
             emit('system_message', {'text': "🤨 你不是 YK！"}, to=sid)
         return
-    if msg.strip() == "/清除记忆": # ... (个人记忆逻辑保持不变)
-        clear_user_memory(sender_name)
-        emit('response', {'text': "[SHOCK] 咦？我好像忘了点什么...", 'sender': 'Pico', 'emotion': 'SHOCK'}, to=sid)
-        return
+    # 【注意】/清除记忆 指令现在由前端处理，后端不再响应
+    
+    # 广播用户消息
+    emit('chat_message', {'text': msg, 'sender': sender_name}, to='lobby')
+    # 【移除】后端不再自动保存记忆
 
-    # 1. 广播用户消息 (前端会收到并存入历史)
-    chat_data = {'text': msg, 'sender': sender_name}
-    emit('chat_message', chat_data, to='lobby')
-    auto_save_memory(sender_name, msg)
-
-    # 2. AI 回复 (前端会收到并存入历史)
+    # AI 回复
     try:
         if not chatroom_chat: init_chatroom()
-        mems = load_user_memories(sender_name)
-        mem_ctx = f" (关于{sender_name}的记忆: {', '.join(mems[-3:])})" if mems else ""
+        
+        # 【核心】将本地记忆注入到 Prompt 中
+        mem_ctx = ""
+        if user_memories:
+             mem_ctx = f" (这是我需要记住的关于{sender_name}的事: {', '.join(user_memories)})"
+        
         resp = chatroom_chat.send_message(f"【{sender_name}说{mem_ctx}】: {msg}")
         
         emo = 'NORMAL'
@@ -168,8 +153,7 @@ def on_message(d):
         txt = resp.text.replace(match.group(0), '').strip() if match else resp.text
         if match: emo = match.group(1)
 
-        response_data = {'text': txt, 'sender': 'Pico', 'emotion': emo}
-        emit('response', response_data, to='lobby')
+        emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
         socketio.start_background_task(bg_tts, txt, room='lobby')
     except Exception as e:
         print(f"AI Error: {e}")
