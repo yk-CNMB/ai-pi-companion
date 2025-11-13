@@ -63,11 +63,11 @@
         let isDragging=false, dragData, initialScale, initialDist;
         let iAmAdmin = false;
 
-        // --- 1. 本地存储核心 (双数据库) ---
+        // --- 1. 本地存储核心 ---
         const HISTORY_KEY = 'pico_chat_history';
         const MEMORY_KEY = 'pico_user_memories'; // 专属记忆
         const HISTORY_LIMIT = 200;
-        const MEMORY_LIMIT = 50; // 专属记忆上限
+        const MEMORY_LIMIT = 50; 
 
         function saveHistory(type, data) {
             let h = JSON.parse(localStorage.getItem(HISTORY_KEY)) || [];
@@ -85,7 +85,7 @@
             });
             document.getElementById('chat-window').scrollTop = 99999;
         }
-        function clearLocalHistory() {
+        window.clearLocalHistory = () => {
              if (confirm('确定清除所有聊天记录吗？')) {
                 localStorage.removeItem(HISTORY_KEY);
                 document.getElementById('chat-window').innerHTML = "";
@@ -104,7 +104,7 @@
             }
             return false;
         }
-        function clearLocalMemories() {
+        window.clearLocalMemories = () => {
             if (confirm('确定清除你所有的专属记忆吗？')) {
                 localStorage.removeItem(MEMORY_KEY);
                 showToast('🧠 专属记忆已清除');
@@ -121,7 +121,7 @@
             document.getElementById('login-overlay').style.display='none';
             document.getElementById('room-title').textContent=`🤖 ${d.current_model.name}`;
             if(d.current_model.path)loadModel(d.current_model.path);
-            loadHistory(); // 登录成功，加载本地历史
+            loadHistory();
         });
         socket.on('login_failed',(d)=>{alert(d.error);loginBtn.disabled=false;loginBtn.textContent="重试";});
 
@@ -173,12 +173,15 @@
                     const fact = text.substring(3).trim();
                     if (fact && saveLocalMemory(fact)) {
                         addMsg(`(本地) 记住了: ${fact}`, '我', 'self'); // 本地回显
+                        showToast('🧠 专属记忆已保存');
                     }
                 } else if (text === '/清除记忆') {
-                    clearLocalMemories();
-                } else {
-                    // 只有非记忆指令（比如/管理员）才发给服务器
+                    clearLocalMemories(); // 本地清除
+                } else if (text === '/管理员') {
+                    // 管理员指令发给服务器
                     socket.emit('message', { text: text, memories: getLocalMemories() });
+                } else {
+                    showToast('未知指令 (本地指令仅支持 /记 和 /清除记忆)', 'error');
                 }
             } else {
                 // 普通聊天消息，自动附上本地记忆
