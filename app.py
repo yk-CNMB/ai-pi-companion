@@ -17,7 +17,7 @@ SERVER_VERSION = str(int(time.time()))
 
 # --- 目录 & 配置 ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# 【移除】不再需要 MEMORIES_DIR
+# 【注意】MEMORIES_DIR 已被移除
 AUDIO_DIR = os.path.join(BASE_DIR, "static", "audio")
 MODELS_DIR = os.path.join(BASE_DIR, "static", "live2d")
 for d in [AUDIO_DIR, MODELS_DIR]: os.makedirs(d, exist_ok=True)
@@ -31,9 +31,9 @@ if CONFIG.get("GEMINI_API_KEY"):
     try: client = genai.Client(api_key=CONFIG.get("GEMINI_API_KEY"))
     except Exception as e: print(f"API Error: {e}")
 
-# --- 【移除】所有本地记忆函数 (load/save/clear) ---
+# --- 【移除】所有本地记忆函数 ---
 
-# --- 模型管理 (保持不变) ---
+# --- 模型管理 ---
 CURRENT_MODEL = {"id": "default", "path": "", "persona": ""}
 def scan_models():
     ms = []
@@ -81,7 +81,7 @@ def pico_v(v):
 
 # --- SocketIO ---
 users = {}
-chatroom_chat = None # 群聊会话依然在服务器，但*不*包含个人记忆
+chatroom_chat = None
 
 def init_chatroom():
     global chatroom_chat
@@ -109,8 +109,7 @@ def on_login(d):
     emit('login_success', {'username': u, 'current_model': CURRENT_MODEL})
     emit('system_message', {'text': f"🎉 欢迎 {u} 加入！"}, to='lobby', include_self=False)
     
-    # 开场白更新
-    welcome = f"[HAPPY] 嗨 {u}！我是{CURRENT_MODEL['name']}。\n你的聊天记录和个人记忆都会保存在你自己的浏览器上哦！\n发送 /清除记忆 就可以忘掉它们。"
+    welcome = f"[HAPPY] 嗨 {u}！我是{CURRENT_MODEL['name']}。\n发送 /记 [内容] 来帮我记住你！"
     emit('response', {'text': welcome, 'sender': 'Pico', 'emotion': 'HAPPY'}, to=request.sid)
 
 @socketio.on('message')
@@ -119,8 +118,7 @@ def on_message(d):
     if sid not in users: return
     sender_name = users[sid]['username']
     msg = d['text']
-    # 【核心】接收前端发来的本地记忆
-    user_memories = d.get('memories', [])
+    user_memories = d.get('memories', []) # 接收本地记忆
 
     # --- 权限指令 ---
     if msg.strip() == "/管理员":
@@ -131,17 +129,15 @@ def on_message(d):
         else:
             emit('system_message', {'text': "🤨 你不是 YK！"}, to=sid)
         return
-    # 【注意】/清除记忆 指令现在由前端处理，后端不再响应
+    # 【移除】后端不再处理 /记 和 /清除记忆
     
     # 广播用户消息
     emit('chat_message', {'text': msg, 'sender': sender_name}, to='lobby')
-    # 【移除】后端不再自动保存记忆
 
     # AI 回复
     try:
         if not chatroom_chat: init_chatroom()
         
-        # 【核心】将本地记忆注入到 Prompt 中
         mem_ctx = ""
         if user_memories:
              mem_ctx = f" (这是我需要记住的关于{sender_name}的事: {', '.join(user_memories)})"
