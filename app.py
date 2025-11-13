@@ -121,7 +121,7 @@ def on_message(d):
     user_memories = d.get('memories', []) # 接收本地记忆
 
     # --- 权限指令 ---
-    if msg.strip() == "/管理员":
+    if msg.strip() == "/好想要个姐姐摸我说我已经做的很棒了":
         if sender_name == "YK":
             users[sid]['is_admin'] = True
             emit('admin_unlocked')
@@ -195,3 +195,4 @@ def on_dl(d):
     if name:
         emit('toast', {'text': f'🚀 开始下载 {name}...', 'type': 'info'})
         socketio.start_background_task(bg_dl_task, name)
+
