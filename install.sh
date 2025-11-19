@@ -1,48 +1,29 @@
 #!/bin/bash
-# 终极批发下载脚本 - 使用 Git 一次性拉取所有官方模型
+# 安装 GlaDOS 英文模型 (替换当前的 Sherpa 模型)
 
-REPO_URL="https://github.com/Live2D/CubismWebSamples.git"
-TEMP_DIR="temp_models_all"
-TARGET_BASE="static/live2d"
+BASE_DIR="static/voices/sherpa"
+mkdir -p "$BASE_DIR"
 
-echo "🚚 准备一次性批发所有官方模型..."
+echo "🧪 正在下载 GlaDOS 模型..."
 
-# 1. 清理工作区
-rm -rf "$TEMP_DIR"
-mkdir -p "$TEMP_DIR"
-mkdir -p "$TARGET_BASE"
-cd "$TEMP_DIR" || exit
+# 1. 清空旧模型
+rm -rf "$BASE_DIR"/*
 
-# 2. 初始化 Git 并设置稀疏检出
-echo "⚙️ 正在配置 Git..."
-git init -q
-git remote add -f origin "$REPO_URL"
-git config core.sparseCheckout true
+# 2. 下载并解压
+cd "$BASE_DIR"
+wget https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-glados.tar.bz2
+tar xvf vits-piper-en_US-glados.tar.bz2
 
-# 告诉 Git：我们只要 'Samples/Resources' 这个文件夹下的所有东西
-echo "Samples/Resources" >> .git/info/sparse-checkout
+# 3. 整理文件 (app.py 默认读取 model.onnx)
+# 解压后文件在 vits-piper-en_US-glados 子目录里，我们需要把它们拿出来
+mv vits-piper-en_US-glados/*.onnx model.onnx
+mv vits-piper-en_US-glados/tokens.txt .
+# 注意：Piper 模型通常不需要 lexicon.txt，或者它集成在里面了，或者我们需要 espeak-ng-data
+# 为了兼容我们的通用加载器，我们把 espeak 数据也放好
+mv vits-piper-en_US-glados/espeak-ng-data .
 
-# 3. 开始拉取 (因为模型多，可能需要几分钟)
-echo "⬇️ 开始同步官方仓库 (请耐心等待 2-5 分钟)..."
-# 尝试 master 分支，如果失败尝试 develop 分支 (官方有时会改默认分支)
-if git pull --depth=1 origin master -q || git pull --depth=1 origin develop -q; then
-    echo "✅ 同步成功！正在解压安装..."
-    
-    # 4. 将下载下来的所有模型文件夹移动到我们的 static/live2d 下
-    # 使用 cp -rn 防止覆盖已经存在的 Hiyori (如果你刚才手动修好了她)
-    cp -rn Samples/Resources/* "../$TARGET_BASE/"
-    
-    # 5. 清理临时文件
-    cd ..
-    rm -rf "$TEMP_DIR"
-    
-    echo "----------------------------------------"
-    echo "🎉 大功告成！你现在拥有了以下模型："
-    ls -F "$TARGET_BASE" | grep "/"
-    echo "👉 快去网页右上角的⚙️齿轮里切换试试吧！"
-else
-    echo "❌ 同步失败！请检查树莓派的网络连接。"
-    cd ..
-    rm -rf "$TEMP_DIR"
-    exit 1
-fi
+# 清理
+rm vits-piper-en_US-glados.tar.bz2
+rm -rf vits-piper-en_US-glados
+
+echo "⚠️ 注意：此模型只能说英语！请在工作室选择 'Sherpa VITS' 并发送英文测试。"
