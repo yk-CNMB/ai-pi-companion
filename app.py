@@ -1,5 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (语法严格修复版)
+# Pico AI Server - app.py (语法完美修复版)
 # 启动: gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:5000 app:app
 # =======================================================================
 import os
@@ -42,7 +42,7 @@ PIPER_BIN = os.path.join(BASE_DIR, "piper_engine", "piper")
 for d in [MEMORIES_DIR, AUDIO_DIR, MODELS_DIR, VOICES_DIR]:
     os.makedirs(d, exist_ok=True)
 
-# --- 3. API 配置 (已修复缩进) ---
+# --- 3. API 配置 ---
 CONFIG = {}
 try:
     with open("config.json", "r") as f:
@@ -64,9 +64,9 @@ else:
 
 # --- 4. 核心功能函数 ---
 
-# 记忆管理
+# 记忆管理 (实际存储在客户端，后端仅保留空壳函数以防报错)
 def load_user_memories(u):
-    return [] # 记忆已移交前端管理
+    return []
 
 # 模型配置管理
 CURRENT_MODEL = {"id": "default", "path": "", "persona": "", "voice": "zh-CN-XiaoxiaoNeural", "rate": "+0%", "pitch": "+0Hz"}
@@ -85,8 +85,7 @@ def get_model_config(model_id):
         try:
             with open(p, "r", encoding="utf-8") as f:
                 data.update(json.load(f))
-        except:
-            pass
+        except: pass
     return data
 
 def save_model_config(model_id, data):
@@ -333,6 +332,9 @@ def on_switch(d):
 
 @socketio.on('save_settings')
 def on_save_settings(d):
+    # 【修复】把 global 放在最前面！
+    global CURRENT_MODEL 
+    
     if not is_admin(request.sid): return emit('toast', {'text': '❌ 权限不足', 'type': 'error'})
     
     updated = save_model_config(d['id'], {
@@ -346,7 +348,6 @@ def on_save_settings(d):
     })
     
     if CURRENT_MODEL['id'] == d['id']:
-        global CURRENT_MODEL
         CURRENT_MODEL.update(updated)
         init_chatroom()
         emit('model_switched', CURRENT_MODEL, to='lobby') # 广播更新位置
