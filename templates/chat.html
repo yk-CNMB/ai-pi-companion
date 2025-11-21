@@ -10,15 +10,20 @@
     <script src="/static/js/index.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <style>
-        /* ... 样式与之前完全一致，为了省流请保留之前的 ... */
-        /* ... 如果丢失了，请用上一版本的样式 ... */
+        /* --- 布局 --- */
         body{font-family:"Segoe UI",sans-serif;margin:0;padding:0;height:100vh;background-color:#2d3436;display:flex;flex-direction:row;overflow:hidden;color:#333}
         #stage-container{flex:1;position:relative;background-image:radial-gradient(circle,#636e72 10%,#2d3436 90%);overflow:hidden;touch-action:none}
         #live2d-canvas{position:absolute;top:0;left:0;width:100%;height:100%}
         #chat-container{width:400px;display:flex;flex-direction:column;background:rgba(255,255,255,0.95);z-index:10;box-shadow:-5px 0 15px rgba(0,0,0,0.2)}
         @media(max-width:768px){body{flex-direction:column}#stage-container{flex:4;min-height:35vh}#chat-container{width:100%;flex:6;min-height:0}}
+
+        /* --- 头部 --- */
         #header{background:#6c5ce7;color:white;padding:12px 15px;text-align:center;font-weight:bold;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
         .icon-btn{cursor:pointer;padding:6px 10px;background:rgba(0,0,0,0.15);border-radius:6px;user-select:none}
+        /* 【修改】这里去掉了 display: none，让所有人都能看到设置按钮 */
+        #studio-btn { display: block; } 
+        
+        /* --- 聊天窗口 --- */
         #chat-window{flex:1;overflow-y:auto;padding:15px;background:#f5f7fa;overscroll-behavior:contain}
         .message-container{display:flex;margin-bottom:15px;flex-direction:column}
         .message-info{font-size:12px;color:#999;margin-bottom:4px;padding:0 5px}
@@ -28,30 +33,41 @@
         .pico{align-items:flex-start} .pico .message-info{color:#e84393;font-weight:bold} .pico .message-bubble{background:#fff0f6;color:#333;border:2px solid #f8a5c2;border-bottom-left-radius:4px}
         .emotion-tag{display:inline-block;font-size:0.8em;padding:1px 4px;border-radius:4px;background:rgba(232,67,147,0.1);color:#e84393;margin-left:5px}
         .system{align-items:center;margin:10px 0} .system .message-bubble{background:#eee;color:#666;font-size:12px;padding:4px 12px;border-radius:12px;box-shadow:none}
+        .audio-player{margin-top:8px;height:32px;width:100%;opacity:0.8;border-radius:16px}
+        
+        /* --- 输入区 --- */
         #input-area{display:flex;padding:10px;background:white;border-top:1px solid #eee;flex-shrink:0}
         #user-input{flex:1;padding:12px;border:1px solid #ddd;border-radius:25px;font-size:16px;outline:none}
         #send-btn{background:#6c5ce7;color:white;border:none;padding:0 20px;margin-left:10px;border-radius:25px;font-weight:bold}
+
+        /* --- 浮层 --- */
         .overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(5px)}
         .modal-box{background:white;padding:25px;border-radius:20px;width:90%;max-width:450px;max-height:80vh;overflow-y:auto}
         #login-overlay{z-index:10000} #studio-overlay{display:none;z-index:9000}
         #username-input{width:80%;padding:12px;margin:20px 0;border:2px solid #6c5ce7;border-radius:10px;font-size:18px;text-align:center;outline:none}
         #login-btn{background:#6c5ce7;color:white;border:none;padding:12px 40px;border-radius:30px;font-size:18px;font-weight:bold;transition:all 0.3s}
         #login-btn:disabled{background:#b2bec3;cursor:not-allowed;opacity:0.7}
-        #studio-btn { display: none; }
-        .admin-only { display: none; }
-        .slider-container { margin: 10px 0; }
-        .slider-label { font-size: 12px; color: #666; display: flex; justify-content: space-between; }
-        input[type="range"] { width: 100%; margin-top: 5px; }
-        .upload-box { border: 2px dashed #ccc; padding: 15px; text-align: center; border-radius: 10px; margin-top: 10px; cursor: pointer; }
+        
+        /* --- 工作室样式 --- */
         .model-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:10px;margin-top:15px}
         .model-card{background:#f8f9fa;padding:10px;border-radius:8px;text-align:center;cursor:pointer;border:2px solid transparent}
         .model-card.active{border-color:#6c5ce7;background:#e0dfff;font-weight:bold}
         .chip{display:inline-block;background:#eee;padding:6px 12px;border-radius:15px;margin:5px;cursor:pointer}
         .btn-del{color:red;font-size:12px;display:block;margin-top:5px}
+        
+        /* 【关键】默认隐藏敏感操作 */
+        .admin-only { display: none; }
+        
+        /* 调音台 */
+        .slider-container { margin: 10px 0; }
+        .slider-label { font-size: 12px; color: #666; display: flex; justify-content: space-between; }
+        input[type="range"] { width: 100%; margin-top: 5px; }
+        .upload-box { border: 2px dashed #ccc; padding: 15px; text-align: center; border-radius: 10px; margin-top: 10px; cursor: pointer; }
+        
+        /* Toast */
         #toast-container{position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:11000;text-align:center;width:100%}
         .toast{display:inline-block;background:rgba(0,0,0,0.8);color:white;padding:8px 20px;border-radius:20px;margin-top:10px;animation:fadeOut 3s forwards 2s}
         @keyframes fadeOut{to{opacity:0;visibility:hidden}}
-        .audio-player{margin-top:8px;height:32px;width:100%;opacity:0.8;border-radius:16px}
     </style>
 </head>
 <body>
@@ -62,31 +78,37 @@
         <div class="modal-box">
             <div style="display:flex;justify-content:space-between;align-items:center"><h3>🛠️ 工作室</h3><div onclick="document.getElementById('studio-overlay').style.display='none'" style="font-size:24px;padding:0 10px;cursor:pointer">×</div></div>
             
+            <!-- 所有人可见：模型切换 -->
             <div class="studio-section">
                 <h4>🎭 模型切换</h4>
                 <div id="model-list" class="model-list">加载中...</div>
             </div>
             
+            <!-- 管理员可见区域 -->
             <div class="admin-only">
                 <hr>
                 <h4>⚙️ 调音台 (<span id="persona-model-name"></span>)</h4>
-                <label style="font-size:12px;color:#666">人设:</label>
+                <label style="font-size:12px;color:#666">人设提示词:</label>
                 <textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea>
                 
                 <label style="font-size:12px;color:#666">声线:</label>
                 <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd">
-                    <option value="zh-CN-XiaoxiaoNeural">晓晓 (默认)</option>
-                    <option value="zh-CN-YunxiNeural">云希</option>
-                    <option value="zh-CN-liaoning-XiaobeiNeural">晓北</option>
-                    <option value="zh-TW-HsiaoChenNeural">晓臻</option>
+                    <option value="zh-CN-XiaoxiaoNeural">🇨🇳 晓晓 (默认·元气)</option>
+                    <option value="zh-CN-XiaoyiNeural">🇨🇳 晓伊 (温柔·御姐)</option>
+                    <option value="zh-CN-YunxiNeural">🇨🇳 云希 (阳光·少年)</option>
+                    <option value="zh-CN-liaoning-XiaobeiNeural">🤣 晓北 (东北话)</option>
+                    <option value="zh-CN-shaanxi-XiaoniNeural">🍜 晓妮 (陕西话)</option>
+                    <option value="zh-TW-HsiaoChenNeural">🇹🇼 晓臻 (台湾腔)</option>
+                    <option value="ja-JP-NanamiNeural">🇯🇵 七海 (日语·甜美)</option>
+                    <option value="sherpa-vits">🔥 Sherpa VITS (本地高性能)</option>
                 </select>
 
                 <div class="slider-container">
-                    <div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div>
+                    <div class="slider-label"><span>语速 (Rate)</span><span id="rate-val">0%</span></div>
                     <input type="range" id="rate-range" min="-50" max="50" value="0" oninput="updateVal('rate', this.value)">
                 </div>
                 <div class="slider-container">
-                    <div class="slider-label"><span>音调</span><span id="pitch-val">0Hz</span></div>
+                    <div class="slider-label"><span>音调 (Pitch)</span><span id="pitch-val">0Hz</span></div>
                     <input type="range" id="pitch-range" min="-50" max="50" value="0" oninput="updateVal('pitch', this.value)">
                 </div>
 
@@ -103,11 +125,14 @@
                     <input type="range" id="model-scale" min="0.1" max="2.0" step="0.05" oninput="previewTransform()">
                 </div>
 
-                <button id="save-settings-btn" style="width:100%;padding:10px;margin-top:10px;background:#6c5ce7;color:white;border:none;border-radius:10px">保存所有配置</button>
+                <button id="save-settings-btn" style="width:100%;padding:10px;margin-top:10px;background:#6c5ce7;color:white;border:none;border-radius:10px">保存配置 (人设/语音/位置)</button>
                 
-                <hr><h4>☁️ 上传/下载</h4>
-                <div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 .zip<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div>
+                <hr><h4>☁️ 上传模型 (.zip)</h4>
+                <div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div>
+                
+                <hr><h4>🌐 下载</h4><div><span class="chip" onclick="dlModel('Mao')">Mao</span><span class="chip" onclick="dlModel('Natori')">Natori</span><span class="chip" onclick="dlModel('Rice')">Rice</span></div>
             </div>
+            
             <hr><h4>🧹 本地缓存</h4><div><span class="chip" onclick="clearLocalHistory()">清除本地聊天记录</span><span class="chip" onclick="clearLocalMemories()">清除我的专属记忆</span></div>
         </div>
     </div>
@@ -117,33 +142,43 @@
 
     <script>
         const socket = io({reconnection:true});
-        let app_pixi, model, myUser="", currentModelId="", audioCtx, analyser, dataArray, isTalking=false;
+        let app_pixi, model, myUser="", currentModelId="", currentCfg={}, audioCtx, analyser, dataArray, isTalking=false;
         let isDragging=false, dragData, initialScale, initialDist, iAmAdmin=false;
 
         function updateVal(type, val) { document.getElementById(`${type}-val`).textContent = (val > 0 ? '+' : '') + val + (type==='rate'?'%':'Hz'); }
 
-        // --- 连接 & 登录 ---
+        // 实时预览位置
+        function previewTransform() {
+            if(!model) return;
+            const s = parseFloat(document.getElementById('model-scale').value);
+            const x = parseFloat(document.getElementById('model-x').value);
+            const y = parseFloat(document.getElementById('model-y').value);
+            document.getElementById('scale-val').textContent = s.toFixed(2);
+            document.getElementById('x-val').textContent = x.toFixed(2);
+            document.getElementById('y-val').textContent = y.toFixed(2);
+            const st = document.getElementById('stage-container');
+            const absScale = (st.clientHeight / model.height) * s;
+            model.scale.set(absScale);
+            model.x = (st.clientWidth * x) - (model.width / 2);
+            model.y = (st.clientHeight * y) - (model.height / 2);
+        }
+
+        // --- 连接 ---
         const loginBtn = document.getElementById('login-btn');
         socket.on('connect', ()=>{});
         socket.on('server_ready', ()=>{loginBtn.textContent="进入直播间";loginBtn.disabled=false;});
         socket.on('disconnect', ()=>{loginBtn.textContent="已断开...";loginBtn.disabled=true;});
-        loginBtn.onclick=()=>{let n=document.getElementById('username-input').value.trim();if(n){myUser=n;loginBtn.disabled=true;loginBtn.textContent="登录中...";
-            // 【核心】发送 Token 尝试自动登录管理员
-            socket.emit('login',{username:n, token: localStorage.getItem('pico_admin_token')});
-            initAudio();
-        }};
+        loginBtn.onclick=()=>{let n=document.getElementById('username-input').value.trim();if(n){myUser=n;loginBtn.disabled=true;loginBtn.textContent="登录中...";socket.emit('login',{username:n});initAudio();}};
         socket.on('login_success',(d)=>{
             document.getElementById('login-overlay').style.display='none';
             document.getElementById('room-title').textContent=`🤖 ${d.current_model.name}`;
-            // 如果服务器确认是管理员，点亮界面
-            if(d.is_admin) enableAdminUI();
-            if(d.current_model.path)loadModel(d.current_model.path, d.current_model); // 传入配置
+            currentCfg = d.current_model;
+            if(d.current_model.path)loadModel(d.current_model.path, d.current_model);
             loadHistory();
         });
         socket.on('login_failed',(d)=>{alert(d.error);loginBtn.disabled=false;loginBtn.textContent="重试";});
 
-        // --- Live2D ---
-        async function loadModel(path, config) {
+        async function loadModel(path, cfg) {
             if(!app_pixi) {
                 app_pixi = new PIXI.Application({ view:document.getElementById('live2d-canvas'), autoStart:true, resizeTo:document.getElementById('stage-container'), transparent:true });
                 initInteraction();
@@ -152,14 +187,12 @@
                 if(model) app_pixi.stage.removeChild(model);
                 model = await PIXI.live2d.Live2DModel.from(path);
                 app_pixi.stage.addChild(model);
-                // 应用保存的位置参数
-                applyTransform(config || {});
+                applyTransform(cfg || {}); // 应用位置
                 app_pixi.ticker.remove(lipSync); app_pixi.ticker.add(lipSync);
                 if(model.internalModel.motionManager) model.internalModel.motionManager.startRandomMotion('Idle');
             } catch(e) { console.error(e); showToast("❌ 模型加载失败","error"); }
         }
 
-        // 应用位置
         function applyTransform(cfg) {
             if(!model) return;
             const s = cfg.scale || 0.5;
@@ -171,50 +204,34 @@
             model.x = (st.clientWidth * x) - (model.width / 2);
             model.y = (st.clientHeight * y) - (model.height / 2);
         }
-        document.getElementById('reset-btn').onclick=()=>applyTransform({}); // 默认归位
-
-        // 预览位置 (用于滑块拖动时)
-        function previewTransform() {
-            if(!model) return;
-            const s = parseFloat(document.getElementById('model-scale').value);
-            const x = parseFloat(document.getElementById('model-x').value);
-            const y = parseFloat(document.getElementById('model-y').value);
-            
-            document.getElementById('scale-val').textContent = s.toFixed(2);
-            document.getElementById('x-val').textContent = x.toFixed(2);
-            document.getElementById('y-val').textContent = y.toFixed(2);
-
-            const st = document.getElementById('stage-container');
-            const absScale = (st.clientHeight / model.height) * s;
-            model.scale.set(absScale);
-            model.x = (st.clientWidth * x) - (model.width / 2);
-            model.y = (st.clientHeight * y) - (model.height / 2);
-        }
+        document.getElementById('reset-btn').onclick=()=>applyTransform(currentCfg);
+        window.addEventListener('resize',()=>setTimeout(()=>applyTransform(currentCfg),100));
 
         function initInteraction() { const s=document.getElementById('stage-container');app_pixi.stage.interactive=true;app_pixi.stage.on('pointerdown',(e)=>{if(model&&(!e.data.originalEvent.touches||e.data.originalEvent.touches.length===1)){isDragging=true;dragData=e.data;model.alpha=0.8;}});app_pixi.stage.on('pointerup',()=>{isDragging=false;if(model)model.alpha=1;}).on('pointerupoutside',()=>{isDragging=false;if(model)model.alpha=1;});app_pixi.stage.on('pointermove',()=>{if(isDragging&&model){const p=dragData.getLocalPosition(model.parent);model.x=p.x-model.width/2;model.y=p.y-model.height/2;}});s.addEventListener('wheel',(e)=>{e.preventDefault();if(model){model.scale.x*=(e.deltaY<0?1.1:0.9);model.scale.y=model.scale.x;}},{passive:false});s.addEventListener('touchstart',(e)=>{if(e.touches.length===2&&model){isDragging=false;initialDist=Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY);initialScale=model.scale.x;}});s.addEventListener('touchmove',(e)=>{if(e.touches.length===2&&model&&initialDist){e.preventDefault();model.scale.set(initialScale*(Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY)/initialDist));}}); }
         function lipSync(){if(!model||!analyser||!isTalking)return;analyser.getByteFrequencyData(dataArray);let sum=0;for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];if(model.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',Math.min(1.0,(sum/dataArray.length)/30));}
         function triggerMotion(emo){if(!model?.internalModel?.motionManager)return;try{let m=model.internalModel.motionManager;switch(emo){case 'HAPPY':if(m.motionGroups.includes('Charm'))m.startRandomMotion('Charm');else m.startRandomMotion('TapBody');break;case 'ANGRY':case 'SHOCK':if(m.motionGroups.includes('Shame'))m.startRandomMotion('Shame');else m.startRandomMotion('Shake');break;default:m.startRandomMotion('Idle');}if(model.internalModel.settings.expressions){let idx=0;if(emo==='SAD')idx=1;else if(emo==='ANGRY')idx=3;else if(emo==='HAPPY')idx=4;else if(emo==='SHOCK')idx=5;if(model.internalModel.settings.expressions[idx])model.expression(model.internalModel.settings.expressions[idx].Name);}}catch(e){}}
 
-        // --- 工作室 ---
         document.getElementById('studio-btn').onclick=()=>{document.getElementById('studio-overlay').style.display='flex';socket.emit('get_studio_data');};
         function closeStudio(){document.getElementById('studio-overlay').style.display='none';}
+        
         socket.on('studio_data',(d)=>{
             const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id;
             d.models.forEach(m=>{
                 let el=document.createElement('div');el.className=`model-card ${m.id===d.current_id?'active':''}`;
+                // 只有管理员能看到删除按钮
                 let delBtn=iAmAdmin&&m.id!==d.current_id?`<div class="btn-del" onclick="delModel('${m.id}',event)">🗑️</div>`:"";
-                el.innerHTML=`<div>${m.name}</div>${delBtn}`;el.onclick=()=>socket.emit('switch_model',{id:m.id});list.appendChild(el);
+                el.innerHTML=`<div>${m.name}</div>${delBtn}`;
+                el.onclick=()=>socket.emit('switch_model',{id:m.id});list.appendChild(el);
+                
                 if(m.id===d.current_id){
                     // 填充数据
                     document.getElementById('persona-model-name').textContent=m.name;
                     document.getElementById('persona-text').value=m.persona;
                     if(m.voice)document.getElementById('voice-select').value=m.voice;
-                    
                     let rate=parseInt(m.rate)||0, pitch=parseInt(m.pitch)||0;
                     document.getElementById('rate-range').value=rate; updateVal('rate',rate);
                     document.getElementById('pitch-range').value=pitch; updateVal('pitch',pitch);
-                    
-                    // 填充位置滑块
+                    // 填充位置
                     document.getElementById('model-scale').value = m.scale || 0.5;
                     document.getElementById('model-x').value = m.x || 0.5;
                     document.getElementById('model-y').value = m.y || 0.5;
@@ -222,8 +239,10 @@
                 }
             });
         });
+        
         socket.on('model_switched',(m)=>{
-            loadModel(m.path, m); // 传入配置，自动应用位置
+            currentCfg = m; // 更新当前配置
+            loadModel(m.path, m); 
             document.getElementById('room-title').textContent=`🤖 ${m.name}`;
             if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');
             showToast(`✨ 已切换为 ${m.name}`);
@@ -235,27 +254,16 @@
                 id:currentModelId, persona:document.getElementById('persona-text').value,
                 voice:document.getElementById('voice-select').value,
                 rate:(r>=0?'+':'')+r+'%', pitch:(p>=0?'+':'')+p+'Hz',
-                // 保存位置
-                scale: document.getElementById('model-scale').value,
-                x: document.getElementById('model-x').value,
-                y: document.getElementById('model-y').value
+                scale:document.getElementById('model-scale').value,
+                x:document.getElementById('model-x').value,
+                y:document.getElementById('model-y').value
             });
         };
+
         window.delModel=(id,e)=>{e.stopPropagation();if(confirm('删除？'))socket.emit('delete_model',{id});};window.dlModel=(n)=>socket.emit('download_model',{name:n});
         window.uploadFile=(f)=>{if(!f)return;let fd=new FormData();fd.append('file',f);showToast("📤 上传中...","info");fetch('/upload_model',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{if(d.success){showToast("✅ 成功");socket.emit('get_studio_data');}else showToast("❌ "+d.msg,"error")});}
-        
-        // --- 权限管理 ---
-        function enableAdminUI() {
-            iAmAdmin = true;
-            showToast("👑 管理员权限已解锁！");
-            document.getElementById('studio-btn').style.display = 'block'; // 显示设置按钮
-            document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'block');
-            // 保存 Token 到本地，下次自动登录
-            localStorage.setItem('pico_admin_token', 'pico_admin_secret');
-        }
-        socket.on('admin_unlocked', enableAdminUI);
+        socket.on('admin_unlocked', () => { iAmAdmin = true; showToast("👑 管理员权限已解锁！"); document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'block'); if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data'); });
 
-        // --- 消息 ---
         const HISTORY_KEY='pico_chat_history';const MEMORY_KEY='pico_user_memories';const HISTORY_LIMIT=200;const MEMORY_LIMIT=50;
         function saveHistory(type,data){let h=JSON.parse(localStorage.getItem(HISTORY_KEY))||[];h.push({type,data,ts:Date.now()});if(h.length>HISTORY_LIMIT)h=h.slice(-HISTORY_LIMIT);localStorage.setItem(HISTORY_KEY,JSON.stringify(h));}
         function loadHistory(){const h=JSON.parse(localStorage.getItem(HISTORY_KEY))||[];document.getElementById('chat-window').innerHTML="";h.forEach(i=>{if(i.type==='chat_message')addMsg(i.data.text,i.data.sender,i.data.sender===myUser?'self':'other');else if(i.type==='response')addMsg(i.data.text,'Pico','pico',i.data.emotion);else if(i.type==='system_message')addMsg(i.data.text,'系统','system');});document.getElementById('chat-window').scrollTop=99999;}
