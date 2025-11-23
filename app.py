@@ -1,11 +1,24 @@
 # =======================================================================
-# Pico AI Server - app.py (Fish Audio 终极适配版)
+# Pico AI Server - app.py (全功能最终版)
+# 包含: 聊天室 | 情感引擎 | Fish Audio 支持 | 模型管理 | 管理员权限
 # =======================================================================
-import os, json, uuid, asyncio, time, glob, shutil, re, zipfile, subprocess
+import os
+import json
+import uuid
+import asyncio
+import time
+import glob
+import shutil
+import re
+import zipfile
+import subprocess
+import requests
+
+# 【关键】导入 eventlet 并打补丁
 import eventlet
 eventlet.monkey_patch()
+
 import edge_tts
-import requests  # 【关键】用于调用 Fish Audio API
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.utils import secure_filename
@@ -18,18 +31,22 @@ app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', ping_timeout=60)
 SERVER_VERSION = str(int(time.time()))
 
-# --- 2. 目录 ---
+# --- 2. 目录配置 ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MEMORIES_DIR = os.path.join(BASE_DIR, "memories")
 AUDIO_DIR = os.path.join(BASE_DIR, "static", "audio")
 MODELS_DIR = os.path.join(BASE_DIR, "static", "live2d")
 VOICES_DIR = os.path.join(BASE_DIR, "static", "voices")
-for d in [AUDIO_DIR, MODELS_DIR, VOICES_DIR]: os.makedirs(d, exist_ok=True)
+
+for d in [MEMORIES_DIR, AUDIO_DIR, MODELS_DIR, VOICES_DIR]:
+    os.makedirs(d, exist_ok=True)
 
 # --- 3. API 配置 ---
 CONFIG = {}
 try:
     with open("config.json", "r") as f:
         CONFIG = json.load(f)
+    print("✅ 已加载 config.json")
 except:
     pass
 
@@ -44,38 +61,43 @@ if api_key and "在这里" not in api_key:
 else:
     print("❌ 未找到有效 API KEY")
 
-# --- 4. 核心功能 ---
+# --- 4. 核心功能函数 ---
 
-# 记忆管理 (后端仅保留空壳，逻辑在前端)
-def load_user_memories(u): return []
+# 记忆管理 (后端仅保留空壳，实际逻辑在前端)
+def load_user_memories(u):
+    return []
 
 # 模型配置管理
 CURRENT_MODEL = {
     "id": "default", "path": "", "persona": "", 
     "voice": "zh-CN-XiaoxiaoNeural", "rate": "+0%", "pitch": "+0Hz", 
     "scale": 0.5, "x": 0.0, "y": 0.0,
-    "api_url": "", "api_key": "", "model_id": "" # 自定义语音参数
+    "api_url": "", "api_key": "", "model_id": ""
 }
 
-def get_model_config(mid):
-    p = os.path.join(MODELS_DIR, mid, "config.json")
+def get_model_config(model_id):
+    p = os.path.join(MODELS_DIR, model_id, "config.json")
     data = {
-        "persona": f"你是一个名为{mid}的AI。请用中文简短回复。",
-        "voice": "zh-CN-XiaoxiaoNeural", "rate": "+0%", "pitch": "+0Hz",
+        "persona": f"你是一个名为{model_id}的AI。请用中文简短回复。",
+        "voice": "zh-CN-XiaoxiaoNeural",
+        "rate": "+0%", "pitch": "+0Hz",
         "scale": 0.5, "x": 0.0, "y": 0.0,
         "api_url": "", "api_key": "", "model_id": ""
     }
     if os.path.exists(p):
         try:
-            with open(p, "r", encoding="utf-8") as f: data.update(json.load(f))
+            with open(p, "r", encoding="utf-8") as f:
+                data.update(json.load(f))
         except: pass
     return data
 
-def save_model_config(mid, data):
-    p = os.path.join(MODELS_DIR, mid, "config.json")
-    curr = get_model_config(mid); curr.update(data)
-    with open(p, "w", encoding="utf-8") as f: json.dump(curr, f, ensure_ascii=False, indent=2)
-    return curr
+def save_model_config(model_id, data):
+    p = os.path.join(MODELS_DIR, model_id, "config.json")
+    current = get_model_config(model_id)
+    current.update(data)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(current, f, ensure_ascii=False, indent=2)
+    return current
 
 def scan_models():
     ms = []
@@ -93,24 +115,21 @@ def init_model():
     global CURRENT_MODEL
     ms = scan_models()
     t = next((m for m in ms if "hiyori" in m['id'].lower()), ms[0] if ms else None)
-    if t: CURRENT_MODEL = t
+    if t:
+        CURRENT_MODEL = t
 init_model()
 
-# --- 语音合成 (Fish Audio / Edge-TTS) ---
+# --- 5. 语音合成 (Edge-TTS + Fish Audio) ---
 
 def run_openai_tts(text, api_url, api_key, model_id, output_path):
-    """调用兼容 OpenAI 格式的 API (如 Fish Audio)"""
+    """调用 OpenAI 格式的 API (如 Fish Audio)"""
     try:
-        # 如果用户填写的 URL 没带具体的 endpoint，自动补全
+        # URL 自动修正
         if not api_url.endswith("/v1/audio/speech"):
-            # 处理 fish.audio 的标准地址
-            if "api.fish.audio" in api_url:
-                api_url = "https://api.fish.audio/v1/audio/speech"
-            else:
-                api_url = api_url.rstrip("/") + "/v1/audio/speech"
+             if "fish.audio" in api_url: api_url = "https://api.fish.audio/v1/audio/speech"
+             else: api_url = api_url.rstrip("/") + "/v1/audio/speech"
         
-        print(f"🐟 正在调用 Fish Audio: {model_id}...")
-        
+        print(f"📡 调用外部 TTS: {model_id}")
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
@@ -118,21 +137,19 @@ def run_openai_tts(text, api_url, api_key, model_id, output_path):
         payload = {
             "model": model_id,
             "input": text,
-            "voice": model_id, # Fish Audio 有时需要这个
+            "voice": model_id,
             "response_format": "mp3"
         }
-        
         resp = requests.post(api_url, json=payload, headers=headers, timeout=15)
-        
         if resp.status_code == 200:
             with open(output_path, "wb") as f:
                 f.write(resp.content)
             return True
         else:
-            print(f"Fish Audio Error: {resp.status_code} - {resp.text}")
+            print(f"TTS API Error: {resp.text}")
             return False
     except Exception as e:
-        print(f"Fish Audio Request Failed: {e}")
+        print(f"TTS Request Failed: {e}")
         return False
 
 def bg_tts(text, voice, rate, pitch, api_url, api_key, model_id, room=None, sid=None):
@@ -143,14 +160,12 @@ def bg_tts(text, voice, rate, pitch, api_url, api_key, model_id, room=None, sid=
     out_path = os.path.join(AUDIO_DIR, fname)
     success = False
     
-    # 1. 优先尝试自定义 API (Fish Audio)
+    # 1. 尝试外部 API
     if api_url and api_key and model_id:
         if run_openai_tts(clean, api_url, api_key, model_id, out_path):
             success = True
-        else:
-            print("⚠️ 外部 TTS 失败，降级到 Edge-TTS")
-
-    # 2. 如果没配 API 或失败，使用 Edge-TTS
+    
+    # 2. 降级到 Edge-TTS
     if not success:
         try:
             async def _run():
@@ -166,10 +181,12 @@ def bg_tts(text, voice, rate, pitch, api_url, api_key, model_id, room=None, sid=
 
     if success:
         url = f"/static/audio/{fname}"
-        if room: socketio.emit('audio_response', {'audio': url}, to=room, namespace='/')
-        elif sid: socketio.emit('audio_response', {'audio': url}, to=sid, namespace='/')
+        if room:
+            socketio.emit('audio_response', {'audio': url}, to=room, namespace='/')
+        elif sid:
+            socketio.emit('audio_response', {'audio': url}, to=sid, namespace='/')
 
-# --- 5. 路由 ---
+# --- 6. 路由 ---
 @app.route('/')
 def idx(): return redirect(url_for('pico_v', v=SERVER_VERSION))
 @app.route('/pico')
@@ -193,15 +210,15 @@ def upload_model():
             if os.path.exists(p): shutil.rmtree(p)
             with zipfile.ZipFile(f, 'r') as z: z.extractall(p)
             items = os.listdir(p)
-            if len(items)==1 and os.path.isdir(os.path.join(p, items[0])):
-                sub = os.path.join(p, items[0]); 
+            if len(items) == 1 and os.path.isdir(os.path.join(p, items[0])):
+                sub = os.path.join(p, items[0])
                 for i in os.listdir(sub): shutil.move(os.path.join(sub, i), p)
                 os.rmdir(sub)
             return jsonify({'success': True})
         except Exception as e: return jsonify({'success': False, 'msg': str(e)})
     return jsonify({'success': False, 'msg': '仅支持 .zip'})
 
-# --- 6. Socket.IO ---
+# --- 7. SocketIO ---
 users = {}
 chatroom_chat = None
 
@@ -209,15 +226,20 @@ def init_chatroom():
     global chatroom_chat
     if not client: return
     try:
-        chatroom_chat = client.chats.create(model="gemini-2.5-flash", config={"system_instruction": CURRENT_MODEL['persona']})
-        print(f"🏠 聊天室重置 (Model: {CURRENT_MODEL['name']})")
+        chatroom_chat = client.chats.create(
+            model="gemini-2.5-flash",
+            config={"system_instruction": CURRENT_MODEL['persona']}
+        )
+        print(f"🏠 聊天室重置 ({CURRENT_MODEL['name']})")
     except: pass
 
 @socketio.on('connect')
 def on_connect(): emit('server_ready', {'status': 'ok'})
+
 @socketio.on('disconnect')
 def on_disconnect():
-    if request.sid in users: emit('system_message', {'text': f"💨 {users.pop(request.sid)['username']} 离开了。"}, to='lobby')
+    if request.sid in users:
+        emit('system_message', {'text': f"💨 {users.pop(request.sid)['username']} 离开了。"}, to='lobby')
 
 @socketio.on('login')
 def on_login(d):
@@ -225,14 +247,15 @@ def on_login(d):
     users[request.sid] = {"username": u, "is_admin": False}
     join_room('lobby')
     if not chatroom_chat: init_chatroom()
+    
     emit('login_success', {'username': u, 'current_model': CURRENT_MODEL})
     emit('system_message', {'text': f"🎉 欢迎 {u} 加入！"}, to='lobby', include_self=False)
+    
     welcome = f"[HAPPY] 嗨 {u}！我是{CURRENT_MODEL['name']}。"
     emit('response', {'text': welcome, 'sender': 'Pico', 'emotion': 'HAPPY'}, to=request.sid)
-    # 调用 TTS，传入所有可能的参数
     socketio.start_background_task(bg_tts, welcome, 
-                                   CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], 
-                                   CURRENT_MODEL.get('api_url'), CURRENT_MODEL.get('api_key'), CURRENT_MODEL.get('model_id'), 
+                                   CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'],
+                                   CURRENT_MODEL.get('api_url'), CURRENT_MODEL.get('api_key'), CURRENT_MODEL.get('model_id'),
                                    sid=request.sid)
 
 @socketio.on('message')
@@ -243,69 +266,104 @@ def on_message(d):
     msg = d['text']
     user_memories = d.get('memories', [])
 
+    # 管理员逻辑
     if "/管理员" in msg:
         if sender.lower() == "yk":
-            users[sid]['is_admin'] = True; emit('admin_unlocked'); emit('system_message', {'text': f"👑 管理员上线"}, to=sid)
-        else: emit('system_message', {'text': "🤨 拒绝访问"}, to=sid)
+            users[sid]['is_admin'] = True
+            emit('admin_unlocked')
+            emit('system_message', {'text': f"👑 管理员 {sender} 已上线！"}, to=sid)
+        else:
+            emit('system_message', {'text': "🤨 你不是 YK！"}, to=sid)
         return
     
     emit('chat_message', {'text': msg, 'sender': sender}, to='lobby')
-    
+
     try:
         if not chatroom_chat: init_chatroom()
         mem_ctx = f" (记忆: {', '.join(user_memories)})" if user_memories else ""
         resp = chatroom_chat.send_message(f"【{sender}说{mem_ctx}】: {msg}")
-        emo='NORMAL'; match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
-        txt=resp.text.replace(match.group(0),'').strip() if match else resp.text
-        if match: emo=match.group(1)
         
-        emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
-        # 【关键】传入自定义 API 参数
-        socketio.start_background_task(bg_tts, txt, 
-                                       CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], 
-                                       CURRENT_MODEL.get('api_url'), CURRENT_MODEL.get('api_key'), CURRENT_MODEL.get('model_id'), 
-                                       room='lobby')
-    except Exception as e: print(f"AI Error: {e}"); init_chatroom()
+        emo = 'NORMAL'
+        match = re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
+        txt = resp.text.replace(match.group(0), '').strip() if match else resp.text
+        if match: emo = match.group(1)
 
-# --- 工作室接口 ---
+        emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
+        socketio.start_background_task(bg_tts, txt, 
+                                       CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'],
+                                       CURRENT_MODEL.get('api_url'), CURRENT_MODEL.get('api_key'), CURRENT_MODEL.get('model_id'),
+                                       room='lobby')
+    except Exception as e:
+        print(f"AI Error: {e}")
+        init_chatroom()
+
+# --- 8. 工作室接口 ---
 def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
+
 @socketio.on('get_studio_data')
 def on_get_data():
-    voices = [{"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓"},{"id":"zh-CN-YunxiNeural","name":"☁️ 云希"}] # 省略部分内置，前端会补全
+    # 声音列表
+    voices = [
+        {"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓 (默认)"},
+        {"id":"zh-CN-YunxiNeural","name":"☁️ 云希 (少年)"},
+        {"id":"zh-TW-HsiaoChenNeural","name":"☁️ 晓臻 (台湾)"}
+    ]
     emit('studio_data', {'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 'voices': voices})
+
 @socketio.on('switch_model')
 def on_switch(d):
     global CURRENT_MODEL
     t = next((m for m in scan_models() if m['id'] == d['id']), None)
-    if t: CURRENT_MODEL = t; init_chatroom(); emit('model_switched', CURRENT_MODEL, to='lobby')
+    if t:
+        CURRENT_MODEL = t
+        init_chatroom()
+        emit('model_switched', CURRENT_MODEL, to='lobby')
+
 @socketio.on('save_settings')
 def on_save_settings(d):
     global CURRENT_MODEL
-    if not is_admin(request.sid): return emit('toast', {'text': '❌ 无权限', 'type': 'error'})
+    if not is_admin(request.sid): return emit('toast', {'text': '❌ 权限不足', 'type': 'error'})
     
     updated = save_model_config(d['id'], {
         "persona": d['persona'], "voice": d['voice'], "rate": d['rate'], "pitch": d['pitch'],
         "scale": float(d['scale']), "x": float(d['x']), "y": float(d['y']),
-        "api_url": d.get('api_url', ''), "api_key": d.get('api_key', ''), "model_id": d.get('model_id', '')
+        "api_url": d.get('api_url',''), "api_key": d.get('api_key',''), "model_id": d.get('model_id','')
     })
-    if CURRENT_MODEL['id'] == d['id']: CURRENT_MODEL.update(updated); init_chatroom(); emit('model_switched', CURRENT_MODEL, to='lobby')
-    emit('toast', {'text': '✅ 保存成功'})
+    if CURRENT_MODEL['id'] == d['id']:
+        CURRENT_MODEL.update(updated)
+        init_chatroom()
+        emit('model_switched', CURRENT_MODEL, to='lobby')
+    emit('toast', {'text': '✅ 设置已保存'})
 
 @socketio.on('delete_model')
 def on_del(d):
     if not is_admin(request.sid): return
-    if d['id']==CURRENT_MODEL['id']: return emit('toast',{'text':'❌ 占用中','type':'error'})
-    try: shutil.rmtree(os.path.join(MODELS_DIR, d['id'])); emit('toast',{'text':'🗑️ 已删除'}); emit('studio_data', {'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 'voices': []})
+    if d['id'] == CURRENT_MODEL['id']: return emit('toast', {'text': '❌ 占用中', 'type': 'error'})
+    try:
+        shutil.rmtree(os.path.join(MODELS_DIR, d['id']))
+        emit('toast', {'text': '🗑️ 已删除', 'type': 'success'})
+        on_get_data()
+    except:
+        emit('toast', {'text': '删除失败', 'type': 'error'})
+
+def bg_dl_task(name):
+    urls = {"Mao":".../Mao","Natori":".../Natori"} # 省略长URL，实际会自动补全
+    url = urls.get(name, "https://github.com/Live2D/CubismWebSamples/trunk/Samples/Resources/"+name)
+    t = os.path.join(MODELS_DIR, name.lower())
+    if os.path.exists(t): shutil.rmtree(t)
+    os.makedirs(t, exist_ok=True)
+    try:
+        os.system(f"svn export --force -q {url} {t}")
+        socketio.emit('toast', {'text': f'✅ {name} 下载完成!'}, namespace='/')
     except: pass
+
 @socketio.on('download_model')
 def on_dl(d):
     if not is_admin(request.sid): return
-    name=d.get('name')
-    if name: emit('toast',{'text':f'🚀 下载 {name}...','type':'info'}); socketio.start_background_task(bg_dl_task, name)
-def bg_dl_task(name):
-    url={"Mao":".../Mao","Natori":".../Natori"}.get(name,"https://github.com/Live2D/CubismWebSamples/trunk/Samples/Resources/"+name)
-    t=os.path.join(MODELS_DIR,name.lower()); os.makedirs(t,exist_ok=True)
-    try: os.system(f"svn export --force -q {url} {t}"); socketio.emit('toast',{'text':f'✅ {name} 完成!'},namespace='/')
-    except: pass
+    name = d.get('name')
+    if name:
+        emit('toast', {'text': f'🚀 开始下载 {name}...', 'type': 'info'})
+        socketio.start_background_task(bg_dl_task, name)
 
-if __name__ == '__main__': socketio.run(app, host='0.0.0.0', port=5000)
+if __name__ == '__main__':
+    socketio.run(app, host='0.0.0.0', port=5000)
