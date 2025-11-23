@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pico Live</title>
+    <title>Pico Studio</title>
     <script src="/static/js/live2d.min.js"></script>
     <script src="/static/js/live2dcubismcore.min.js"></script>
     <script src="/static/js/pixi.min.js"></script>
     <script src="/static/js/index.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <style>
-        /* --- 样式区 (保持不变) --- */
+        /* --- 基础样式 --- */
         body{font-family:"Segoe UI",sans-serif;margin:0;padding:0;height:100vh;background-color:#2d3436;display:flex;flex-direction:row;overflow:hidden;color:#333}
         #stage-container{flex:1;position:relative;background-image:radial-gradient(circle,#636e72 10%,#2d3436 90%);overflow:hidden;touch-action:none}
         #live2d-canvas{position:absolute;top:0;left:0;width:100%;height:100%}
@@ -44,11 +44,13 @@
         .toast{display:inline-block;background:rgba(0,0,0,0.8);color:white;padding:8px 20px;border-radius:20px;margin-top:10px;animation:fadeOut 3s forwards 2s}
         @keyframes fadeOut{to{opacity:0;visibility:hidden}}
         .audio-player{margin-top:8px;height:32px;width:100%;opacity:0.8;border-radius:16px}
-        .admin-only { display: none; }
-        .slider-container { margin: 10px 0; }
-        .slider-label { font-size: 12px; color: #666; display: flex; justify-content: space-between; }
-        input[type="range"] { width: 100%; margin-top: 5px; }
-        .upload-box { border: 2px dashed #ccc; padding: 15px; text-align: center; border-radius: 10px; margin-top: 10px; cursor: pointer; }
+        .admin-only{display:none}
+        .slider-container{margin:10px 0}
+        .slider-label{font-size:12px;color:#666;display:flex;justify-content:space-between}
+        input[type="range"]{width:100%;margin-top:5px}
+        .upload-box{border:2px dashed #ccc;padding:15px;text-align:center;border-radius:10px;margin-top:10px;cursor:pointer}
+        .api-input{width:100%;padding:8px;margin-bottom:8px;border:1px solid #ccc;border-radius:6px;font-size:12px;box-sizing:border-box}
+        .btn-del{color:red;font-size:12px;display:block;margin-top:5px}
     </style>
 </head>
 <body>
@@ -61,23 +63,27 @@
             <div id="model-list" class="model-list">加载中...</div>
             
             <div class="admin-only">
-                <hr>
-                <h4>⚙️ 调音 & 位置 (<span id="persona-model-name"></span>)</h4>
-                <label style="font-size:12px;color:#666">人设:</label>
-                <textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea>
-                <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd"></select>
+                <hr><h4>⚙️ 配置 (<span id="persona-model-name"></span>)</h4>
+                <label style="font-size:12px;color:#666">人设:</label><textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea>
+                <label style="font-size:12px;color:#666">声线:</label><select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd"></select>
+                
+                <!-- 高级语音 -->
+                <div style="background:#f0f3ff;padding:10px;border-radius:8px;margin-bottom:10px">
+                    <h5 style="margin:0 0 5px 0;color:#4a69bd">🔌 外部语音 API</h5>
+                    <input id="api-url" class="api-input" placeholder="API URL">
+                    <input id="api-key" class="api-input" type="password" placeholder="API Key">
+                    <input id="model-id" class="api-input" placeholder="Model ID">
+                </div>
 
                 <div class="slider-container"><div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div><input type="range" id="rate-range" min="-50" max="50" oninput="updateVal('rate', this.value)"></div>
                 <div class="slider-container"><div class="slider-label"><span>音调</span><span id="pitch-val">0Hz</span></div><input type="range" id="pitch-range" min="-50" max="50" oninput="updateVal('pitch', this.value)"></div>
-                <!-- 位置滑块 -->
+                
                 <div class="slider-container"><div class="slider-label"><span>位置 X</span><span id="x-val">0.5</span></div><input type="range" id="model-x" min="0" max="1" step="0.01" oninput="previewTransform()"></div>
                 <div class="slider-container"><div class="slider-label"><span>位置 Y</span><span id="y-val">0.5</span></div><input type="range" id="model-y" min="0" max="2" step="0.01" oninput="previewTransform()"></div>
                 <div class="slider-container"><div class="slider-label"><span>缩放</span><span id="scale-val">0.5</span></div><input type="range" id="model-scale" min="0.1" max="2.0" step="0.05" oninput="previewTransform()"></div>
 
-                <button id="save-settings-btn" style="width:100%;padding:10px;margin-top:10px;background:#6c5ce7;color:white;border:none;border-radius:10px">保存所有配置</button>
-                
-                <hr><h4>☁️ 上传/下载</h4>
-                <div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 .zip<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div>
+                <button id="save-settings-btn" style="width:100%;padding:10px;background:#6c5ce7;color:white;border:none;border-radius:10px">保存所有配置</button>
+                <hr><h4>☁️ 上传/下载</h4><div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 .zip<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div>
                 <div style="margin-top:10px"><span class="chip" onclick="dlModel('Mao')">Mao</span><span class="chip" onclick="dlModel('Natori')">Natori</span><span class="chip" onclick="dlModel('Rice')">Rice</span></div>
             </div>
             <hr><h4>🧹 本地缓存</h4><div><span class="chip" onclick="clearLocalHistory()">清除本地聊天记录</span><span class="chip" onclick="clearLocalMemories()">清除我的专属记忆</span></div>
@@ -93,29 +99,14 @@
         let isDragging=false, dragData, initialScale, initialDist, iAmAdmin=false;
 
         function updateVal(type, val) { document.getElementById(`${type}-val`).textContent = (val > 0 ? '+' : '') + val + (type==='rate'?'%':'Hz'); }
-
-        // 实时预览 (直接修改模型属性)
         function previewTransform() {
             if(!model) return;
-            const s = parseFloat(document.getElementById('model-scale').value);
-            const x = parseFloat(document.getElementById('model-x').value);
-            const y = parseFloat(document.getElementById('model-y').value);
-            updateValLabels(s, x, y);
-            
+            const s = parseFloat(document.getElementById('model-scale').value), x = parseFloat(document.getElementById('model-x').value), y = parseFloat(document.getElementById('model-y').value);
+            document.getElementById('scale-val').textContent = s.toFixed(2); document.getElementById('x-val').textContent = x.toFixed(2); document.getElementById('y-val').textContent = y.toFixed(2);
             const st = document.getElementById('stage-container');
-            const absScale = (st.clientHeight / model.height) * s;
-            model.scale.set(absScale);
-            model.x = (st.clientWidth * x) - (model.width / 2);
-            model.y = (st.clientHeight * y) - (model.height / 2);
-        }
-        
-        function updateValLabels(s,x,y) {
-            document.getElementById('scale-val').textContent = s.toFixed(2);
-            document.getElementById('x-val').textContent = x.toFixed(2);
-            document.getElementById('y-val').textContent = y.toFixed(2);
+            model.scale.set((st.clientHeight/model.height)*s); model.x=(st.clientWidth*x)-(model.width/2); model.y=(st.clientHeight*y)-(model.height/2);
         }
 
-        // --- 连接 ---
         const loginBtn = document.getElementById('login-btn');
         socket.on('connect', ()=>{});
         socket.on('server_ready', ()=>{loginBtn.textContent="进入直播间";loginBtn.disabled=false;});
@@ -124,50 +115,45 @@
         socket.on('login_success',(d)=>{
             document.getElementById('login-overlay').style.display='none';
             document.getElementById('room-title').textContent=`🤖 ${d.current_model.name}`;
-            currentCfg = d.current_model; // 保存全局配置
-            if(d.current_model.path) loadModel(d.current_model.path);
+            currentCfg = d.current_model;
+            if(d.current_model.path)loadModel(d.current_model.path, d.current_model);
             loadHistory();
         });
         socket.on('login_failed',(d)=>{alert(d.error);loginBtn.disabled=false;loginBtn.textContent="重试";});
 
-        // --- Live2D ---
-        async function loadModel(path) {
+        async function loadModel(path, cfg) {
             if(!app_pixi) {
                 app_pixi = new PIXI.Application({ view:document.getElementById('live2d-canvas'), autoStart:true, resizeTo:document.getElementById('stage-container'), transparent:true });
                 initInteraction();
             }
             try {
-                if(model) app_pixi.stage.removeChild(model);
+                if(model) { app_pixi.stage.removeChild(model); model.destroy(); model=null; }
+                app_pixi.stage.removeChildren(); // 清空舞台
+                
+                console.log("Load:", path);
                 model = await PIXI.live2d.Live2DModel.from(path);
                 app_pixi.stage.addChild(model);
-                applyTransform(currentCfg); // 【关键】加载后立即应用保存的配置
+                applyTransform(cfg || {});
                 app_pixi.ticker.remove(lipSync); app_pixi.ticker.add(lipSync);
                 if(model.internalModel.motionManager) model.internalModel.motionManager.startRandomMotion('Idle');
             } catch(e) { console.error(e); showToast("❌ 模型加载失败","error"); }
         }
 
-        // 应用配置位置 (替代旧的 resetModel)
         function applyTransform(cfg) {
             if(!model || !app_pixi) return;
-            const s = cfg.scale || 0.5;
-            const x = cfg.x || 0.5;
-            const y = cfg.y || 0.5;
-            // 同时更新滑块显示
-            document.getElementById('model-scale').value = s;
-            document.getElementById('model-x').value = x;
-            document.getElementById('model-y').value = y;
-            updateValLabels(s, x, y);
-
+            const s = cfg.scale || 0.5, x = cfg.x || 0.5, y = cfg.y || 0.5;
+            // 填充滑块
+            document.getElementById('model-scale').value=s; document.getElementById('model-x').value=x; document.getElementById('model-y').value=y;
+            updateValLabels(s,x,y);
             const st = document.getElementById('stage-container');
             const absScale = (st.clientHeight / model.height) * s;
             model.scale.set(absScale);
             model.x = (st.clientWidth * x) - (model.width / 2);
             model.y = (st.clientHeight * y) - (model.height / 2);
         }
-
-        // 窗口缩放或点击归位时，都使用保存的配置
-        window.addEventListener('resize', () => setTimeout(() => applyTransform(currentCfg), 100));
-        document.getElementById('reset-btn').onclick = () => applyTransform(currentCfg);
+        function updateValLabels(s,x,y) { document.getElementById('scale-val').textContent=s.toFixed(2); document.getElementById('x-val').textContent=x.toFixed(2); document.getElementById('y-val').textContent=y.toFixed(2); }
+        document.getElementById('reset-btn').onclick=()=>applyTransform(currentCfg);
+        window.addEventListener('resize',()=>setTimeout(()=>applyTransform(currentCfg),100));
 
         function initInteraction() { const s=document.getElementById('stage-container');app_pixi.stage.interactive=true;app_pixi.stage.on('pointerdown',(e)=>{if(model&&(!e.data.originalEvent.touches||e.data.originalEvent.touches.length===1)){isDragging=true;dragData=e.data;model.alpha=0.8;}});app_pixi.stage.on('pointerup',()=>{isDragging=false;if(model)model.alpha=1;}).on('pointerupoutside',()=>{isDragging=false;if(model)model.alpha=1;});app_pixi.stage.on('pointermove',()=>{if(isDragging&&model){const p=dragData.getLocalPosition(model.parent);model.x=p.x-model.width/2;model.y=p.y-model.height/2;}});s.addEventListener('wheel',(e)=>{e.preventDefault();if(model){model.scale.x*=(e.deltaY<0?1.1:0.9);model.scale.y=model.scale.x;}},{passive:false});s.addEventListener('touchstart',(e)=>{if(e.touches.length===2&&model){isDragging=false;initialDist=Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY);initialScale=model.scale.x;}});s.addEventListener('touchmove',(e)=>{if(e.touches.length===2&&model&&initialDist){e.preventDefault();model.scale.set(initialScale*(Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY)/initialDist));}}); }
         function lipSync(){if(!model||!analyser||!isTalking)return;analyser.getByteFrequencyData(dataArray);let sum=0;for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];if(model.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',Math.min(1.0,(sum/dataArray.length)/30));}
@@ -185,52 +171,55 @@
                 if(m.id===d.current_id){
                     document.getElementById('persona-model-name').textContent=m.name;
                     document.getElementById('persona-text').value=m.persona;
-                    if(m.voice) {
-                        const sel = document.getElementById('voice-select');
-                        // 如果是本地语音，动态添加选项
-                        if (!Array.from(sel.options).some(o => o.value === m.voice)) {
-                           let opt = document.createElement('option'); opt.value = m.voice; opt.textContent = "当前: " + m.voice; sel.appendChild(opt);
+                    document.getElementById('api-url').value = m.api_url || "";
+                    document.getElementById('api-key').value = m.api_key || "";
+                    document.getElementById('model-id').value = m.model_id || "";
+                    
+                    if(m.voice){
+                        const sel=document.getElementById('voice-select');
+                        if(!Array.from(sel.options).some(o=>o.value===m.voice)){
+                            let opt=document.createElement('option');opt.value=m.voice;opt.textContent=m.voice;sel.appendChild(opt);
                         }
                         sel.value=m.voice;
                     }
-                    // 更新滑块位置，但不触发预览，防止抖动
-                    let s=m.scale||0.5, x=m.x||0.5, y=m.y||0.5;
-                    document.getElementById('model-scale').value=s;
-                    document.getElementById('model-x').value=x;
-                    document.getElementById('model-y').value=y;
-                    updateValLabels(s,x,y);
-                    
                     let rate=parseInt(m.rate)||0, pitch=parseInt(m.pitch)||0;
                     document.getElementById('rate-range').value=rate; updateVal('rate',rate);
                     document.getElementById('pitch-range').value=pitch; updateVal('pitch',pitch);
                     
-                    // 填充动态语音列表
-                    const vSelect = document.getElementById('voice-select');
-                    vSelect.innerHTML = ""; 
-                    if(d.voices) d.voices.forEach(v => { let opt = document.createElement('option'); opt.value = v.id; opt.textContent = v.name; vSelect.appendChild(opt); });
-                    if(m.voice) vSelect.value = m.voice;
+                    let s=m.scale||0.5, x=m.x||0.5, y=m.y||0.5;
+                    document.getElementById('model-scale').value=s; document.getElementById('model-x').value=x; document.getElementById('model-y').value=y;
+                    updateValLabels(s,x,y);
                 }
             });
+            // 动态填充语音列表
+            if(d.voices){
+                const vSel = document.getElementById('voice-select');
+                d.voices.forEach(v => {
+                    if(!Array.from(vSel.options).some(o=>o.value===v.id)) {
+                        let opt = document.createElement('option'); opt.value=v.id; opt.textContent=v.name; vSel.appendChild(opt);
+                    }
+                });
+            }
         });
         
         socket.on('model_switched',(m)=>{
             currentCfg = m; 
-            loadModel(m.path); 
+            loadModel(m.path, m); 
             document.getElementById('room-title').textContent=`🤖 ${m.name}`;
             if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');
             showToast(`✨ 已切换为 ${m.name}`);
         });
-
+        
         document.getElementById('save-settings-btn').onclick=()=>{
             let r=document.getElementById('rate-range').value, p=document.getElementById('pitch-range').value;
             socket.emit('save_settings',{
                 id:currentModelId, persona:document.getElementById('persona-text').value,
                 voice:document.getElementById('voice-select').value,
                 rate:(r>=0?'+':'')+r+'%', pitch:(p>=0?'+':'')+p+'Hz',
-                // 保存位置参数
-                scale: document.getElementById('model-scale').value,
-                x: document.getElementById('model-x').value,
-                y: document.getElementById('model-y').value
+                scale:document.getElementById('model-scale').value, x:document.getElementById('model-x').value, y:document.getElementById('model-y').value,
+                api_url: document.getElementById('api-url').value.trim(),
+                api_key: document.getElementById('api-key').value.trim(),
+                model_id: document.getElementById('model-id').value.trim()
             });
         };
 
