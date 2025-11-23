@@ -1,5 +1,7 @@
 #!/bin/bash
-# 自动修复 Windows 换行符
+# 看门狗版 - 强力日志监控
+
+# 1. 自动修复 Windows 换行符
 sed -i 's/\r$//' "$0" 2>/dev/null || true
 
 CDIR="$(cd "$(dirname "$0")" && pwd)"
@@ -17,9 +19,11 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}🤖 Pico AI 启动程序 (看门狗版)${NC}"
+echo -e "${GREEN}🤖 Pico AI 诊断模式启动...${NC}"
 
-# --- 1. 环境准备 ---
+# --- (此处移除了自动更新，防止覆盖本脚本) ---
+
+# --- 1. 环境检查 ---
 if [ ! -d "$VENV_DIR" ]; then echo "📦 创建虚拟环境..."; python3 -m venv "$VENV_DIR"; fi
 source "$VENV_DIR/bin/activate"
 
@@ -79,7 +83,7 @@ echo -e "${BLUE}========================================${NC}"
 echo -e "${GREEN}✅ 服务已启动！${NC}"
 echo -e "\n    👉 https://${MY_DOMAIN}/pico\n"
 echo -e "${YELLOW}👀 正在进入日志监控模式...${NC}"
-echo -e "${YELLOW}(现在你可以看到所有报错信息了。按 Ctrl+C 退出监控，但服务会继续运行)${NC}"
+echo -e "${YELLOW}(现在发消息，如果没声音，请截图这里的报错！)${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
