@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pico Studio</title>
+    <title>Pico Live</title>
+    <!-- 核心库 -->
     <script src="/static/js/live2d.min.js"></script>
     <script src="/static/js/live2dcubismcore.min.js"></script>
     <script src="/static/js/pixi.min.js"></script>
@@ -50,11 +51,10 @@
         input[type="range"] { width: 100%; margin-top: 5px; }
         .upload-box { border: 2px dashed #ccc; padding: 15px; text-align: center; border-radius: 10px; margin-top: 10px; cursor: pointer; }
         .btn-del { color: red; font-size: 12px; display: block; margin-top: 5px; }
-        .advanced-settings { margin-top: 15px; padding: 15px; background: #f0f3ff; border-radius: 10px; border: 1px solid #c4cffa; }
-        .advanced-settings h5 { margin: 0 0 10px 0; color: #4a69bd; font-size: 13px; display: flex; align-items: center; }
-        .advanced-settings h5::before { content: '🐟'; margin-right: 5px; }
-        .api-input { width: 100%; padding: 8px; margin-bottom: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 12px; box-sizing: border-box; }
-        .api-help { font-size: 11px; color: #666; margin-bottom: 10px; }
+        /* Fish Audio 样式 */
+        .fish-settings { background: #e3f2fd; padding: 10px; border-radius: 8px; border: 1px solid #90caf9; margin-bottom: 10px; }
+        .fish-label { color: #1565c0; font-weight: bold; font-size: 13px; margin-bottom: 5px; display: block; }
+        .api-input { width: 100%; padding: 8px; margin-bottom: 8px; border: 1px solid #ccc; border-radius: 5px; font-size: 12px; box-sizing: border-box; }
     </style>
 </head>
 <body>
@@ -68,22 +68,25 @@
             
             <div class="admin-only">
                 <hr>
-                <h4>⚙️ 配置 (<span id="persona-model-name"></span>)</h4>
+                <h4>⚙️ 调音 & 位置 (<span id="persona-model-name"></span>)</h4>
                 <label style="font-size:12px;color:#666">人设提示词:</label>
                 <textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea>
                 
                 <label style="font-size:12px;color:#666">声线选择:</label>
                 <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd" onchange="toggleFishPanel()">
-                    <option value="zh-CN-XiaoxiaoNeural">🇨🇳 晓晓 (默认)</option>
-                    <option value="zh-CN-YunxiNeural">🇨🇳 云希</option>
+                    <option value="zh-CN-XiaoxiaoNeural">🇨🇳 晓晓 (默认·元气)</option>
+                    <option value="zh-CN-YunxiNeural">🇨🇳 云希 (阳光·少年)</option>
+                    <option value="zh-TW-HsiaoChenNeural">🇹🇼 晓臻 (台湾腔)</option>
+                    <option value="ja-JP-NanamiNeural">🇯🇵 七海 (日语·甜美)</option>
                     <option value="fish-audio">🐟 Fish Audio (自定义)</option>
                 </select>
 
-                <div id="fish-panel" class="advanced-settings" style="display:none">
-                    <h5>Fish Audio 配置</h5>
-                    <input id="api-url" class="api-input" placeholder="API URL">
-                    <input id="api-key" class="api-input" type="password" placeholder="API Key">
-                    <input id="model-id" class="api-input" placeholder="Model ID">
+                <!-- Fish Audio 面板 -->
+                <div id="fish-panel" class="fish-settings" style="display:none">
+                    <span class="fish-label">Fish Audio 配置</span>
+                    <input id="api-key" class="api-input" type="password" placeholder="API Key (必填)">
+                    <input id="model-id" class="api-input" placeholder="Model ID (必填, 例如 3d1cb...)">
+                    <input id="api-url" class="api-input" value="https://api.fish.audio/v1/audio/speech" placeholder="API URL">
                 </div>
 
                 <div class="slider-container"><div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div><input type="range" id="rate-range" min="-50" max="50" oninput="updateVal('rate', this.value)"></div>
@@ -94,6 +97,7 @@
                 <div class="slider-container"><div class="slider-label"><span>缩放</span><span id="scale-val">0.5</span></div><input type="range" id="model-scale" min="0.1" max="2.0" step="0.05" oninput="previewTransform()"></div>
 
                 <button id="save-settings-btn" style="width:100%;padding:10px;margin-top:10px;background:#6c5ce7;color:white;border:none;border-radius:10px">保存所有配置</button>
+                
                 <hr><h4>☁️ 上传/下载</h4>
                 <div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 .zip<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div>
                 <div style="margin-top:10px"><span class="chip" onclick="dlModel('Mao')">Mao</span><span class="chip" onclick="dlModel('Natori')">Natori</span></div>
@@ -115,7 +119,6 @@
             document.getElementById('fish-panel').style.display = (document.getElementById('voice-select').value === 'fish-audio') ? 'block' : 'none';
         }
 
-        // 实时预览
         function previewTransform() {
             if(!model) return;
             const s = parseFloat(document.getElementById('model-scale').value);
@@ -131,7 +134,6 @@
             model.y = (st.clientHeight * y) - (model.height / 2);
         }
 
-        // 连接
         const loginBtn = document.getElementById('login-btn');
         socket.on('connect', ()=>{});
         socket.on('server_ready', ()=>{loginBtn.textContent="进入直播间";loginBtn.disabled=false;});
@@ -141,7 +143,7 @@
             document.getElementById('login-overlay').style.display='none';
             document.getElementById('room-title').textContent=`🤖 ${d.current_model.name}`;
             currentCfg = d.current_model;
-            if(d.current_model.path) loadModel(d.current_model.path, d.current_model);
+            if(d.current_model.path) loadModel(d.current_model.path, d.current_model); // 传入配置
             loadHistory();
         });
         socket.on('login_failed',(d)=>{alert(d.error);loginBtn.disabled=false;loginBtn.textContent="重试";});
@@ -152,13 +154,15 @@
                 initInteraction();
             }
             try {
-                if(model) { app_pixi.stage.removeChild(model); model.destroy(); model=null; } // 彻底销毁旧模型
-                app_pixi.stage.removeChildren(); // 清空舞台
+                if(model) { app_pixi.stage.removeChild(model); model.destroy(); model=null; }
+                app_pixi.stage.removeChildren(); 
+                
+                console.log("Load:", path);
                 model = await PIXI.live2d.Live2DModel.from(path);
                 app_pixi.stage.addChild(model);
                 
-                // 【核心修复】延迟一帧应用位置，确保模型尺寸已计算
-                setTimeout(() => applyTransform(cfg || {}), 100);
+                // 【关键修复】延迟 100ms 再调整位置，等待模型宽高计算完成
+                setTimeout(() => applyTransform(cfg || currentCfg), 100);
                 
                 app_pixi.ticker.remove(lipSync); app_pixi.ticker.add(lipSync);
                 if(model.internalModel.motionManager) model.internalModel.motionManager.startRandomMotion('Idle');
@@ -167,20 +171,28 @@
 
         function applyTransform(cfg) {
             if(!model || !app_pixi) return;
-            const s = cfg.scale || 0.5, x = cfg.x || 0.5, y = cfg.y || 0.5;
+            // 默认值
+            const s = cfg.scale !== undefined ? cfg.scale : 0.5;
+            const x = cfg.x !== undefined ? cfg.x : 0.5;
+            const y = cfg.y !== undefined ? cfg.y : 0.5;
+            
+            // 更新滑块 UI
             document.getElementById('model-scale').value = s;
             document.getElementById('model-x').value = x;
             document.getElementById('model-y').value = y;
             updateValLabels(s,x,y);
+
             const st = document.getElementById('stage-container');
-            // 检查尺寸是否有效
-            if (model.width === 0 || model.height === 0) return; 
+            if (!model.width || !model.height) return; // 防止除以0
+
             const absScale = (st.clientHeight / model.height) * s;
             model.scale.set(absScale);
             model.x = (st.clientWidth * x) - (model.width / 2);
             model.y = (st.clientHeight * y) - (model.height / 2);
         }
         function updateValLabels(s,x,y) { document.getElementById('scale-val').textContent=s.toFixed(2); document.getElementById('x-val').textContent=x.toFixed(2); document.getElementById('y-val').textContent=y.toFixed(2); }
+        
+        // 归位和窗口调整
         document.getElementById('reset-btn').onclick=()=>applyTransform(currentCfg);
         window.addEventListener('resize',()=>setTimeout(()=>applyTransform(currentCfg),100));
 
@@ -213,7 +225,7 @@
                         document.getElementById('fish-panel').style.display = 'none';
                     }
                     
-                    let s=m.scale||0.5, x=m.x||0.5, y=m.y||0.5;
+                    let s=m.scale!==undefined?m.scale:0.5, x=m.x!==undefined?m.x:0.5, y=m.y!==undefined?m.y:0.5;
                     document.getElementById('model-scale').value=s; document.getElementById('model-x').value=x; document.getElementById('model-y').value=y;
                     updateValLabels(s,x,y);
                     let r=parseInt(m.rate)||0, p=parseInt(m.pitch)||0;
@@ -247,6 +259,7 @@
                 y: document.getElementById('model-y').value
             });
         };
+
         window.delModel=(id,e)=>{e.stopPropagation();if(confirm('删除？'))socket.emit('delete_model',{id});};window.dlModel=(n)=>socket.emit('download_model',{name:n});
         window.uploadFile=(f)=>{if(!f)return;let fd=new FormData();fd.append('file',f);showToast("📤 上传中...","info");fetch('/upload_model',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{if(d.success){showToast("✅ 成功");socket.emit('get_studio_data');}else showToast("❌ "+d.msg,"error")});}
         socket.on('admin_unlocked', () => { iAmAdmin = true; showToast("👑 管理员权限已解锁！"); document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'block'); if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data'); });
