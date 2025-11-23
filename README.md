@@ -1,7 +1,7 @@
 \# 🤖 Pico AI Companion - 树莓派上的虚拟形象聊天机器人
 
 
-本项目是一个受 Neuro-Sama 启发的、运行在树莓派（Raspberry Pi）上的 AI 虚拟形象聊天机器人。
+本项目是一个运行在树莓派（Raspberry Pi）上的 AI 虚拟形象聊天机器人。
 
 它不仅仅是一个聊天机器人，而是一个完整的、可通过公网访问的、支持多人实时互动的 Live2D 虚拟形象。Pico 拥有自己的情感引擎、语音合成能力，以及由管理员掌控的、可动态切换的模型和人设“工作室”。
 
@@ -302,6 +302,7 @@ bash setup_and_run.sh
 cd ~/ai-pi-companion
 
 ./setup\_and\_run.sh
+
 
 
 
