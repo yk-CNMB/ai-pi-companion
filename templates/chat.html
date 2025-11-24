@@ -3,15 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pico Live</title>
-    <!-- 核心库 -->
+    <title>Pico Studio</title>
     <script src="/static/js/live2d.min.js"></script>
     <script src="/static/js/live2dcubismcore.min.js"></script>
     <script src="/static/js/pixi.min.js"></script>
     <script src="/static/js/index.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <style>
-        /* --- 样式区 (保持稳定) --- */
+        /* --- 样式 (保持稳定) --- */
         body{font-family:"Segoe UI",sans-serif;margin:0;padding:0;height:100vh;background-color:#2d3436;display:flex;flex-direction:row;overflow:hidden;color:#333}
         #stage-container{flex:1;position:relative;background-image:radial-gradient(circle,#636e72 10%,#2d3436 90%);overflow:hidden;touch-action:none}
         #live2d-canvas{position:absolute;top:0;left:0;width:100%;height:100%}
@@ -44,7 +43,7 @@
         #toast-container{position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:11000;text-align:center;width:100%}
         .toast{display:inline-block;background:rgba(0,0,0,0.8);color:white;padding:8px 20px;border-radius:20px;margin-top:10px;animation:fadeOut 3s forwards 2s}
         @keyframes fadeOut{to{opacity:0;visibility:hidden}}
-        .audio-player{margin-top:8px;height:32px;width:100%;opacity:0.8;border-radius:16px;display:block}
+        .audio-player{margin-top:8px;height:32px;width:100%;opacity:0.8;border-radius:16px}
         .admin-only { display: none; }
         .slider-container { margin: 10px 0; }
         .slider-label { font-size: 12px; color: #666; display: flex; justify-content: space-between; }
@@ -90,6 +89,7 @@
                 <div class="slider-container"><div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div><input type="range" id="rate-range" min="-50" max="50" oninput="updateVal('rate', this.value)"></div>
                 <div class="slider-container"><div class="slider-label"><span>音调</span><span id="pitch-val">0Hz</span></div><input type="range" id="pitch-range" min="-50" max="50" oninput="updateVal('pitch', this.value)"></div>
 
+                <!-- 这里的滑块是用来“保存”的，不是实时预览的 -->
                 <div class="slider-container"><div class="slider-label"><span>位置 X</span><span id="x-val">0.5</span></div><input type="range" id="model-x" min="0" max="1" step="0.01" oninput="previewTransform()"></div>
                 <div class="slider-container"><div class="slider-label"><span>位置 Y</span><span id="y-val">0.5</span></div><input type="range" id="model-y" min="0" max="2" step="0.01" oninput="previewTransform()"></div>
                 <div class="slider-container"><div class="slider-label"><span>缩放</span><span id="scale-val">0.5</span></div><input type="range" id="model-scale" min="0.1" max="2.0" step="0.05" oninput="previewTransform()"></div>
@@ -109,8 +109,7 @@
 
     <script>
         const socket = io({reconnection:true});
-        // 【核心修复】在这里把 currentCfg 补上了，初始化为空对象
-        let app_pixi, model, myUser="", currentModelId="", currentCfg={}, audioCtx, analyser, dataArray, isTalking=false;
+        let app_pixi, model, myUser="", currentModelId="", audioCtx, analyser, dataArray, isTalking=false;
         let isDragging=false, dragData, initialScale, initialDist, iAmAdmin=false;
 
         function updateVal(type, val) { document.getElementById(`${type}-val`).textContent = (val > 0 ? '+' : '') + val + (type==='rate'?'%':'Hz'); }
@@ -141,7 +140,7 @@
         socket.on('login_success',(d)=>{
             document.getElementById('login-overlay').style.display='none';
             document.getElementById('room-title').textContent=`🤖 ${d.current_model.name}`;
-            currentCfg = d.current_model;
+            // 这里传入配置 d.current_model，确保加载时就应用正确位置
             if(d.current_model.path) loadModel(d.current_model.path, d.current_model);
             loadHistory();
         });
@@ -155,33 +154,62 @@
             try {
                 if(model) { app_pixi.stage.removeChild(model); model.destroy(); model=null; }
                 app_pixi.stage.removeChildren(); 
+                
+                console.log("Load:", path);
                 model = await PIXI.live2d.Live2DModel.from(path);
                 app_pixi.stage.addChild(model);
+                
+                // 使用保存的配置，如果为空，才使用默认
+                // 但这里我们不给默认值，而是等 model 加载完后调用 applyTransform
+                // 如果 cfg 为空，applyTransform 会使用一套合理的默认值 (scale=0.5, x=0.5, y=0.5)
                 setTimeout(() => applyTransform(cfg || {}), 100);
+                
                 app_pixi.ticker.remove(lipSync); app_pixi.ticker.add(lipSync);
                 if(model.internalModel.motionManager) model.internalModel.motionManager.startRandomMotion('Idle');
             } catch(e) { console.error(e); showToast("❌ 模型加载失败","error"); }
         }
 
+        // 【核心修改】一键归位逻辑
+        function resetToDefault() {
+            const defaultConfig = { scale: 0.5, x: 0.5, y: 0.5 };
+            applyTransform(defaultConfig);
+            showToast("🎯 已恢复默认视角", "info");
+            // 可选：如果需要，可以在这里自动保存一下默认配置
+            // socket.emit('save_settings', { ...currentModelId, ...defaultConfig });
+        }
+        document.getElementById('reset-btn').onclick = resetToDefault;
+
+
         function applyTransform(cfg) {
             if(!model || !app_pixi) return;
-            const s = cfg?.scale || 0.5;
-            const x = cfg?.x || 0.5;
-            const y = cfg?.y || 0.5;
-            document.getElementById('model-scale').value = s;
-            document.getElementById('model-x').value = x;
-            document.getElementById('model-y').value = y;
-            updateValLabels(s,x,y);
+            // 如果配置里没有值（可能是新模型），就用 0.5 作为默认
+            const s = (cfg.scale !== undefined) ? cfg.scale : 0.5;
+            const x = (cfg.x !== undefined) ? cfg.x : 0.5;
+            const y = (cfg.y !== undefined) ? cfg.y : 0.5;
+            
+            // 更新工作室里的滑块显示
+            if(document.getElementById('model-scale')) {
+                document.getElementById('model-scale').value = s;
+                document.getElementById('model-x').value = x;
+                document.getElementById('model-y').value = y;
+                updateValLabels(s,x,y);
+            }
+
             const st = document.getElementById('stage-container');
             if (!model.width || !model.height) return;
+            
             const absScale = (st.clientHeight / model.height) * s;
             model.scale.set(absScale);
             model.x = (st.clientWidth * x) - (model.width / 2);
             model.y = (st.clientHeight * y) - (model.height / 2);
         }
+        
         function updateValLabels(s,x,y) { document.getElementById('scale-val').textContent=s.toFixed(2); document.getElementById('x-val').textContent=x.toFixed(2); document.getElementById('y-val').textContent=y.toFixed(2); }
-        document.getElementById('reset-btn').onclick=()=>applyTransform(currentCfg);
-        window.addEventListener('resize',()=>setTimeout(()=>applyTransform(currentCfg),100));
+        window.addEventListener('resize',()=>setTimeout(()=>applyTransform({
+            scale: parseFloat(document.getElementById('model-scale').value),
+            x: parseFloat(document.getElementById('model-x').value),
+            y: parseFloat(document.getElementById('model-y').value)
+        }),100));
 
         function initInteraction() { const s=document.getElementById('stage-container');app_pixi.stage.interactive=true;app_pixi.stage.on('pointerdown',(e)=>{if(model&&(!e.data.originalEvent.touches||e.data.originalEvent.touches.length===1)){isDragging=true;dragData=e.data;model.alpha=0.8;}});app_pixi.stage.on('pointerup',()=>{isDragging=false;if(model)model.alpha=1;}).on('pointerupoutside',()=>{isDragging=false;if(model)model.alpha=1;});app_pixi.stage.on('pointermove',()=>{if(isDragging&&model){const p=dragData.getLocalPosition(model.parent);model.x=p.x-model.width/2;model.y=p.y-model.height/2;}});s.addEventListener('wheel',(e)=>{e.preventDefault();if(model){model.scale.x*=(e.deltaY<0?1.1:0.9);model.scale.y=model.scale.x;}},{passive:false});s.addEventListener('touchstart',(e)=>{if(e.touches.length===2&&model){isDragging=false;initialDist=Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY);initialScale=model.scale.x;}});s.addEventListener('touchmove',(e)=>{if(e.touches.length===2&&model&&initialDist){e.preventDefault();model.scale.set(initialScale*(Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY)/initialDist));}}); }
         function lipSync(){if(!model||!analyser||!isTalking)return;analyser.getByteFrequencyData(dataArray);let sum=0;for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];if(model.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',Math.min(1.0,(sum/dataArray.length)/30));}
@@ -189,10 +217,67 @@
 
         document.getElementById('studio-btn').onclick=()=>{document.getElementById('studio-overlay').style.display='flex';socket.emit('get_studio_data');};
         function closeStudio(){document.getElementById('studio-overlay').style.display='none';}
-        socket.on('studio_data',(d)=>{const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id;d.models.forEach(m=>{let el=document.createElement('div');el.className=`model-card ${m.id===d.current_id?'active':''}`;let delBtn=iAmAdmin&&m.id!==d.current_id?`<div class="btn-del" onclick="delModel('${m.id}',event)">🗑️</div>`:"";el.innerHTML=`<div>${m.name}</div>${delBtn}`;el.onclick=()=>socket.emit('switch_model',{id:m.id});list.appendChild(el);if(m.id===d.current_id){document.getElementById('persona-model-name').textContent=m.name;document.getElementById('persona-text').value=m.persona;if(m.voice){const sel=document.getElementById('voice-select');if(!Array.from(sel.options).some(o=>o.value===m.voice)){let opt=document.createElement('option');opt.value=m.voice;opt.textContent=m.voice;sel.appendChild(opt);}sel.value=m.voice;}let r=parseInt(m.rate)||0,p=parseInt(m.pitch)||0;document.getElementById('rate-range').value=r;updateVal('rate',r);document.getElementById('pitch-range').value=p;updateVal('pitch',p);let s=m.scale||0.5,x=m.x||0.5,y=m.y||0.5;document.getElementById('model-scale').value=s;document.getElementById('model-x').value=x;document.getElementById('model-y').value=y;updateValLabels(s,x,y);if(m.voice==='fish-audio'){document.getElementById('fish-panel').style.display='block';document.getElementById('api-url').value=m.api_url;document.getElementById('api-key').value=m.api_key;document.getElementById('model-id').value=m.model_id;}}});});
-        socket.on('model_switched',(m)=>{currentCfg=m;loadModel(m.path, m);document.getElementById('room-title').textContent=`🤖 ${m.name}`;if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');showToast(`✨ 已切换为 ${m.name}`);});
-        document.getElementById('save-settings-btn').onclick=()=>{let r=document.getElementById('rate-range').value,p=document.getElementById('pitch-range').value;const isFish=document.getElementById('voice-select').value==='fish-audio';socket.emit('save_settings',{id:currentModelId,persona:document.getElementById('persona-text').value,voice:document.getElementById('voice-select').value,rate:(r>=0?'+':'')+r+'%',pitch:(p>=0?'+':'')+p+'Hz',scale:document.getElementById('model-scale').value,x:document.getElementById('model-x').value,y:document.getElementById('model-y').value,api_url:isFish?document.getElementById('api-url').value.trim():"",api_key:isFish?document.getElementById('api-key').value.trim():"",model_id:isFish?document.getElementById('model-id').value.trim():""});};
-        window.delModel=(id,e)=>{e.stopPropagation();if(confirm('删除？'))socket.emit('delete_model',{id});};window.dlModel=(n)=>socket.emit('download_model',{name:n});window.uploadFile=(f)=>{if(!f)return;let fd=new FormData();fd.append('file',f);showToast("📤 上传中...","info");fetch('/upload_model',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{if(d.success){showToast("✅ 成功");socket.emit('get_studio_data');}else showToast("❌ "+d.msg,"error")});}
+        
+        socket.on('studio_data',(d)=>{
+            const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id;
+            d.models.forEach(m=>{
+                let el=document.createElement('div');el.className=`model-card ${m.id===d.current_id?'active':''}`;
+                let delBtn=iAmAdmin&&m.id!==d.current_id?`<div class="btn-del" onclick="delModel('${m.id}',event)">🗑️</div>`:"";
+                el.innerHTML=`<div>${m.name}</div>${delBtn}`;el.onclick=()=>socket.emit('switch_model',{id:m.id});list.appendChild(el);
+                if(m.id===d.current_id){
+                    document.getElementById('persona-model-name').textContent=m.name;
+                    document.getElementById('persona-text').value=m.persona;
+                    
+                    const vSelect = document.getElementById('voice-select');
+                    if(m.api_key && m.model_id) {
+                        vSelect.value = 'fish-audio';
+                        document.getElementById('fish-panel').style.display = 'block';
+                        document.getElementById('api-url').value = m.api_url || "https://api.fish.audio/v1/audio/speech";
+                        document.getElementById('api-key').value = m.api_key || "";
+                        document.getElementById('model-id').value = m.model_id || "";
+                    } else {
+                        vSelect.value = m.voice || "zh-CN-XiaoxiaoNeural";
+                        document.getElementById('fish-panel').style.display = 'none';
+                    }
+                    
+                    let s=m.scale!==undefined?m.scale:0.5, x=m.x!==undefined?m.x:0.5, y=m.y!==undefined?m.y:0.5;
+                    document.getElementById('model-scale').value=s; document.getElementById('model-x').value=x; document.getElementById('model-y').value=y;
+                    updateValLabels(s,x,y);
+                    let r=parseInt(m.rate)||0, p=parseInt(m.pitch)||0;
+                    document.getElementById('rate-range').value=r; updateVal('rate',r);
+                    document.getElementById('pitch-range').value=p; updateVal('pitch',p);
+                }
+            });
+        });
+        
+        socket.on('model_switched',(m)=>{
+            // 收到切换指令，加载新模型，并传入新配置 m
+            loadModel(m.path, m); 
+            document.getElementById('room-title').textContent=`🤖 ${m.name}`;
+            if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');
+            showToast(`✨ 已切换为 ${m.name}`);
+        });
+        
+        document.getElementById('save-settings-btn').onclick=()=>{
+            const isFish = document.getElementById('voice-select').value === 'fish-audio';
+            socket.emit('save_settings',{
+                id: currentModelId, 
+                persona: document.getElementById('persona-text').value,
+                voice: document.getElementById('voice-select').value,
+                api_url: isFish ? document.getElementById('api-url').value.trim() : "",
+                api_key: isFish ? document.getElementById('api-key').value.trim() : "",
+                model_id: isFish ? document.getElementById('model-id').value.trim() : "",
+                rate: document.getElementById('rate-range').value + "%",
+                pitch: document.getElementById('pitch-range').value + "Hz",
+                // 保存滑块的当前值
+                scale: document.getElementById('model-scale').value,
+                x: document.getElementById('model-x').value,
+                y: document.getElementById('model-y').value
+            });
+        };
+
+        window.delModel=(id,e)=>{e.stopPropagation();if(confirm('删除？'))socket.emit('delete_model',{id});};window.dlModel=(n)=>socket.emit('download_model',{name:n});
+        window.uploadFile=(f)=>{if(!f)return;let fd=new FormData();fd.append('file',f);showToast("📤 上传中...","info");fetch('/upload_model',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{if(d.success){showToast("✅ 成功");socket.emit('get_studio_data');}else showToast("❌ "+d.msg,"error")});}
         socket.on('admin_unlocked', () => { iAmAdmin = true; showToast("👑 管理员权限已解锁！"); document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'block'); if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data'); });
 
         const HISTORY_KEY='pico_chat_history';const MEMORY_KEY='pico_user_memories';const HISTORY_LIMIT=200;const MEMORY_LIMIT=50;
@@ -201,7 +286,7 @@
         window.clearLocalHistory=()=>{if(confirm('确定清除聊天记录？')){localStorage.removeItem(HISTORY_KEY);document.getElementById('chat-window').innerHTML="";showToast('🧹 已清除');}}
         window.clearLocalMemories=()=>{if(confirm('确定清除专属记忆？')){localStorage.removeItem(MEMORY_KEY);showToast('🧠 已清除');}}
         function getLocalMemories(){return JSON.parse(localStorage.getItem(MEMORY_KEY))||[];}
-        function saveLocalMemory(f){let m=getLocalMemories();if(f&&!m.includes(f)){m.push(f);if(m.length>MEMORY_LIMIT)m=m.slice(-MEMORY_LIMIT);localStorage.setItem(MEMORY_KEY,JSON.stringify(m));return true;}return false;}
+        function saveLocalMemory(f){let m=getLocalMemories();if(f&&!m.includes(f)){m.push(f);if(m.length>50)m=m.slice(-50);localStorage.setItem(MEMORY_KEY,JSON.stringify(m));return true;}return false;}
         socket.on('chat_message',(d)=>{addMsg(d.text,d.sender,d.sender===myUser?'self':'other'); saveHistory('chat_message',d);});
         socket.on('system_message',(d)=>{addMsg(d.text,'系统','system'); saveHistory('system_message',d);});
         socket.on('response',(d)=>{addMsg(d.text,'Pico','pico',d.emotion);triggerMotion(d.emotion||'NORMAL'); saveHistory('response',d);});
