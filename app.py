@@ -1,23 +1,34 @@
 # =======================================================================
-# Pico AI Server - app.py (Gevent 引擎版 - 适配 Python 3.13)
+# Pico AI Server - app.py (原生多线程版 - 兼容 Python 3.13)
+# 启动: gunicorn --worker-class gthread --threads 4 -w 1 --bind 0.0.0.0:5000 app:app
 # =======================================================================
-import os, json, uuid, asyncio, time, glob, shutil, re, zipfile, subprocess, requests
+import os
+import json
+import uuid
+import asyncio
+import time
+import glob
+import shutil
+import re
+import zipfile
+import subprocess
+import requests
+import threading
 
-# 【核心修改】切换到 Gevent 引擎
-from gevent import monkey
-monkey.patch_all()
-
+# 【关键修改】移除 eventlet/gevent，使用原生库
 import edge_tts
+import soundfile as sf
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
+from werkzeug.utils import secure_filename
 from google import genai
 
 # --- 1. 初始化 ---
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'default_secret')
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
-# 【关键】强制使用 gevent 模式
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent', ping_timeout=60)
+# 【关键】使用 threading 模式，兼容性最好
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60)
 SERVER_VERSION = str(int(time.time()))
 
 # --- 2. 目录 ---
@@ -27,42 +38,68 @@ AUDIO_DIR = os.path.join(BASE_DIR, "static", "audio")
 MODELS_DIR = os.path.join(BASE_DIR, "static", "live2d")
 VOICES_DIR = os.path.join(BASE_DIR, "static", "voices")
 PIPER_BIN = os.path.join(BASE_DIR, "piper_engine", "piper")
-for d in [MEMORIES_DIR, AUDIO_DIR, MODELS_DIR, VOICES_DIR]: os.makedirs(d, exist_ok=True)
 
-# --- 3. API 配置 ---
+for d in [MEMORIES_DIR, AUDIO_DIR, MODELS_DIR, VOICES_DIR]:
+    os.makedirs(d, exist_ok=True)
+
+# --- 3. 配置 ---
 CONFIG = {}
 try:
-    with open("config.json", "r") as f: CONFIG = json.load(f)
-except: pass
+    with open("config.json", "r") as f:
+        CONFIG = json.load(f)
+except:
+    pass
+
 client = None
-if CONFIG.get("GEMINI_API_KEY"):
-    try: client = genai.Client(api_key=CONFIG.get("GEMINI_API_KEY"))
-    except Exception as e: print(f"API Error: {e}")
+api_key = CONFIG.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+if api_key and "在这里" not in api_key:
+    try:
+        client = genai.Client(api_key=api_key)
+        print("✅ Gemini API 就绪")
+    except Exception as e:
+        print(f"❌ API 初始化失败: {e}")
+else:
+    print("❌ 未找到有效 API KEY")
 
 # --- 4. 核心函数 ---
-def load_user_memories(u): return [] # 客户端管理
+def load_user_memories(u): return []
+
 CURRENT_MODEL = {"id": "default", "path": "", "persona": "", "voice": "zh-CN-XiaoxiaoNeural", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.0, "y": 0.0, "api_url": "", "api_key": "", "model_id": ""}
 
 def get_model_config(mid):
     p = os.path.join(MODELS_DIR, mid, "config.json")
-    d = {"persona":f"你是一个名为{mid}的AI。","voice":"zh-CN-XiaoxiaoNeural","rate":"+0%","pitch":"+0Hz","scale":0.5,"x":0.0,"y":0.0,"api_url":"","api_key":"","model_id":""}
+    data = {
+        "persona": f"你是一个名为{mid}的AI。请用中文简短回复。",
+        "voice": "zh-CN-XiaoxiaoNeural",
+        "rate": "+0%", "pitch": "+0Hz",
+        "scale": 0.5, "x": 0.0, "y": 0.0,
+        "api_url": "", "api_key": "", "model_id": ""
+    }
     if os.path.exists(p):
-        try: d.update(json.load(open(p))) 
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                data.update(json.load(f))
         except: pass
-    return d
+    return data
 
 def save_model_config(mid, data):
     p = os.path.join(MODELS_DIR, mid, "config.json")
-    c = get_model_config(mid); c.update(data)
-    with open(p, "w", encoding="utf-8") as f: json.dump(c, f, ensure_ascii=False, indent=2)
-    return c
+    current = get_model_config(mid)
+    current.update(data)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(current, f, ensure_ascii=False, indent=2)
+    return current
 
 def scan_models():
     ms = []
     for j in glob.glob(os.path.join(MODELS_DIR, "**", "*.model3.json"), recursive=True):
         mid = os.path.basename(os.path.dirname(j))
         cfg = get_model_config(mid)
-        ms.append({"id": mid, "name": mid.capitalize(), "path": "/"+os.path.relpath(j, BASE_DIR).replace("\\","/"), **cfg})
+        ms.append({
+            "id": mid, "name": mid.capitalize(),
+            "path": "/"+os.path.relpath(j, BASE_DIR).replace("\\","/"),
+            **cfg
+        })
     return sorted(ms, key=lambda x: x['name'])
 
 def init_model():
@@ -78,6 +115,7 @@ def run_openai_tts(text, api_url, api_key, model_id, output_path):
         if not api_url.endswith("/v1/audio/speech"):
              if "fish.audio" in api_url: api_url = "https://api.fish.audio/v1/audio/speech"
              else: api_url = api_url.rstrip("/") + "/v1/audio/speech"
+        
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         payload = {"model": model_id, "input": text, "voice": model_id, "response_format": "mp3"}
         resp = requests.post(api_url, json=payload, headers=headers, timeout=15)
@@ -99,20 +137,20 @@ def run_piper_tts(text, model_file, output_path):
 def bg_tts(text, voice, rate, pitch, api_url, api_key, model_id, room=None, sid=None):
     clean = re.sub(r'\[(.*?)\]', '', text).strip()
     if not clean: return
+    
     fname = f"{uuid.uuid4()}"
     success = False
     
-    # 1. Fish Audio
     if api_url and api_key and model_id:
         out_path = os.path.join(AUDIO_DIR, f"{fname}.mp3")
-        if run_openai_tts(clean, api_url, api_key, model_id, out_path): success=True; url=f"/static/audio/{fname}.mp3"
+        if run_openai_tts(clean, api_url, api_key, model_id, out_path):
+            success = True; url = f"/static/audio/{fname}.mp3"
 
-    # 2. Piper
     if not success and voice.endswith(".onnx"):
          out_path = os.path.join(AUDIO_DIR, f"{fname}.wav")
-         if run_piper_tts(clean, voice, out_path): success=True; url=f"/static/audio/{fname}.wav"
+         if run_piper_tts(clean, voice, out_path):
+             success = True; url = f"/static/audio/{fname}.wav"
 
-    # 3. Edge-TTS
     if not success:
         out_path = os.path.join(AUDIO_DIR, f"{fname}.mp3")
         safe_voice = voice if voice and "Neural" in voice else "zh-CN-XiaoxiaoNeural"
@@ -120,11 +158,8 @@ def bg_tts(text, voice, rate, pitch, api_url, api_key, model_id, room=None, sid=
             async def _run():
                 cm = edge_tts.Communicate(clean, safe_voice, rate=rate, pitch=pitch)
                 await cm.save(out_path)
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(_run())
-            loop.close()
-            success=True; url=f"/static/audio/{fname}.mp3"
+            asyncio.run(_run())
+            success = True; url = f"/static/audio/{fname}.mp3"
         except Exception as e: print(f"TTS Error: {e}")
 
     if success:
@@ -144,9 +179,8 @@ def pico_v(v):
     return r
 @app.route('/upload_model', methods=['POST'])
 def upload_model():
-    if 'file' not in request.files: return jsonify({'success': False, 'msg': '无文件'})
+    if 'file' not in request.files: return jsonify({'success': False})
     f = request.files['file']
-    if f.filename == '': return jsonify({'success': False, 'msg': '未选择'})
     if f and f.filename.endswith('.zip'):
         try:
             n = secure_filename(f.filename).rsplit('.', 1)[0].lower()
@@ -159,11 +193,12 @@ def upload_model():
                 os.rmdir(sub)
             return jsonify({'success': True})
         except Exception as e: return jsonify({'success': False, 'msg': str(e)})
-    return jsonify({'success': False, 'msg': '仅支持 .zip'})
+    return jsonify({'success': False})
 
 # --- SocketIO ---
 users = {}
 chatroom_chat = None
+
 def init_chatroom():
     global chatroom_chat
     if not client: return
@@ -183,7 +218,7 @@ def on_login(d):
     if not chatroom_chat: init_chatroom()
     emit('login_success', {'username': u, 'current_model': CURRENT_MODEL})
     emit('system_message', {'text': f"🎉 欢迎 {u} 加入！"}, to='lobby', include_self=False)
-    welcome = f"[HAPPY] 嗨 {u}！我是{CURRENT_MODEL['name']}。"
+    welcome = f"[HAPPY] 嗨 {u}！"
     emit('response', {'text': welcome, 'sender': 'Pico', 'emotion': 'HAPPY'}, to=request.sid)
     socketio.start_background_task(bg_tts, welcome, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], CURRENT_MODEL.get('api_url'), CURRENT_MODEL.get('api_key'), CURRENT_MODEL.get('model_id'), sid=request.sid)
 
@@ -196,7 +231,6 @@ def on_message(d):
     user_memories = d.get('memories', [])
     if "/管理员" in msg:
         if sender.lower() == "yk": users[sid]['is_admin']=True; emit('admin_unlocked'); emit('system_message', {'text': f"👑 管理员上线"}, to=sid)
-        else: emit('system_message', {'text': "🤨 拒绝"}, to=sid)
         return
     emit('chat_message', {'text': msg, 'sender': sender}, to='lobby')
     try:
