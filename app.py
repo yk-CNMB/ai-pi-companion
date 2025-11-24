@@ -1,5 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (原生线程版)
+# Pico AI Server - app.py (原生线程版1)
 # 兼容 Python 3.13+ (Debian Trixie)，移除不兼容的 gevent/eventlet
 # =======================================================================
 import os
@@ -336,3 +336,4 @@ def bg_dl_task(name):
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000)
+
