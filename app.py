@@ -1,5 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (Fish Audio 强力诊断版)
+# Pico AI Server - app.py (原生线程版 - 兼容 Python 3.13)
 # =======================================================================
 import os
 import json
@@ -14,9 +14,7 @@ import subprocess
 import requests
 import threading
 
-# 【关键】导入 eventlet 并打补丁
-import eventlet
-eventlet.monkey_patch()
+# 【关键】这里没有任何 eventlet/gevent 引用，绝对纯净！
 
 import edge_tts
 import soundfile as sf
@@ -30,7 +28,7 @@ app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'default_secret')
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 
-# 使用 threading 模式，最稳定
+# 【关键】async_mode='threading'，这是 Python 3.13 的唯一生路
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60)
 SERVER_VERSION = str(int(time.time()))
 
@@ -51,8 +49,7 @@ try:
     with open("config.json", "r") as f:
         CONFIG = json.load(f)
     print("✅ 已加载 config.json")
-except:
-    pass
+except: pass
 
 client = None
 api_key = CONFIG.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
@@ -66,11 +63,8 @@ else:
     print("❌ 未找到有效 API KEY")
 
 # --- 4. 核心功能函数 ---
+def load_user_memories(u): return []
 
-def load_user_memories(u):
-    return []
-
-# 模型配置管理
 CURRENT_MODEL = {
     "id": "default", "path": "", "persona": "", 
     "voice": "zh-CN-XiaoxiaoNeural", "rate": "+0%", "pitch": "+0Hz", 
@@ -122,55 +116,37 @@ def init_model():
         CURRENT_MODEL = t
 init_model()
 
-# --- 5. 语音合成引擎 (带诊断广播) ---
+# --- 5. 语音合成引擎 (三级火箭) ---
 
-def run_openai_tts(text, api_url, api_key, model_id, output_path, sid=None):
-    """调用 OpenAI/Fish Audio API"""
+def run_openai_tts(text, api_url, api_key, model_id, output_path):
     try:
         # 智能补全 URL
         target_url = api_url
         if "fish.audio" in api_url and not api_url.endswith("/v1/audio/speech"):
              target_url = "https://api.fish.audio/v1/audio/speech"
         elif not api_url.endswith("/speech"):
-             # 尝试补全标准 OpenAI 格式
              target_url = api_url.rstrip("/") + "/v1/audio/speech"
 
-        print(f"🐟 [Fish] 尝试调用: {target_url} (Model: {model_id})")
+        print(f"🐟 [Fish] 调用: {model_id}")
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        payload = {"model": model_id, "input": text, "voice": model_id, "response_format": "mp3"}
         
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": model_id,
-            "input": text,
-            "voice": model_id,
-            "response_format": "mp3"
-        }
-        
-        resp = requests.post(target_url, json=payload, headers=headers, timeout=20) # 增加超时时间到 20s
-        
+        resp = requests.post(target_url, json=payload, headers=headers, timeout=20)
         if resp.status_code == 200:
-            with open(output_path, "wb") as f:
-                f.write(resp.content)
-            print(f"🐟 [Fish] 生成成功！({os.path.getsize(output_path)} bytes)")
-            return True, "Success"
+            with open(output_path, "wb") as f: f.write(resp.content)
+            return True
         else:
-            error_msg = f"API 错误 {resp.status_code}: {resp.text[:100]}" # 只取前100字符
-            print(f"❌ [Fish] {error_msg}")
-            return False, error_msg
-            
+            print(f"❌ [Fish] API Error: {resp.text}")
+            return False
     except Exception as e:
-        error_msg = f"网络错误: {str(e)}"
-        print(f"❌ [Fish] {error_msg}")
-        return False, error_msg
+        print(f"❌ [Fish] Net Error: {e}")
+        return False
 
 def run_piper_tts(text, model_file, output_path):
     model_path = os.path.join(VOICES_DIR, model_file)
     if not os.path.exists(PIPER_BIN): return False
     try:
-        cmd = f'echo "{text}" | "{PIPER_BIN}" --model "{model_path}" --output_file "{output_path}"'
-        subprocess.run(cmd, shell=True, check=True)
+        subprocess.run(f'echo "{text}" | "{PIPER_BIN}" --model "{model_path}" --output_file "{output_path}"', shell=True, check=True)
         return True
     except: return False
 
@@ -182,57 +158,40 @@ def bg_tts(text, voice, rate, pitch, api_url, api_key, model_id, room=None, sid=
     success = False
     url = ""
     
-    # 1. Fish Audio / OpenAI
-    # 必须满足：Voice选了fish-audio，且 key 和 model_id 都不为空
-    if voice == "fish-audio" and api_key and model_id:
+    # 1. Fish Audio
+    if api_url and api_key and model_id:
         out_path = os.path.join(AUDIO_DIR, f"{fname}.mp3")
-        # 传入 sid 以便发送报错通知
-        ok, msg = run_openai_tts(clean, api_url, api_key, model_id, out_path, sid)
-        if ok:
-            success = True
-            url = f"/static/audio/{fname}.mp3"
-        else:
-            # 发送错误弹窗给用户
-            err_toast = {'text': f'🐟 Fish Audio 失败: {msg}，已切换回默认语音', 'type': 'error'}
-            if sid: socketio.emit('toast', err_toast, to=sid)
-            elif room: socketio.emit('toast', err_toast, to=room)
+        if run_openai_tts(clean, api_url, api_key, model_id, out_path):
+            success = True; url = f"/static/audio/{fname}.mp3"
 
     # 2. Piper
-    if not success and voice.endswith(".onnx"):
+    if not success and voice and voice.endswith(".onnx"):
          out_path = os.path.join(AUDIO_DIR, f"{fname}.wav")
          if run_piper_tts(clean, voice, out_path):
-             success = True
-             url = f"/static/audio/{fname}.wav"
+             success = True; url = f"/static/audio/{fname}.wav"
 
-    # 3. Edge-TTS (兜底)
+    # 3. Edge-TTS
     if not success:
         out_path = os.path.join(AUDIO_DIR, f"{fname}.mp3")
-        # 如果 voice 还是 fish-audio，说明失败了，强制改回晓晓
-        safe_voice = voice if (voice and "Neural" in voice) else "zh-CN-XiaoxiaoNeural"
-        if safe_voice == "zh-CN-XiaoxiaoNeural" and voice == "fish-audio":
-             print("☁️ [Edge] 启动备用语音引擎...")
-             
+        safe_voice = voice if voice and "Neural" in voice else "zh-CN-XiaoxiaoNeural"
         try:
             async def _run():
                 cm = edge_tts.Communicate(clean, safe_voice, rate=rate, pitch=pitch)
                 await cm.save(out_path)
             
-            # 原生线程模式下需要新建 loop
+            # 原生线程模式下，必须每次创建新循环
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             loop.run_until_complete(_run())
             loop.close()
-            
-            success = True
-            url = f"/static/audio/{fname}.mp3"
+            success = True; url = f"/static/audio/{fname}.mp3"
         except Exception as e:
             print(f"❌ Edge-TTS Error: {e}")
 
     if success:
-        if room:
-            socketio.emit('audio_response', {'audio': url}, to=room, namespace='/')
-        elif sid:
-            socketio.emit('audio_response', {'audio': url}, to=sid, namespace='/')
+        # 发送给前端
+        if room: socketio.emit('audio_response', {'audio': url}, to=room, namespace='/')
+        elif sid: socketio.emit('audio_response', {'audio': url}, to=sid, namespace='/')
 
 # --- 6. 路由 ---
 @app.route('/')
@@ -241,17 +200,16 @@ def idx(): return redirect(url_for('pico_v', v=SERVER_VERSION))
 def pico_legacy(): return redirect(url_for('pico_v', v=SERVER_VERSION))
 @app.route('/pico/<v>')
 def pico_v(v):
-    if v != SERVER_VERSION:
-        return redirect(url_for('pico_v', v=SERVER_VERSION))
+    if v != SERVER_VERSION: return redirect(url_for('pico_v', v=SERVER_VERSION))
     r = make_response(render_template('chat.html'))
     r.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     return r
 
 @app.route('/upload_model', methods=['POST'])
 def upload_model():
-    if 'file' not in request.files: return jsonify({'success': False, 'msg': '无文件'})
+    if 'file' not in request.files: return jsonify({'success': False})
     f = request.files['file']
-    if f.filename == '': return jsonify({'success': False, 'msg': '未选择'})
+    if f.filename == '': return jsonify({'success': False})
     if f and f.filename.endswith('.zip'):
         try:
             n = secure_filename(f.filename).rsplit('.', 1)[0].lower()
@@ -265,9 +223,9 @@ def upload_model():
                 os.rmdir(sub)
             return jsonify({'success': True})
         except Exception as e: return jsonify({'success': False, 'msg': str(e)})
-    return jsonify({'success': False, 'msg': '仅支持 .zip'})
+    return jsonify({'success': False})
 
-# --- 7. SocketIO 事件 ---
+# --- 7. SocketIO ---
 users = {}
 chatroom_chat = None
 
@@ -279,12 +237,10 @@ def init_chatroom():
             model="gemini-2.5-flash",
             config={"system_instruction": CURRENT_MODEL['persona']}
         )
-        print(f"🏠 聊天室重置 (人设: {CURRENT_MODEL['name']})")
     except: pass
 
 @socketio.on('connect')
-def on_connect():
-    emit('server_ready', {'status': 'ok'})
+def on_connect(): emit('server_ready', {'status': 'ok'})
 
 @socketio.on('disconnect')
 def on_disconnect():
@@ -303,6 +259,7 @@ def on_login(d):
     
     welcome = f"[HAPPY] 嗨 {u}！我是{CURRENT_MODEL['name']}。"
     emit('response', {'text': welcome, 'sender': 'Pico', 'emotion': 'HAPPY'}, to=request.sid)
+    
     socketio.start_background_task(bg_tts, welcome, 
                                    CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'],
                                    CURRENT_MODEL.get('api_url'), CURRENT_MODEL.get('api_key'), CURRENT_MODEL.get('model_id'),
@@ -320,9 +277,9 @@ def on_message(d):
         if sender.lower() == "yk":
             users[sid]['is_admin'] = True
             emit('admin_unlocked')
-            emit('system_message', {'text': f"👑 管理员 {sender} 已上线！"}, to=sid)
+            emit('system_message', {'text': f"👑 管理员上线"}, to=sid)
         else:
-            emit('system_message', {'text': "🤨 你不是 YK！"}, to=sid)
+            emit('system_message', {'text': "🤨 拒绝"}, to=sid)
         return
     
     emit('chat_message', {'text': msg, 'sender': sender}, to='lobby')
@@ -348,14 +305,14 @@ def on_message(d):
         init_chatroom()
 
 # --- 8. 工作室接口 ---
-def is_admin(sid):
-    return users.get(sid, {}).get('is_admin', False)
+def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
 
 @socketio.on('get_studio_data')
 def on_get_data():
-    voices = [{"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓 (默认)"},{"id":"zh-CN-YunxiNeural","name":"☁️ 云希 (少年)"}]
+    voices = [{"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓"},{"id":"zh-CN-YunxiNeural","name":"☁️ 云希"}]
     for onnx in glob.glob(os.path.join(VOICES_DIR, "*.onnx")):
-        mid = os.path.basename(onnx); name = mid.replace(".onnx", "")
+        mid = os.path.basename(onnx)
+        name = mid.replace(".onnx", "")
         if os.path.exists(os.path.join(VOICES_DIR, f"{name}.txt")):
             with open(os.path.join(VOICES_DIR, f"{name}.txt"),'r') as f: name=f.read().strip()
         voices.append({"id": mid, "name": f"🏠 {name} (本地)"})
@@ -375,6 +332,13 @@ def on_save_settings(d):
     global CURRENT_MODEL
     if not is_admin(request.sid): return emit('toast', {'text': '❌ 无权限', 'type': 'error'})
     
+    # 强制转换类型
+    try: 
+        d['scale'] = float(d['scale'])
+        d['x'] = float(d['x'])
+        d['y'] = float(d['y'])
+    except: pass
+
     updated = save_model_config(d['id'], d)
     
     if CURRENT_MODEL['id'] == d['id']:
@@ -385,18 +349,17 @@ def on_save_settings(d):
 
 @socketio.on('delete_model')
 def on_del(d):
-    if not is_admin(request.sid): return emit('toast', {'text': '❌ 权限不足', 'type': 'error'})
+    if not is_admin(request.sid): return
     if d['id'] == CURRENT_MODEL['id']: return emit('toast', {'text': '❌ 占用中', 'type': 'error'})
     try:
         shutil.rmtree(os.path.join(MODELS_DIR, d['id']))
         emit('toast', {'text': '🗑️ 已删除', 'type': 'success'})
         on_get_data()
-    except:
-        emit('toast', {'text': '删除失败', 'type': 'error'})
+    except: pass
 
 @socketio.on('download_model')
 def on_dl(d):
-    if not is_admin(request.sid): return emit('toast', {'text': '❌ 权限不足', 'type': 'error'})
+    if not is_admin(request.sid): return
     name = d.get('name')
     if name:
         emit('toast', {'text': f'🚀 开始下载 {name}...', 'type': 'info'})
@@ -404,7 +367,9 @@ def on_dl(d):
 
 def bg_dl_task(name):
     u={"Mao":".../Mao","Natori":".../Natori"}.get(name,"https://github.com/Live2D/CubismWebSamples/trunk/Samples/Resources/"+name)
-    t=os.path.join(MODELS_DIR,name.lower()); shutil.rmtree(t, ignore_errors=True); os.makedirs(t,exist_ok=True)
+    t=os.path.join(MODELS_DIR,name.lower())
+    if os.path.exists(t): shutil.rmtree(t)
+    os.makedirs(t,exist_ok=True)
     try: os.system(f"svn export --force -q {u} {t}"); socketio.emit('toast',{'text':f'✅ {name} 完成!'},namespace='/')
     except: pass
 
