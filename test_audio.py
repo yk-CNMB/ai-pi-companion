@@ -1,53 +1,62 @@
 import requests
-import msgpack # Fish Audio 推荐使用 msgpack，速度更快
 import os
 
-# ==============================
-# 👇 填入你的信息
-API_KEY = "167dd9e764d24454b69b12f28a0ee0a8"
-MODEL_ID = "3d1cb00d75184099992ddbaf0fdd7387" # 你的流萤 ID
-# ==============================
+# ==========================================
+# 👇 请根据你的服务商填写 👇
+# ==========================================
 
-URL = "https://api.fish.audio/v1/tts"
+# 情况 A: 如果你是 SiliconFlow (硅基流动)
+# API_URL = "https://api.siliconflow.cn/v1/audio/speech"
+# MODEL_ID = "fishaudio/fish-speech-1.5"
+
+# 情况 B: 如果你是 Fish Audio 官方 (但 Key 格式不同)
+# API_URL = "https://api.fish.audio/v1/audio/speech"
+# MODEL_ID = "8ef4a238714b45718ce04243307c57a7"
+
+# 👇 填在这里：
+API_KEY = "sk-167dd9e764d24454b69b12f28a0ee0a8" # 你的 Key
+API_URL = "https://api.fish.audio/v1/tts" # 你的 API 地址 (请确保带上 /v1/audio/speech)
+MODEL_ID = "fishaudio/fish-speech-1.5" # 你的模型 ID
+TEXT = "你好，我是Pico，这是语音测试。"
+# ==========================================
+
+OUTPUT_FILE = "static/audio/universal_test.mp3"
 
 def test():
-    print(f"🐟 正在测试 Fish Audio 原生接口...")
-    
-    # 1. 构造原生请求
-    # 注意：这里使用了 Content-Type: application/json 方便调试
-    # 生产环境官方推荐 application/msgpack
+    print(f"🧪 正在测试通用 OpenAI TTS 接口...")
+    print(f"📍 URL: {API_URL}")
+    print(f"🆔 Model: {MODEL_ID}")
+
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
     }
     
+    # 标准 OpenAI TTS 格式
     payload = {
-        "text": "你好，我是流萤。这是原生接口测试。",
-        "reference_id": MODEL_ID,
-        "format": "mp3",
-        "mp3_bitrate": 128,
-        "latency": "normal" # normal, balanced, fast
+        "model": MODEL_ID,
+        "input": TEXT,
+        "voice": MODEL_ID, # 某些非标准接口需要这个
+        "response_format": "mp3"
     }
-    
+
     try:
-        response = requests.post(URL, json=payload, headers=headers, timeout=20)
+        response = requests.post(API_URL, json=payload, headers=headers, timeout=20)
         
         print(f"📡 状态码: {response.status_code}")
         
         if response.status_code == 200:
-            with open("static/audio/fish_native.mp3", "wb") as f:
-                f.write(response.content)
-            print("✅ 成功！音频已保存到 static/audio/fish_native.mp3")
+            # 检查是否真的是音频
+            if len(response.content) > 100:
+                with open(OUTPUT_FILE, "wb") as f:
+                    f.write(response.content)
+                print(f"✅ 成功！音频已保存到: {OUTPUT_FILE}")
+                print(f"📊 大小: {os.path.getsize(OUTPUT_FILE)} bytes")
+            else:
+                print(f"❌ 失败：返回数据太小，可能是错误信息。")
+                print(response.text)
         else:
-            print(f"❌ 失败: {response.text}")
-            print("💡 分析：")
-            if response.status_code == 401:
-                print("   -> API Key 错误。请检查是否多复制了空格，或者 Key 已被删除。")
-            elif response.status_code == 402:
-                print("   -> 余额不足。请登录 fish.audio 控制台查看 Credit 余额。")
-                print("   -> 注意：新注册账号可能需要验证邮箱才能获得免费额度。")
-            elif response.status_code == 404:
-                print("   -> 模型 ID 错误。请确认该模型是否已被作者删除或设为私有。")
+            print(f"❌ API 报错: {response.text}")
 
     except Exception as e:
         print(f"❌ 网络错误: {e}")
