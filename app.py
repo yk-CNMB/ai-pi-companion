@@ -1,6 +1,6 @@
 # =======================================================================
-# Pico AI Server - app.py (原生多线程版 - 兼容 Python 3.13)
-# 启动: gunicorn --worker-class gthread --threads 4 -w 1 --bind 0.0.0.0:5000 app:app
+# Pico AI Server - app.py (原生多线程版)
+# 适用于 Python 3.13，放弃不兼容的 gevent/eventlet
 # =======================================================================
 import os
 import json
@@ -13,9 +13,10 @@ import re
 import zipfile
 import subprocess
 import requests
-import threading
+import threading # 使用原生线程
 
-# 【关键修改】移除 eventlet/gevent，使用原生库
+# 【关键】不再导入 eventlet/gevent，避免 Python 3.13 冲突
+
 import edge_tts
 import soundfile as sf
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
@@ -27,11 +28,13 @@ from google import genai
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'default_secret')
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
-# 【关键】使用 threading 模式，兼容性最好
+
+# 【关键】async_mode='threading'，使用原生线程处理并发
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60)
+
 SERVER_VERSION = str(int(time.time()))
 
-# --- 2. 目录 ---
+# --- 2. 目录配置 ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MEMORIES_DIR = os.path.join(BASE_DIR, "memories")
 AUDIO_DIR = os.path.join(BASE_DIR, "static", "audio")
@@ -42,11 +45,12 @@ PIPER_BIN = os.path.join(BASE_DIR, "piper_engine", "piper")
 for d in [MEMORIES_DIR, AUDIO_DIR, MODELS_DIR, VOICES_DIR]:
     os.makedirs(d, exist_ok=True)
 
-# --- 3. 配置 ---
+# --- 3. API 配置 ---
 CONFIG = {}
 try:
     with open("config.json", "r") as f:
         CONFIG = json.load(f)
+    print("✅ 已加载 config.json")
 except:
     pass
 
@@ -61,15 +65,21 @@ if api_key and "在这里" not in api_key:
 else:
     print("❌ 未找到有效 API KEY")
 
-# --- 4. 核心函数 ---
+# --- 4. 核心功能 ---
+
 def load_user_memories(u): return []
 
-CURRENT_MODEL = {"id": "default", "path": "", "persona": "", "voice": "zh-CN-XiaoxiaoNeural", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.0, "y": 0.0, "api_url": "", "api_key": "", "model_id": ""}
+CURRENT_MODEL = {
+    "id": "default", "path": "", "persona": "", 
+    "voice": "zh-CN-XiaoxiaoNeural", "rate": "+0%", "pitch": "+0Hz", 
+    "scale": 0.5, "x": 0.0, "y": 0.0,
+    "api_url": "", "api_key": "", "model_id": ""
+}
 
-def get_model_config(mid):
-    p = os.path.join(MODELS_DIR, mid, "config.json")
+def get_model_config(model_id):
+    p = os.path.join(MODELS_DIR, model_id, "config.json")
     data = {
-        "persona": f"你是一个名为{mid}的AI。请用中文简短回复。",
+        "persona": f"你是一个名为{model_id}的AI。请用中文简短回复。",
         "voice": "zh-CN-XiaoxiaoNeural",
         "rate": "+0%", "pitch": "+0Hz",
         "scale": 0.5, "x": 0.0, "y": 0.0,
@@ -82,9 +92,9 @@ def get_model_config(mid):
         except: pass
     return data
 
-def save_model_config(mid, data):
-    p = os.path.join(MODELS_DIR, mid, "config.json")
-    current = get_model_config(mid)
+def save_model_config(model_id, data):
+    p = os.path.join(MODELS_DIR, model_id, "config.json")
+    current = get_model_config(model_id)
     current.update(data)
     with open(p, "w", encoding="utf-8") as f:
         json.dump(current, f, ensure_ascii=False, indent=2)
@@ -106,24 +116,31 @@ def init_model():
     global CURRENT_MODEL
     ms = scan_models()
     t = next((m for m in ms if "hiyori" in m['id'].lower()), ms[0] if ms else None)
-    if t: CURRENT_MODEL = t
+    if t:
+        CURRENT_MODEL = t
 init_model()
 
-# --- TTS ---
+# --- 5. 语音合成 ---
+
 def run_openai_tts(text, api_url, api_key, model_id, output_path):
     try:
         if not api_url.endswith("/v1/audio/speech"):
              if "fish.audio" in api_url: api_url = "https://api.fish.audio/v1/audio/speech"
              else: api_url = api_url.rstrip("/") + "/v1/audio/speech"
         
+        print(f"📡 [Fish] 调用: {model_id}")
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         payload = {"model": model_id, "input": text, "voice": model_id, "response_format": "mp3"}
         resp = requests.post(api_url, json=payload, headers=headers, timeout=15)
         if resp.status_code == 200:
             with open(output_path, "wb") as f: f.write(resp.content)
             return True
+        else:
+            print(f"❌ [Fish] API Error: {resp.text}")
+            return False
+    except Exception as e:
+        print(f"❌ [Fish] Req Error: {e}")
         return False
-    except: return False
 
 def run_piper_tts(text, model_file, output_path):
     model_path = os.path.join(VOICES_DIR, model_file)
@@ -132,7 +149,9 @@ def run_piper_tts(text, model_file, output_path):
         cmd = f'echo "{text}" | "{PIPER_BIN}" --model "{model_path}" --output_file "{output_path}"'
         subprocess.run(cmd, shell=True, check=True)
         return True
-    except: return False
+    except Exception as e:
+        print(f"Piper Error: {e}")
+        return False
 
 def bg_tts(text, voice, rate, pitch, api_url, api_key, model_id, room=None, sid=None):
     clean = re.sub(r'\[(.*?)\]', '', text).strip()
@@ -141,16 +160,19 @@ def bg_tts(text, voice, rate, pitch, api_url, api_key, model_id, room=None, sid=
     fname = f"{uuid.uuid4()}"
     success = False
     
+    # 1. Fish Audio
     if api_url and api_key and model_id:
         out_path = os.path.join(AUDIO_DIR, f"{fname}.mp3")
         if run_openai_tts(clean, api_url, api_key, model_id, out_path):
             success = True; url = f"/static/audio/{fname}.mp3"
 
-    if not success and voice.endswith(".onnx"):
+    # 2. Piper
+    if not success and voice and voice.endswith(".onnx"):
          out_path = os.path.join(AUDIO_DIR, f"{fname}.wav")
          if run_piper_tts(clean, voice, out_path):
              success = True; url = f"/static/audio/{fname}.wav"
 
+    # 3. Edge-TTS
     if not success:
         out_path = os.path.join(AUDIO_DIR, f"{fname}.mp3")
         safe_voice = voice if voice and "Neural" in voice else "zh-CN-XiaoxiaoNeural"
@@ -158,47 +180,53 @@ def bg_tts(text, voice, rate, pitch, api_url, api_key, model_id, room=None, sid=
             async def _run():
                 cm = edge_tts.Communicate(clean, safe_voice, rate=rate, pitch=pitch)
                 await cm.save(out_path)
-            asyncio.run(_run())
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(_run())
+            loop.close()
             success = True; url = f"/static/audio/{fname}.mp3"
-        except Exception as e: print(f"TTS Error: {e}")
+        except Exception as e:
+            print(f"❌ Edge-TTS Error: {e}")
 
     if success:
         if room: socketio.emit('audio_response', {'audio': url}, to=room, namespace='/')
         elif sid: socketio.emit('audio_response', {'audio': url}, to=sid, namespace='/')
 
-# --- 路由 ---
+# --- 6. 路由 ---
 @app.route('/')
 def idx(): return redirect(url_for('pico_v', v=SERVER_VERSION))
 @app.route('/pico')
 def pico_legacy(): return redirect(url_for('pico_v', v=SERVER_VERSION))
 @app.route('/pico/<v>')
 def pico_v(v):
-    if v!=SERVER_VERSION: return redirect(url_for('pico_v', v=SERVER_VERSION))
+    if v != SERVER_VERSION: return redirect(url_for('pico_v', v=SERVER_VERSION))
     r = make_response(render_template('chat.html'))
     r.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     return r
+
 @app.route('/upload_model', methods=['POST'])
 def upload_model():
-    if 'file' not in request.files: return jsonify({'success': False})
+    if 'file' not in request.files: return jsonify({'success': False, 'msg': '无文件'})
     f = request.files['file']
+    if f.filename == '': return jsonify({'success': False, 'msg': '未选择'})
     if f and f.filename.endswith('.zip'):
         try:
             n = secure_filename(f.filename).rsplit('.', 1)[0].lower()
-            p = os.path.join(MODELS_DIR, n); shutil.rmtree(p, ignore_errors=True)
+            p = os.path.join(MODELS_DIR, n)
+            if os.path.exists(p): shutil.rmtree(p)
             with zipfile.ZipFile(f, 'r') as z: z.extractall(p)
             items = os.listdir(p)
-            if len(items)==1 and os.path.isdir(os.path.join(p, items[0])):
-                sub = os.path.join(p, items[0]); 
+            if len(items) == 1 and os.path.isdir(os.path.join(p, items[0])):
+                sub = os.path.join(p, items[0])
                 for i in os.listdir(sub): shutil.move(os.path.join(sub, i), p)
                 os.rmdir(sub)
             return jsonify({'success': True})
         except Exception as e: return jsonify({'success': False, 'msg': str(e)})
-    return jsonify({'success': False})
+    return jsonify({'success': False, 'msg': '仅支持 .zip'})
 
-# --- SocketIO ---
+# --- 7. SocketIO ---
 users = {}
 chatroom_chat = None
-
 def init_chatroom():
     global chatroom_chat
     if not client: return
@@ -231,6 +259,7 @@ def on_message(d):
     user_memories = d.get('memories', [])
     if "/管理员" in msg:
         if sender.lower() == "yk": users[sid]['is_admin']=True; emit('admin_unlocked'); emit('system_message', {'text': f"👑 管理员上线"}, to=sid)
+        else: emit('system_message', {'text': "🤨 拒绝"}, to=sid)
         return
     emit('chat_message', {'text': msg, 'sender': sender}, to='lobby')
     try:
@@ -244,15 +273,16 @@ def on_message(d):
         socketio.start_background_task(bg_tts, txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], CURRENT_MODEL.get('api_url'), CURRENT_MODEL.get('api_key'), CURRENT_MODEL.get('model_id'), room='lobby')
     except Exception as e: print(f"AI: {e}"); init_chatroom()
 
-# --- 工作室 ---
+# --- 8. 工作室 ---
 def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
 @socketio.on('get_studio_data')
 def on_get_data():
     voices = [{"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓"},{"id":"zh-CN-YunxiNeural","name":"☁️ 云希"}]
     for onnx in glob.glob(os.path.join(VOICES_DIR, "*.onnx")):
         mid = os.path.basename(onnx); name = mid.replace(".onnx", "")
-        if os.path.exists(os.path.join(VOICES_DIR, f"{name}.txt")): name=open(os.path.join(VOICES_DIR, f"{name}.txt")).read().strip()
-        voices.append({"id": mid, "name": f"🏠 {name}"})
+        if os.path.exists(os.path.join(VOICES_DIR, f"{name}.txt")):
+            with open(os.path.join(VOICES_DIR, f"{name}.txt"),'r') as f: name=f.read().strip()
+        voices.append({"id": mid, "name": f"🏠 {name} (本地)"})
     emit('studio_data', {'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 'voices': voices})
 @socketio.on('switch_model')
 def on_switch(d):
@@ -269,7 +299,7 @@ def on_save_settings(d):
 @socketio.on('delete_model')
 def on_del(d):
     if not is_admin(request.sid): return
-    if d['id']==CURRENT_MODEL['id']: return
+    if d['id']==CURRENT_MODEL['id']: return emit('toast',{'text':'❌ 占用中','type':'error'})
     try: shutil.rmtree(os.path.join(MODELS_DIR, d['id'])); emit('toast',{'text':'🗑️ 已删除'}); on_get_data()
     except: pass
 @socketio.on('download_model')
