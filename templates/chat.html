@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-    <!-- (HEAD 部分保持不变，样式不变，直接用之前的即可) -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Pico Studio</title>
@@ -11,7 +10,7 @@
     <script src="/static/js/index.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <style>
-        /* 样式省略，请保留原样 */
+        /* --- 样式 (保持不变) --- */
         body{font-family:"Segoe UI",sans-serif;margin:0;padding:0;height:100vh;background-color:#2d3436;display:flex;flex-direction:row;overflow:hidden;color:#333}
         #stage-container{flex:1;position:relative;background-image:radial-gradient(circle,#636e72 10%,#2d3436 90%);overflow:hidden;touch-action:none}
         #live2d-canvas{position:absolute;top:0;left:0;width:100%;height:100%}
@@ -28,6 +27,7 @@
         .pico{align-items:flex-start} .pico .message-info{color:#e84393;font-weight:bold} .pico .message-bubble{background:#fff0f6;color:#333;border:2px solid #f8a5c2;border-bottom-left-radius:4px}
         .emotion-tag{display:inline-block;font-size:0.8em;padding:1px 4px;border-radius:4px;background:rgba(232,67,147,0.1);color:#e84393;margin-left:5px}
         .system{align-items:center;margin:10px 0} .system .message-bubble{background:#eee;color:#666;font-size:12px;padding:4px 12px;border-radius:12px;box-shadow:none}
+        .audio-player{margin-top:8px;height:32px;width:100%;opacity:0.8;border-radius:16px;display:block}
         #input-area{display:flex;padding:10px;background:white;border-top:1px solid #eee;flex-shrink:0}
         #user-input{flex:1;padding:12px;border:1px solid #ddd;border-radius:25px;font-size:16px;outline:none}
         #send-btn{background:#6c5ce7;color:white;border:none;padding:0 20px;margin-left:10px;border-radius:25px;font-weight:bold}
@@ -37,25 +37,23 @@
         #username-input{width:80%;padding:12px;margin:20px 0;border:2px solid #6c5ce7;border-radius:10px;font-size:18px;text-align:center;outline:none}
         #login-btn{background:#6c5ce7;color:white;border:none;padding:12px 40px;border-radius:30px;font-size:18px;font-weight:bold;transition:all 0.3s}
         #login-btn:disabled{background:#b2bec3;cursor:not-allowed;opacity:0.7}
+        .admin-only{display:none}
+        .slider-container{margin:10px 0}
+        .slider-label{font-size:12px;color:#666;display:flex;justify-content:space-between}
+        input[type="range"]{width:100%;margin-top:5px}
+        .upload-box{border:2px dashed #ccc;padding:15px;text-align:center;border-radius:10px;margin-top:10px;cursor:pointer}
         .model-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:10px;margin-top:15px}
         .model-card{background:#f8f9fa;padding:10px;border-radius:8px;text-align:center;cursor:pointer;border:2px solid transparent}
         .model-card.active{border-color:#6c5ce7;background:#e0dfff;font-weight:bold}
         .chip{display:inline-block;background:#eee;padding:6px 12px;border-radius:15px;margin:5px;cursor:pointer}
+        .btn-del{color:red;font-size:12px;display:block;margin-top:5px}
+        .fish-settings{background:#e3f2fd;padding:10px;border-radius:8px;border:1px solid #90caf9;margin-bottom:10px}
+        .fish-label{color:#1565c0;font-weight:bold;font-size:13px;margin-bottom:5px;display:block}
+        .api-input{width:100%;padding:8px;margin-bottom:8px;border:1px solid #ccc;border-radius:5px;font-size:12px;box-sizing:border-box}
         #toast-container{position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:11000;text-align:center;width:100%}
         .toast{display:inline-block;background:rgba(0,0,0,0.8);color:white;padding:8px 20px;border-radius:20px;margin-top:10px;animation:fadeOut 3s forwards 2s}
         @keyframes fadeOut{to{opacity:0;visibility:hidden}}
-        .audio-player{margin-top:8px;height:32px;width:100%;opacity:0.8;border-radius:16px}
-        .admin-only { display: none; }
-        .slider-container { margin: 10px 0; }
-        .slider-label { font-size: 12px; color: #666; display: flex; justify-content: space-between; }
-        input[type="range"] { width: 100%; margin-top: 5px; }
-        .upload-box { border: 2px dashed #ccc; padding: 15px; text-align: center; border-radius: 10px; margin-top: 10px; cursor: pointer; }
-        .btn-del { color: red; font-size: 12px; display: block; margin-top: 5px; }
-        .fish-settings { background: #e3f2fd; padding: 10px; border-radius: 8px; border: 1px solid #90caf9; margin-bottom: 10px; }
-        .fish-label { color: #1565c0; font-weight: bold; font-size: 13px; margin-bottom: 5px; display: block; }
-        .api-input { width: 100%; padding: 8px; margin-bottom: 8px; border: 1px solid #ccc; border-radius: 5px; font-size: 12px; box-sizing: border-box; }
         
-        /* 调试信息 */
         #debug-pos { position: absolute; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.5); padding: 5px; font-size: 10px; pointer-events: none; z-index: 100; }
     </style>
 </head>
@@ -70,7 +68,7 @@
             
             <div class="admin-only">
                 <hr>
-                <h4>⚙️ 调音 & 位置 (<span id="persona-model-name"></span>)</h4>
+                <h4>⚙️ 调音 & 位置</h4>
                 <label style="font-size:12px;color:#666">人设提示词:</label>
                 <textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea>
                 
@@ -111,7 +109,7 @@
         <canvas id="live2d-canvas"></canvas>
         <div id="debug-pos">Pos: -</div>
     </div>
-    <div id="chat-container"><div id="header"><span id="room-title">🤖 互动区</span><div style="display:flex;gap:10px"><div class="icon-btn" id="reset-btn" title="归位 (管理员预设)">🎯</div><div class="icon-btn" id="studio-btn" title="设置">🛠️</div></div></div><div id="chat-window"></div><div id="input-area"><input id="user-input" placeholder="发送弹幕..."><button id="send-btn">发送</button></div></div>
+    <div id="chat-container"><div id="header"><span id="room-title">🤖 互动区</span><div style="display:flex;gap:10px"><div class="icon-btn" id="reset-btn" title="归位">🎯</div><div class="icon-btn" id="studio-btn" title="设置">🛠️</div></div></div><div id="chat-window"></div><div id="input-area"><input id="user-input" placeholder="发送弹幕..."><button id="send-btn">发送</button></div></div>
 
     <script>
         const socket = io({reconnection:true});
@@ -121,18 +119,16 @@
         function updateVal(type, val) { document.getElementById(`${type}-val`).textContent = (val > 0 ? '+' : '') + val + (type==='rate'?'%':'Hz'); }
         function toggleFishPanel() { document.getElementById('fish-panel').style.display = (document.getElementById('voice-select').value === 'fish-audio') ? 'block' : 'none'; }
         
-        // 实时预览 (拖动滑块时)
+        // 实时预览
         function previewTransform() {
             if(!model) return;
             const s = parseFloat(document.getElementById('model-scale').value);
             const x = parseFloat(document.getElementById('model-x').value);
             const y = parseFloat(document.getElementById('model-y').value);
-            // 更新文字
             document.getElementById('scale-val').textContent = s.toFixed(2);
             document.getElementById('x-val').textContent = x.toFixed(2);
             document.getElementById('y-val').textContent = y.toFixed(2);
             
-            // 临时更新画面，但不修改全局 currentCfg
             applyToModel(s, x, y);
         }
 
@@ -147,36 +143,32 @@
             model.x = (st.clientWidth * x) - (model.width / 2);
             model.y = (st.clientHeight * y) - (model.height / 2);
             
-            // 更新调试显示
             document.getElementById('debug-pos').textContent = `S:${s.toFixed(2)} X:${x.toFixed(2)} Y:${y.toFixed(2)}`;
         }
 
         // 从配置应用 (登录、切换模型、归位时调用)
         function applyConfig(cfg) {
-            // 优先使用配置值，没有则用默认值
+            if(!model || !app_pixi) return;
             const s = (cfg.scale !== undefined) ? cfg.scale : 0.5;
             const x = (cfg.x !== undefined) ? cfg.x : 0.5;
             const y = (cfg.y !== undefined) ? cfg.y : 0.5;
             
-            // 更新滑块状态
-            document.getElementById('model-scale').value = s;
-            document.getElementById('model-x').value = x;
-            document.getElementById('model-y').value = y;
-            updateVal(null, null); // 刷新文字显示需要单独逻辑，这里简化处理
-            document.getElementById('scale-val').textContent = s.toFixed(2);
-            document.getElementById('x-val').textContent = x.toFixed(2);
-            document.getElementById('y-val').textContent = y.toFixed(2);
+            if(document.getElementById('model-scale')) {
+                document.getElementById('model-scale').value = s;
+                document.getElementById('model-x').value = x;
+                document.getElementById('model-y').value = y;
+                updateValLabels(s,x,y);
+            }
 
             applyToModel(s, x, y);
         }
+        function updateValLabels(s,x,y) { document.getElementById('scale-val').textContent=s.toFixed(2); document.getElementById('x-val').textContent=x.toFixed(2); document.getElementById('y-val').textContent=y.toFixed(2); }
 
-        // 【核心修正】归位按钮现在强制使用 currentCfg (服务器下发的配置)
+        // 【核心修正】移除了 updateVal(null, null)
         document.getElementById('reset-btn').onclick = () => {
             applyConfig(currentCfg);
             showToast("🎯 已恢复管理员预设位置", "info");
         };
-        
-        // 窗口变化时保持比例
         window.addEventListener('resize', () => setTimeout(() => applyConfig(currentCfg), 100));
 
         const loginBtn = document.getElementById('login-btn');
@@ -184,11 +176,10 @@
         socket.on('server_ready', ()=>{loginBtn.textContent="进入直播间";loginBtn.disabled=false;});
         socket.on('disconnect', ()=>{loginBtn.textContent="已断开...";loginBtn.disabled=true;});
         loginBtn.onclick=()=>{let n=document.getElementById('username-input').value.trim();if(n){myUser=n;loginBtn.disabled=true;loginBtn.textContent="登录中...";socket.emit('login',{username:n});initAudio();}};
-        
         socket.on('login_success',(d)=>{
             document.getElementById('login-overlay').style.display='none';
             document.getElementById('room-title').textContent=`🤖 ${d.current_model.name}`;
-            currentCfg = d.current_model; // 保存配置到全局变量
+            currentCfg = d.current_model;
             if(d.current_model.path) loadModel(d.current_model.path, d.current_model);
             loadHistory();
         });
@@ -205,10 +196,7 @@
                 console.log("Load:", path);
                 model = await PIXI.live2d.Live2DModel.from(path);
                 app_pixi.stage.addChild(model);
-                
-                // 加载完成后，立即应用配置
-                setTimeout(() => applyConfig(cfg || currentCfg), 100);
-                
+                setTimeout(() => applyTransform(cfg || currentCfg), 100);
                 app_pixi.ticker.remove(lipSync); app_pixi.ticker.add(lipSync);
                 if(model.internalModel.motionManager) model.internalModel.motionManager.startRandomMotion('Idle');
             } catch(e) { console.error(e); showToast("❌ 模型加载失败","error"); }
@@ -228,27 +216,19 @@
                 let delBtn=iAmAdmin&&m.id!==d.current_id?`<div class="btn-del" onclick="delModel('${m.id}',event)">🗑️</div>`:"";
                 el.innerHTML=`<div>${m.name}</div>${delBtn}`;el.onclick=()=>socket.emit('switch_model',{id:m.id});list.appendChild(el);
                 if(m.id===d.current_id){
-                    // 这里只是填充工作室的UI，不影响舞台上的模型
                     document.getElementById('persona-model-name').textContent=m.name;
                     document.getElementById('persona-text').value=m.persona;
-                    
-                    const vSelect = document.getElementById('voice-select');
-                    if(m.api_key && m.model_id) {
-                        vSelect.value = 'fish-audio';
-                        document.getElementById('fish-panel').style.display = 'block';
-                        document.getElementById('api-url').value = m.api_url || "https://api.fish.audio/v1/audio/speech";
-                        document.getElementById('api-key').value = m.api_key || "";
-                        document.getElementById('model-id').value = m.model_id || "";
-                    } else {
-                        vSelect.value = m.voice || "zh-CN-XiaoxiaoNeural";
-                        document.getElementById('fish-panel').style.display = 'none';
+                    if(m.voice){
+                        const sel=document.getElementById('voice-select');
+                        if(!Array.from(sel.options).some(o=>o.value===m.voice)){let opt=document.createElement('option');opt.value=m.voice;opt.textContent=m.voice;sel.appendChild(opt);}
+                        sel.value=m.voice;
                     }
-                    
+                    if(m.voice==='fish-audio'){document.getElementById('fish-panel').style.display='block';document.getElementById('api-url').value=m.api_url;document.getElementById('api-key').value=m.api_key;document.getElementById('model-id').value=m.model_id;}
+                    else{document.getElementById('fish-panel').style.display='none';}
                     let r=parseInt(m.rate)||0, p=parseInt(m.pitch)||0;
                     document.getElementById('rate-range').value=r; updateVal('rate',r);
                     document.getElementById('pitch-range').value=p; updateVal('pitch',p);
                     
-                    // 填充位置滑块 (显示当前服务器上的配置)
                     let s=m.scale!==undefined?m.scale:0.5, x=m.x!==undefined?m.x:0.5, y=m.y!==undefined?m.y:0.5;
                     document.getElementById('model-scale').value=s; document.getElementById('model-x').value=x; document.getElementById('model-y').value=y;
                     updateValLabels(s,x,y);
@@ -257,7 +237,7 @@
         });
         
         socket.on('model_switched',(m)=>{
-            currentCfg = m; // 更新全局配置
+            currentCfg = m; 
             loadModel(m.path, m); 
             document.getElementById('room-title').textContent=`🤖 ${m.name}`;
             if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');
@@ -268,17 +248,13 @@
             const isFish = document.getElementById('voice-select').value === 'fish-audio';
             let r=document.getElementById('rate-range').value, p=document.getElementById('pitch-range').value;
             socket.emit('save_settings',{
-                id: currentModelId, 
-                persona: document.getElementById('persona-text').value,
-                voice: document.getElementById('voice-select').value,
-                api_url: isFish ? document.getElementById('api-url').value.trim() : "",
-                api_key: isFish ? document.getElementById('api-key').value.trim() : "",
-                model_id: isFish ? document.getElementById('model-id').value.trim() : "",
-                rate: (r>=0?'+':'')+r+'%', pitch: (p>=0?'+':'')+p+'Hz',
-                // 保存当前滑块的值
-                scale: document.getElementById('model-scale').value,
-                x: document.getElementById('model-x').value,
-                y: document.getElementById('model-y').value
+                id:currentModelId, persona:document.getElementById('persona-text').value,
+                voice:document.getElementById('voice-select').value,
+                api_url:isFish?document.getElementById('api-url').value.trim():"",
+                api_key:isFish?document.getElementById('api-key').value.trim():"",
+                model_id:isFish?document.getElementById('model-id').value.trim():"",
+                rate:document.getElementById('rate-range').value+'%', pitch:document.getElementById('pitch-range').value+'Hz',
+                scale:document.getElementById('model-scale').value, x:document.getElementById('model-x').value, y:document.getElementById('model-y').value
             });
         };
 
