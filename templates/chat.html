@@ -9,9 +9,8 @@
     <script src="/static/js/pixi.min.js"></script>
     <script src="/static/js/index.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
-    <!-- 样式完全保持不变，这里省略 style 标签内容，请直接使用上一版 -->
     <style>
-        /* 请复制上一版的 CSS 样式，完全通用 */
+        /* --- 样式区 (完整保留) --- */
         body{font-family:"Segoe UI",sans-serif;margin:0;padding:0;height:100vh;background-color:#2d3436;display:flex;flex-direction:row;overflow:hidden;color:#333}
         #stage-container{flex:1;position:relative;background-image:radial-gradient(circle,#636e72 10%,#2d3436 90%);overflow:hidden;touch-action:none}
         #live2d-canvas{position:absolute;top:0;left:0;width:100%;height:100%}
@@ -70,8 +69,14 @@
                 <textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea>
                 
                 <label style="font-size:12px;color:#666">声线选择:</label>
-                <!-- 下拉菜单会自动填充后端扫描到的 Piper 模型 -->
-                <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd"></select>
+                <!-- 【核心】硬编码 Edge-TTS 列表，保证不为空 -->
+                <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd">
+                    <option value="zh-CN-XiaoxiaoNeural">🇨🇳 晓晓 (默认)</option>
+                    <option value="zh-CN-XiaoyiNeural">🇨🇳 晓伊 (御姐)</option>
+                    <option value="zh-CN-YunxiNeural">🇨🇳 云希 (少年)</option>
+                    <option value="zh-TW-HsiaoChenNeural">🇹🇼 晓臻 (台湾)</option>
+                    <option value="ja-JP-NanamiNeural">🇯🇵 七海 (日语)</option>
+                </select>
 
                 <div class="slider-container"><div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div><input type="range" id="rate-range" min="-50" max="50" oninput="updateVal('rate', this.value)"></div>
                 <div class="slider-container"><div class="slider-label"><span>音调</span><span id="pitch-val">0Hz</span></div><input type="range" id="pitch-range" min="-50" max="50" oninput="updateVal('pitch', this.value)"></div>
@@ -81,7 +86,10 @@
                 <div class="slider-container"><div class="slider-label"><span>缩放</span><span id="scale-val">0.5</span></div><input type="range" id="model-scale" min="0.1" max="2.0" step="0.05" oninput="previewTransform()"></div>
 
                 <button id="save-settings-btn" style="width:100%;padding:10px;margin-top:10px;background:#6c5ce7;color:white;border:none;border-radius:10px">保存所有配置</button>
-                <hr><h4>☁️ 上传/下载</h4><div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 .zip<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div><div style="margin-top:10px"><span class="chip" onclick="dlModel('Mao')">Mao</span><span class="chip" onclick="dlModel('Natori')">Natori</span></div>
+                
+                <hr><h4>☁️ 上传/下载</h4>
+                <div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 .zip<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div>
+                <div style="margin-top:10px"><span class="chip" onclick="dlModel('Mao')">Mao</span><span class="chip" onclick="dlModel('Natori')">Natori</span></div>
             </div>
             <hr><h4>🧹 缓存</h4><div><span class="chip" onclick="clearLocalHistory()">清除历史</span><span class="chip" onclick="clearLocalMemories()">清除记忆</span></div>
         </div>
@@ -96,12 +104,18 @@
         let isDragging=false, dragData, initialScale, initialDist, iAmAdmin=false;
 
         function updateVal(type, val) { document.getElementById(`${type}-val`).textContent = (val > 0 ? '+' : '') + val + (type==='rate'?'%':'Hz'); }
+
         function previewTransform() {
             if(!model) return;
-            const s = parseFloat(document.getElementById('model-scale').value), x = parseFloat(document.getElementById('model-x').value), y = parseFloat(document.getElementById('model-y').value);
-            document.getElementById('scale-val').textContent = s.toFixed(2); document.getElementById('x-val').textContent = x.toFixed(2); document.getElementById('y-val').textContent = y.toFixed(2);
+            const s = parseFloat(document.getElementById('model-scale').value);
+            const x = parseFloat(document.getElementById('model-x').value);
+            const y = parseFloat(document.getElementById('model-y').value);
+            document.getElementById('scale-val').textContent = s.toFixed(2);
+            document.getElementById('x-val').textContent = x.toFixed(2);
+            document.getElementById('y-val').textContent = y.toFixed(2);
             applyToModel(s, x, y);
         }
+
         function applyToModel(s, x, y) {
             if(!model || !app_pixi) return;
             const st = document.getElementById('stage-container');
@@ -112,15 +126,22 @@
             model.y = (st.clientHeight * y) - (model.height / 2);
             document.getElementById('debug-pos').textContent = `S:${s.toFixed(2)} X:${x.toFixed(2)} Y:${y.toFixed(2)}`;
         }
+
         function applyConfig(cfg) {
             if(!model || !app_pixi) return;
             const s = (cfg.scale !== undefined) ? cfg.scale : 0.5;
             const x = (cfg.x !== undefined) ? cfg.x : 0.5;
             const y = (cfg.y !== undefined) ? cfg.y : 0.5;
-            if(document.getElementById('model-scale')) { document.getElementById('model-scale').value = s; document.getElementById('model-x').value = x; document.getElementById('model-y').value = y; updateValLabels(s, x, y); }
+            if(document.getElementById('model-scale')) {
+                document.getElementById('model-scale').value = s;
+                document.getElementById('model-x').value = x;
+                document.getElementById('model-y').value = y;
+                updateValLabels(s, x, y);
+            }
             applyToModel(s, x, y);
         }
         function updateValLabels(s,x,y) { document.getElementById('scale-val').textContent=s.toFixed(2); document.getElementById('x-val').textContent=x.toFixed(2); document.getElementById('y-val').textContent=y.toFixed(2); }
+
         document.getElementById('reset-btn').onclick = () => { applyConfig(currentCfg); showToast("🎯 已恢复", "info"); };
         window.addEventListener('resize', () => setTimeout(() => applyConfig(currentCfg), 100));
 
@@ -139,7 +160,10 @@
         socket.on('login_failed',(d)=>{alert(d.error);loginBtn.disabled=false;loginBtn.textContent="重试";});
 
         async function loadModel(path, cfg) {
-            if(!app_pixi) { app_pixi = new PIXI.Application({ view:document.getElementById('live2d-canvas'), autoStart:true, resizeTo:document.getElementById('stage-container'), transparent:true }); initInteraction(); }
+            if(!app_pixi) {
+                app_pixi = new PIXI.Application({ view:document.getElementById('live2d-canvas'), autoStart:true, resizeTo:document.getElementById('stage-container'), transparent:true });
+                initInteraction();
+            }
             try {
                 if(model) { app_pixi.stage.removeChild(model); model.destroy(); model=null; }
                 app_pixi.stage.removeChildren(); 
@@ -158,15 +182,28 @@
 
         document.getElementById('studio-btn').onclick=()=>{document.getElementById('studio-overlay').style.display='flex';socket.emit('get_studio_data');};
         function closeStudio(){document.getElementById('studio-overlay').style.display='none';}
+        
         socket.on('studio_data',(d)=>{
             const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id;
             d.models.forEach(m=>{
-                let el=document.createElement('div');el.className=`model-card ${m.id===d.current_id?'active':''}`;let delBtn=iAmAdmin&&m.id!==d.current_id?`<div class="btn-del" onclick="delModel('${m.id}',event)">🗑️</div>`:"";el.innerHTML=`<div>${m.name}</div>${delBtn}`;el.onclick=()=>socket.emit('switch_model',{id:m.id});list.appendChild(el);
+                let el=document.createElement('div');el.className=`model-card ${m.id===d.current_id?'active':''}`;
+                let delBtn=iAmAdmin&&m.id!==d.current_id?`<div class="btn-del" onclick="delModel('${m.id}',event)">🗑️</div>`:"";
+                el.innerHTML=`<div>${m.name}</div>${delBtn}`;el.onclick=()=>socket.emit('switch_model',{id:m.id});list.appendChild(el);
                 if(m.id===d.current_id){
-                    document.getElementById('persona-model-name').textContent=m.name; document.getElementById('persona-text').value=m.persona;
-                    const vSelect=document.getElementById('voice-select'); vSelect.innerHTML=""; 
-                    if(d.voices) d.voices.forEach(v=>{let o=document.createElement('option');o.value=v.id;o.textContent=v.name;vSelect.appendChild(o);});
+                    document.getElementById('persona-model-name').textContent=m.name;
+                    document.getElementById('persona-text').value=m.persona;
+                    const vSelect=document.getElementById('voice-select');
+                    
+                    // 【核心】只在没有该选项时才添加，避免重复
+                    if(d.voices) {
+                        d.voices.forEach(v=>{
+                            if(!Array.from(vSelect.options).some(o=>o.value===v.id)){
+                                let opt=document.createElement('option');opt.value=v.id;opt.textContent=v.name;vSelect.appendChild(opt);
+                            }
+                        });
+                    }
                     if(m.voice) vSelect.value=m.voice;
+                    
                     let r=parseInt(m.rate)||0, p=parseInt(m.pitch)||0;
                     document.getElementById('rate-range').value=r; updateVal('rate',r);
                     document.getElementById('pitch-range').value=p; updateVal('pitch',p);
