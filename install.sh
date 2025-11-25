@@ -1,61 +1,57 @@
 #!/bin/bash
-# Pico AI 紧急修复脚本 - 修复 JS 库和音频驱动
+# Piper 引擎 + GlaDOS 模型 一键安装脚本
 
 CDIR="$(cd "$(dirname "$0")" && pwd)"
-echo -e "\033[0;31m🚑 开始紧急修复...\033[0m"
+PIPER_DIR="$CDIR/piper_engine"
+VOICE_DIR="$CDIR/static/voices"
 
-# --- 1. 修复 JS 核心库 (解决模型加载失败) ---
-echo "🔧 [1/4] 正在修复前端 JS 引擎..."
-mkdir -p "$CDIR/static/js"
-cd "$CDIR/static/js"
+echo -e "\033[0;32m🔧 开始部署 Piper 本地语音 (GlaDOS版)...\033[0m"
 
-# 强制重新下载 4 个核心文件 (使用最稳定的版本组合)
-echo "  ⬇️ 下载 Live2D Cubism 2..."
-curl -L -o live2d.min.js "https://cdn.jsdelivr.net/gh/dylanNew/live2d/webgl/Live2D/lib/live2d.min.js"
-echo "  ⬇️ 下载 Live2D Cubism 4..."
-curl -L -o live2dcubismcore.min.js "https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"
-echo "  ⬇️ 下载 PixiJS v6.5 (黄金稳定版)..."
-curl -L -o pixi.min.js "https://cdnjs.cloudflare.com/ajax/libs/pixi.js/6.5.9/browser/pixi.min.js"
-echo "  ⬇️ 下载 适配器插件..."
-curl -L -o index.min.js "https://cdn.jsdelivr.net/npm/pixi-live2d-display/dist/index.min.js"
+# 1. 准备目录
+mkdir -p "$PIPER_DIR"
+mkdir -p "$VOICE_DIR"
 
-# 检查文件大小，确保不是 0KB
-if [ ! -s "pixi.min.js" ] || [ ! -s "index.min.js" ]; then
-    echo "❌ JS 下载失败！请检查网络并重新运行此脚本。"
-    exit 1
+# 2. 下载 Piper 引擎 (Linux aarch64)
+if [ ! -f "$PIPER_DIR/piper" ]; then
+    echo "⬇️ 下载 Piper 引擎..."
+    # 使用 2023.11.14 版本，稳定性最好
+    wget -q -O piper.tar.gz https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_aarch64.tar.gz
+    
+    echo "📦 解压引擎..."
+    tar -xf piper.tar.gz -C "$CDIR/"
+    # 移动解压出来的 piper 文件夹内容到 piper_engine
+    cp -r "$CDIR/piper/"* "$PIPER_DIR/"
+    rm -rf "$CDIR/piper" piper.tar.gz
+    chmod +x "$PIPER_DIR/piper"
+    echo "✅ 引擎就绪"
 else
-    echo "✅ JS 引擎修复完成。"
+    echo "✅ 引擎已存在"
 fi
 
-# --- 2. 修复系统音频驱动 (解决没声音) ---
-echo "🔧 [2/4] 正在修复系统音频驱动 (需要 sudo 密码)..."
-sudo apt-get update -q
-sudo apt-get install libsndfile1 ffmpeg -y
-
-# --- 3. 修复 Python 依赖 ---
-echo "🔧 [3/4] 正在重装 Python 音频库..."
-cd "$CDIR"
-if [ -d ".venv" ]; then
-    source .venv/bin/activate
-    # 强制重装这几个关键库
-    pip install --force-reinstall edge-tts soundfile requests
+# 3. 下载 GlaDOS 模型
+# 注意：我们下载的是适配 Piper 的 ONNX 和 JSON 版本
+MODEL_NAME="glados"
+if [ ! -f "$VOICE_DIR/$MODEL_NAME.onnx" ]; then
+    echo "⬇️ 正在下载 GlaDOS 模型..."
+    cd "$VOICE_DIR"
+    
+    # 使用 HuggingFace 的高质量 GlaDOS 移植版
+    echo "  - 下载模型文件..."
+    curl -L -o "$MODEL_NAME.onnx" "https://huggingface.co/dnhkng/glados/resolve/main/glados.onnx"
+    
+    echo "  - 下载配置文件..."
+    # GlaDOS 原版 config 需要适配 Piper，这里使用兼容配置
+    # 为了确保成功，我们使用一个通用的 Piper 英文配置作为底板
+    curl -L -o "$MODEL_NAME.onnx.json" "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json"
+    
+    # 创建名字文件
+    echo "GlaDOS (English)" > "$MODEL_NAME.txt"
+    cd "$CDIR"
+    echo "✅ GlaDOS 下载完成"
 else
-    echo "❌ 未找到虚拟环境！请先运行 setup_and_run.sh"
-fi
-
-# --- 4. 检查 Hiyori 模型 ---
-echo "🔧 [4/4] 检查模型文件..."
-MODEL_PATH="$CDIR/static/live2d/hiyori/Hiyori.model3.json"
-if [ -f "$MODEL_PATH" ]; then
-    echo "✅ Hiyori 模型存在。"
-else
-    echo "⚠️ Hiyori 模型缺失，正在重新下载..."
-    bash install_hiyori_v4.sh  # 尝试调用之前的下载脚本
+    echo "✅ GlaDOS 已存在"
 fi
 
 echo "----------------------------------------"
-echo "🎉 修复完成！"
-echo "请运行: bash setup_and_run.sh 重启服务"
-
-**3. 运行修复**
-bash emergency_fix.sh
+echo "🎉 安装完毕！"
+echo "请重启服务器，并在工作室选择 'GlaDOS (English)'"
