@@ -1,7 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (全功能终极版)
-# 包含: 聊天室 | 情感引擎 | Fish Audio | Piper | Edge-TTS | 模型管理 | 管理员
-# 兼容: Python 3.13 (原生线程模式)
+# Pico AI Server - app.py (Python 3.13 兼容 / 语法严格修正版)
 # =======================================================================
 import os
 import json
@@ -16,7 +14,7 @@ import subprocess
 import requests
 import threading
 
-# 【关键】不再导入 eventlet/gevent
+# 移除不兼容的 eventlet
 import edge_tts
 import soundfile as sf
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
@@ -24,12 +22,12 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.utils import secure_filename
 from google import genai
 
-# --- 1. 初始化框架 ---
+# --- 1. 初始化 ---
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'default_secret')
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 
-# 使用 threading 模式，最稳定
+# 【关键】使用 threading 模式
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60)
 SERVER_VERSION = str(int(time.time()))
 
@@ -45,7 +43,7 @@ for d in [MEMORIES_DIR, AUDIO_DIR, MODELS_DIR, VOICES_DIR]:
     if not os.path.exists(d):
         os.makedirs(d)
 
-# --- 3. API 配置 ---
+# --- 3. API 配置 (标准多行写法) ---
 CONFIG = {}
 try:
     if os.path.exists("config.json"):
@@ -53,7 +51,7 @@ try:
             CONFIG = json.load(f)
     print("✅ 已加载 config.json")
 except Exception as e:
-    print(f"配置加载警告: {e}")
+    print(f"⚠️ 配置加载警告: {e}")
 
 client = None
 api_key = CONFIG.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
@@ -132,14 +130,14 @@ def init_model():
         CURRENT_MODEL = t
 init_model()
 
-# --- 5. 语音合成引擎 (三级火箭) ---
+# --- 5. 语音合成引擎 ---
 
 def run_openai_tts(text, api_url, api_key, model_id, output_path):
     try:
-        # 智能补全 URL
+        # 智能补全 Fish Audio URL
         target_url = api_url
         if "fish.audio" in target_url and not target_url.endswith("/v1/audio/speech") and not target_url.endswith("/v1/tts"):
-             # 尝试原生 Fish
+             # 尝试原生
              target_url = "https://api.fish.audio/v1/tts"
         elif not target_url.endswith("/speech") and not target_url.endswith("/tts"):
              target_url = target_url.rstrip("/") + "/v1/audio/speech"
@@ -206,7 +204,7 @@ def bg_tts(text, voice, rate, pitch, api_url, api_key, model_id, room=None, sid=
     # 1. Fish Audio / OpenAI
     if api_key and model_id:
         out_path = os.path.join(AUDIO_DIR, f"{fname}.mp3")
-        # 默认使用 Fish Audio
+        # 如果用户没填 URL，给一个默认的
         target_url = api_url if api_url else "https://api.fish.audio/v1/tts"
         
         if run_openai_tts(clean, target_url, api_key, model_id, out_path):
@@ -254,7 +252,8 @@ def idx(): return redirect(url_for('pico_v', v=SERVER_VERSION))
 def pico_legacy(): return redirect(url_for('pico_v', v=SERVER_VERSION))
 @app.route('/pico/<v>')
 def pico_v(v):
-    if v != SERVER_VERSION: return redirect(url_for('pico_v', v=SERVER_VERSION))
+    if v != SERVER_VERSION:
+        return redirect(url_for('pico_v', v=SERVER_VERSION))
     r = make_response(render_template('chat.html'))
     r.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     return r
@@ -307,17 +306,24 @@ def on_connect(): emit('server_ready', {'status': 'ok'})
 def on_disconnect():
     if request.sid in users:
         emit('system_message', {'text': f"💨 {users.pop(request.sid)['username']} 离开了。"}, to='lobby')
+
 @socketio.on('login')
 def on_login(d):
     u = d.get('username','').strip() or "匿名"
     users[request.sid] = {"username": u, "is_admin": False}
     join_room('lobby')
     if not chatroom_chat: init_chatroom()
+    
     emit('login_success', {'username': u, 'current_model': CURRENT_MODEL})
     emit('system_message', {'text': f"🎉 欢迎 {u} 加入！"}, to='lobby', include_self=False)
+    
     welcome = f"[HAPPY] 嗨 {u}！我是{CURRENT_MODEL['name']}。"
     emit('response', {'text': welcome, 'sender': 'Pico', 'emotion': 'HAPPY'}, to=request.sid)
-    socketio.start_background_task(bg_tts, welcome, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], CURRENT_MODEL.get('api_url'), CURRENT_MODEL.get('api_key'), CURRENT_MODEL.get('model_id'), sid=request.sid)
+    
+    socketio.start_background_task(bg_tts, welcome, 
+                                   CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'],
+                                   CURRENT_MODEL.get('api_url'), CURRENT_MODEL.get('api_key'), CURRENT_MODEL.get('model_id'),
+                                   sid=request.sid)
 
 @socketio.on('message')
 def on_message(d):
@@ -326,6 +332,7 @@ def on_message(d):
     sender = users[sid]['username']
     msg = d['text']
     user_memories = d.get('memories', [])
+
     if "/管理员" in msg:
         if sender.lower() == "yk":
             users[sid]['is_admin'] = True
@@ -334,34 +341,42 @@ def on_message(d):
         else:
             emit('system_message', {'text': "🤨 你不是 YK！"}, to=sid)
         return
+    
     emit('chat_message', {'text': msg, 'sender': sender}, to='lobby')
+
     try:
         if not chatroom_chat: init_chatroom()
         mem_ctx = f" (记忆: {', '.join(user_memories)})" if user_memories else ""
         resp = chatroom_chat.send_message(f"【{sender}说{mem_ctx}】: {msg}")
-        emo='NORMAL'; match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
-        txt=resp.text.replace(match.group(0),'').strip() if match else resp.text
-        if match: emo=match.group(1)
+        
+        emo = 'NORMAL'
+        match = re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
+        txt = resp.text.replace(match.group(0), '').strip() if match else resp.text
+        if match: emo = match.group(1)
+
         emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
-        socketio.start_background_task(bg_tts, txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], CURRENT_MODEL.get('api_url'), CURRENT_MODEL.get('api_key'), CURRENT_MODEL.get('model_id'), room='lobby')
-    except Exception as e: print(f"AI Error: {e}"); init_chatroom()
+        
+        socketio.start_background_task(bg_tts, txt, 
+                                       CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'],
+                                       CURRENT_MODEL.get('api_url'), CURRENT_MODEL.get('api_key'), CURRENT_MODEL.get('model_id'),
+                                       room='lobby')
+    except Exception as e:
+        print(f"AI Error: {e}")
+        init_chatroom()
 
 # --- 8. 工作室接口 ---
 def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
-
 @socketio.on('get_studio_data')
 def on_get_data():
-    # 默认语音
     voices = [{"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓 (默认)"},{"id":"zh-CN-YunxiNeural","name":"☁️ 云希 (少年)"}]
-    # 扫描本地 Piper
-    if os.path.exists(VOICES_DIR):
-        for onnx in glob.glob(os.path.join(VOICES_DIR, "*.onnx")):
-            mid = os.path.basename(onnx)
-            name = mid.replace(".onnx", "")
-            if os.path.exists(os.path.join(VOICES_DIR, f"{name}.txt")):
-                try: name = open(os.path.join(VOICES_DIR, f"{name}.txt")).read().strip()
-                except: pass
-            voices.append({"id": mid, "name": f"🏠 {name} (本地)"})
+    for onnx in glob.glob(os.path.join(VOICES_DIR, "*.onnx")):
+        mid = os.path.basename(onnx); name = mid.replace(".onnx", "")
+        if os.path.exists(os.path.join(VOICES_DIR, f"{name}.txt")):
+            try:
+                with open(os.path.join(VOICES_DIR, f"{name}.txt"),'r') as f:
+                    name = f.read().strip()
+            except: pass
+        voices.append({"id": mid, "name": f"🏠 {name} (本地)"})
     emit('studio_data', {'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 'voices': voices})
 
 @socketio.on('switch_model')
@@ -380,12 +395,8 @@ def on_save_settings(d):
     try: d['scale']=float(d['scale']); d['x']=float(d['x']); d['y']=float(d['y'])
     except: pass
     updated = save_model_config(d['id'], d)
-    if CURRENT_MODEL['id'] == d['id']:
-        CURRENT_MODEL.update(updated)
-        init_chatroom()
-        emit('model_switched', CURRENT_MODEL, to='lobby')
+    if CURRENT_MODEL['id'] == d['id']: CURRENT_MODEL.update(updated); init_chatroom(); emit('model_switched', CURRENT_MODEL, to='lobby')
     emit('toast', {'text': '✅ 保存成功'})
-
 @socketio.on('delete_model')
 def on_del(d):
     if not is_admin(request.sid): return
