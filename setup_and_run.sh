@@ -35,8 +35,6 @@ echo "----------------------------------------"
 echo -e "\033[0;32m✅ 安装完成！\033[0m"
 echo "文件大小: $SIZE"
 echo "📂 位置: $VOICE_DIR/glados.onnx"
-```
 
-运行它：
-```bash
 bash reinstall_glados.sh
+
