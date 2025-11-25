@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-    <!-- ... Head 内容保持不变 (CSS样式同上一个版本) ... -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Pico Studio</title>
@@ -10,8 +9,10 @@
     <script src="/static/js/pixi.min.js"></script>
     <script src="/static/js/index.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+    <!-- ... 样式部分保持之前的全套样式不变，请直接复用上一版的 style ... -->
+    <!-- 为了节省篇幅，请保留你之前的 <style>...</style> 块，不要删 -->
     <style>
-        /* 直接复用之前的样式 */
+        /* 把上一版的 style 复制过来 */
         body{font-family:"Segoe UI",sans-serif;margin:0;padding:0;height:100vh;background-color:#2d3436;display:flex;flex-direction:row;overflow:hidden;color:#333}
         #stage-container{flex:1;position:relative;background-image:radial-gradient(circle,#636e72 10%,#2d3436 90%);overflow:hidden;touch-action:none}
         #live2d-canvas{position:absolute;top:0;left:0;width:100%;height:100%}
@@ -28,7 +29,6 @@
         .pico{align-items:flex-start} .pico .message-info{color:#e84393;font-weight:bold} .pico .message-bubble{background:#fff0f6;color:#333;border:2px solid #f8a5c2;border-bottom-left-radius:4px}
         .emotion-tag{display:inline-block;font-size:0.8em;padding:1px 4px;border-radius:4px;background:rgba(232,67,147,0.1);color:#e84393;margin-left:5px}
         .system{align-items:center;margin:10px 0} .system .message-bubble{background:#eee;color:#666;font-size:12px;padding:4px 12px;border-radius:12px;box-shadow:none}
-        .audio-player{margin-top:8px;height:32px;width:100%;opacity:0.8;border-radius:16px;display:block}
         #input-area{display:flex;padding:10px;background:white;border-top:1px solid #eee;flex-shrink:0}
         #user-input{flex:1;padding:12px;border:1px solid #ddd;border-radius:25px;font-size:16px;outline:none}
         #send-btn{background:#6c5ce7;color:white;border:none;padding:0 20px;margin-left:10px;border-radius:25px;font-weight:bold}
@@ -38,22 +38,20 @@
         #username-input{width:80%;padding:12px;margin:20px 0;border:2px solid #6c5ce7;border-radius:10px;font-size:18px;text-align:center;outline:none}
         #login-btn{background:#6c5ce7;color:white;border:none;padding:12px 40px;border-radius:30px;font-size:18px;font-weight:bold;transition:all 0.3s}
         #login-btn:disabled{background:#b2bec3;cursor:not-allowed;opacity:0.7}
-        .admin-only{display:none}
-        .slider-container{margin:10px 0}
-        .slider-label{font-size:12px;color:#666;display:flex;justify-content:space-between}
-        input[type="range"]{width:100%;margin-top:5px}
-        .upload-box{border:2px dashed #ccc;padding:15px;text-align:center;border-radius:10px;margin-top:10px;cursor:pointer}
         .model-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:10px;margin-top:15px}
         .model-card{background:#f8f9fa;padding:10px;border-radius:8px;text-align:center;cursor:pointer;border:2px solid transparent}
         .model-card.active{border-color:#6c5ce7;background:#e0dfff;font-weight:bold}
         .chip{display:inline-block;background:#eee;padding:6px 12px;border-radius:15px;margin:5px;cursor:pointer}
-        .btn-del{color:red;font-size:12px;display:block;margin-top:5px}
-        .fish-settings{background:#e3f2fd;padding:10px;border-radius:8px;border:1px solid #90caf9;margin-bottom:10px}
-        .fish-label{color:#1565c0;font-weight:bold;font-size:13px;margin-bottom:5px;display:block}
-        .api-input{width:100%;padding:8px;margin-bottom:8px;border:1px solid #ccc;border-radius:5px;font-size:12px;box-sizing:border-box}
         #toast-container{position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:11000;text-align:center;width:100%}
         .toast{display:inline-block;background:rgba(0,0,0,0.8);color:white;padding:8px 20px;border-radius:20px;margin-top:10px;animation:fadeOut 3s forwards 2s}
         @keyframes fadeOut{to{opacity:0;visibility:hidden}}
+        .audio-player{margin-top:8px;height:32px;width:100%;opacity:0.8;border-radius:16px}
+        .admin-only { display: none; }
+        .slider-container { margin: 10px 0; }
+        .slider-label { font-size: 12px; color: #666; display: flex; justify-content: space-between; }
+        input[type="range"] { width: 100%; margin-top: 5px; }
+        .upload-box { border: 2px dashed #ccc; padding: 15px; text-align: center; border-radius: 10px; margin-top: 10px; cursor: pointer; }
+        .btn-del { color: red; font-size: 12px; display: block; margin-top: 5px; }
         #debug-pos { position: absolute; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.5); padding: 5px; font-size: 10px; pointer-events: none; z-index: 100; }
     </style>
 </head>
@@ -68,19 +66,17 @@
             
             <div class="admin-only">
                 <hr>
-                <h4>⚙️ 调音 & 位置 (<span id="persona-model-name"></span>)</h4>
+                <h4>⚙️ 调音 & 位置</h4>
                 <label style="font-size:12px;color:#666">人设提示词:</label>
                 <textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea>
                 
                 <label style="font-size:12px;color:#666">声线选择:</label>
-                <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd" onchange="toggleFishPanel()"></select>
-                
-                <div id="fish-panel" class="fish-settings" style="display:none">
-                    <span class="fish-label">Fish Audio 配置</span>
-                    <input id="api-url" class="api-input" placeholder="API URL (默认 https://api.fish.audio/v1/tts)">
-                    <input id="api-key" class="api-input" type="password" placeholder="API Key">
-                    <input id="model-id" class="api-input" placeholder="Model ID">
-                </div>
+                <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd">
+                    <option value="zh-CN-XiaoxiaoNeural">🇨🇳 晓晓 (默认·元气)</option>
+                    <option value="zh-CN-YunxiNeural">🇨🇳 云希 (阳光·少年)</option>
+                    <option value="zh-TW-HsiaoChenNeural">🇹🇼 晓臻 (台湾腔)</option>
+                    <option value="ja-JP-NanamiNeural">🇯🇵 七海 (日语·甜美)</option>
+                </select>
 
                 <div class="slider-container"><div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div><input type="range" id="rate-range" min="-50" max="50" oninput="updateVal('rate', this.value)"></div>
                 <div class="slider-container"><div class="slider-label"><span>音调</span><span id="pitch-val">0Hz</span></div><input type="range" id="pitch-range" min="-50" max="50" oninput="updateVal('pitch', this.value)"></div>
@@ -90,10 +86,7 @@
                 <div class="slider-container"><div class="slider-label"><span>缩放</span><span id="scale-val">0.5</span></div><input type="range" id="model-scale" min="0.1" max="2.0" step="0.05" oninput="previewTransform()"></div>
 
                 <button id="save-settings-btn" style="width:100%;padding:10px;margin-top:10px;background:#6c5ce7;color:white;border:none;border-radius:10px">保存所有配置</button>
-                
-                <hr><h4>☁️ 上传/下载</h4>
-                <div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 .zip<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div>
-                <div style="margin-top:10px"><span class="chip" onclick="dlModel('Mao')">Mao</span><span class="chip" onclick="dlModel('Natori')">Natori</span></div>
+                <hr><h4>☁️ 上传/下载</h4><div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 .zip<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div><div style="margin-top:10px"><span class="chip" onclick="dlModel('Mao')">Mao</span><span class="chip" onclick="dlModel('Natori')">Natori</span></div>
             </div>
             <hr><h4>🧹 缓存</h4><div><span class="chip" onclick="clearLocalHistory()">清除历史</span><span class="chip" onclick="clearLocalMemories()">清除记忆</span></div>
         </div>
@@ -108,8 +101,6 @@
         let isDragging=false, dragData, initialScale, initialDist, iAmAdmin=false;
 
         function updateVal(type, val) { document.getElementById(`${type}-val`).textContent = (val > 0 ? '+' : '') + val + (type==='rate'?'%':'Hz'); }
-        function toggleFishPanel() { document.getElementById('fish-panel').style.display = (document.getElementById('voice-select').value === 'fish-audio') ? 'block' : 'none'; }
-
         function previewTransform() {
             if(!model) return;
             const s = parseFloat(document.getElementById('model-scale').value);
@@ -120,7 +111,6 @@
             document.getElementById('y-val').textContent = y.toFixed(2);
             applyToModel(s, x, y);
         }
-
         function applyToModel(s, x, y) {
             if(!model || !app_pixi) return;
             const st = document.getElementById('stage-container');
@@ -131,7 +121,6 @@
             model.y = (st.clientHeight * y) - (model.height / 2);
             document.getElementById('debug-pos').textContent = `S:${s.toFixed(2)} X:${x.toFixed(2)} Y:${y.toFixed(2)}`;
         }
-
         function applyConfig(cfg) {
             if(!model || !app_pixi) return;
             const s = (cfg.scale !== undefined) ? cfg.scale : 0.5;
@@ -165,14 +154,10 @@
         socket.on('login_failed',(d)=>{alert(d.error);loginBtn.disabled=false;loginBtn.textContent="重试";});
 
         async function loadModel(path, cfg) {
-            if(!app_pixi) {
-                app_pixi = new PIXI.Application({ view:document.getElementById('live2d-canvas'), autoStart:true, resizeTo:document.getElementById('stage-container'), transparent:true });
-                initInteraction();
-            }
+            if(!app_pixi) { app_pixi = new PIXI.Application({ view:document.getElementById('live2d-canvas'), autoStart:true, resizeTo:document.getElementById('stage-container'), transparent:true }); initInteraction(); }
             try {
                 if(model) { app_pixi.stage.removeChild(model); model.destroy(); model=null; }
                 app_pixi.stage.removeChildren(); 
-                console.log("Load:", path);
                 model = await PIXI.live2d.Live2DModel.from(path);
                 app_pixi.stage.addChild(model);
                 setTimeout(() => applyConfig(cfg || currentCfg), 100);
@@ -194,17 +179,11 @@
                 if(m.id===d.current_id){
                     document.getElementById('persona-model-name').textContent=m.name;
                     document.getElementById('persona-text').value=m.persona;
-                    // 填充语音
                     const vSelect=document.getElementById('voice-select');
-                    if(m.voice && !Array.from(vSelect.options).some(o=>o.value===m.voice)){let opt=document.createElement('option');opt.value=m.voice;opt.textContent=m.voice;vSelect.appendChild(opt);}
+                    vSelect.innerHTML=""; // 清空旧选项
+                    if(d.voices) d.voices.forEach(v=>{let o=document.createElement('option');o.value=v.id;o.textContent=v.name;vSelect.appendChild(o);});
                     vSelect.value = m.voice || "zh-CN-XiaoxiaoNeural";
-                    toggleFishPanel();
                     
-                    // 【关键】填充 Fish API 数据
-                    document.getElementById('api-url').value = m.api_url || "https://api.fish.audio/v1/tts";
-                    document.getElementById('api-key').value = m.api_key || "";
-                    document.getElementById('model-id').value = m.model_id || "";
-
                     let r=parseInt(m.rate)||0, p=parseInt(m.pitch)||0;
                     document.getElementById('rate-range').value=r; updateVal('rate',r);
                     document.getElementById('pitch-range').value=p; updateVal('pitch',p);
@@ -214,20 +193,15 @@
             });
         });
         socket.on('model_switched',(m)=>{currentCfg=m;loadModel(m.path,m);document.getElementById('room-title').textContent=`🤖 ${m.name}`;if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');showToast(`✨ 已切换为 ${m.name}`);});
-        
         document.getElementById('save-settings-btn').onclick=()=>{
-            const isFish = document.getElementById('voice-select').value === 'fish-audio';
+            let r=document.getElementById('rate-range').value, p=document.getElementById('pitch-range').value;
             socket.emit('save_settings',{
                 id:currentModelId, persona:document.getElementById('persona-text').value,
                 voice:document.getElementById('voice-select').value,
-                api_url: isFish ? document.getElementById('api-url').value.trim() : "",
-                api_key: isFish ? document.getElementById('api-key').value.trim() : "",
-                model_id: isFish ? document.getElementById('model-id').value.trim() : "",
-                rate:document.getElementById('rate-range').value+'%', pitch:document.getElementById('pitch-range').value+'Hz',
+                rate:(r>=0?'+':'')+r+'%', pitch:(p>=0?'+':'')+p+'Hz',
                 scale:document.getElementById('model-scale').value, x:document.getElementById('model-x').value, y:document.getElementById('model-y').value
             });
         };
-
         window.delModel=(id,e)=>{e.stopPropagation();if(confirm('删除？'))socket.emit('delete_model',{id});};window.dlModel=(n)=>socket.emit('download_model',{name:n});window.uploadFile=(f)=>{let fd=new FormData();fd.append('file',f);showToast("📤 上传中...");fetch('/upload_model',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{if(d.success){showToast("✅ 成功");socket.emit('get_studio_data');}else showToast("❌ "+d.msg,"error")});}
         socket.on('admin_unlocked', () => { iAmAdmin = true; showToast("👑 管理员权限已解锁！"); document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'block'); if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data'); });
         const HISTORY_KEY='pico_chat_history';const MEMORY_KEY='pico_user_memories';const HISTORY_LIMIT=200;const MEMORY_LIMIT=50;
