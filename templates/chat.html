@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-    <!-- (保留原有 Head) -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Pico Studio</title>
@@ -11,7 +10,7 @@
     <script src="/static/js/index.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <style>
-        /* (保留原有样式) */
+        /* --- 样式保持不变 --- */
         body{font-family:"Segoe UI",sans-serif;margin:0;padding:0;height:100vh;background-color:#2d3436;display:flex;flex-direction:row;overflow:hidden;color:#333}
         #stage-container{flex:1;position:relative;background-image:radial-gradient(circle,#636e72 10%,#2d3436 90%);overflow:hidden;touch-action:none}
         #live2d-canvas{position:absolute;top:0;left:0;width:100%;height:100%}
@@ -70,8 +69,15 @@
                 <textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea>
                 
                 <label style="font-size:12px;color:#666">声线选择:</label>
-                <!-- 下拉菜单 -->
-                <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd"></select>
+                <!-- 【核心】硬编码 Edge-TTS 选项，确保不为空 -->
+                <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd">
+                    <option value="zh-CN-XiaoxiaoNeural">🇨🇳 晓晓 (默认)</option>
+                    <option value="zh-CN-YunxiNeural">🇨🇳 云希 (少年)</option>
+                    <option value="zh-TW-HsiaoChenNeural">🇹🇼 晓臻 (台湾)</option>
+                    <option value="zh-CN-liaoning-XiaobeiNeural">🤣 晓北 (东北)</option>
+                    <option value="en-US-AnaNeural">🇺🇸 Ana (英文)</option>
+                    <!-- JS 会把扫描到的 Piper 模型追加到这里，但绝不会删除上面的选项 -->
+                </select>
 
                 <div class="slider-container"><div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div><input type="range" id="rate-range" min="-50" max="50" oninput="updateVal('rate', this.value)"></div>
                 <div class="slider-container"><div class="slider-label"><span>音调</span><span id="pitch-val">0Hz</span></div><input type="range" id="pitch-range" min="-50" max="50" oninput="updateVal('pitch', this.value)"></div>
@@ -92,8 +98,8 @@
 
     <script>
         const socket = io({reconnection:true});
-        let app_pixi, model, myUser="", currentModelId="", currentCfg={}, audioCtx, analyser, dataArray, isTalking=false;
-        let isDragging=false, dragData, initialScale, initialDist, iAmAdmin=false;
+        let app_pixi, model, myUser="", currentModelId="", currentCfg={scale:0.5,x:0.5,y:0.5}, audioCtx, analyser, dataArray, isTalking=false;
+        let isDragging=false, dragData, iAmAdmin=false;
 
         function updateVal(type, val) { document.getElementById(`${type}-val`).textContent = (val > 0 ? '+' : '') + val + (type==='rate'?'%':'Hz'); }
 
@@ -107,7 +113,6 @@
             document.getElementById('y-val').textContent = y.toFixed(2);
             applyToModel(s, x, y);
         }
-
         function applyToModel(s, x, y) {
             if(!model || !app_pixi) return;
             const st = document.getElementById('stage-container');
@@ -118,12 +123,14 @@
             model.y = (st.clientHeight * y) - (model.height / 2);
             document.getElementById('debug-pos').textContent = `S:${s.toFixed(2)} X:${x.toFixed(2)} Y:${y.toFixed(2)}`;
         }
-
         function applyConfig(cfg) {
             if(!model || !app_pixi) return;
-            const s = (cfg.scale !== undefined) ? cfg.scale : 0.5;
-            const x = (cfg.x !== undefined) ? cfg.x : 0.5;
-            const y = (cfg.y !== undefined) ? cfg.y : 0.5;
+            // 使用传入配置或全局当前配置或默认值
+            const target = cfg || currentCfg || {scale:0.5, x:0.5, y:0.5};
+            const s = (target.scale !== undefined) ? target.scale : 0.5;
+            const x = (target.x !== undefined) ? target.x : 0.5;
+            const y = (target.y !== undefined) ? target.y : 0.5;
+            
             if(document.getElementById('model-scale')) {
                 document.getElementById('model-scale').value = s;
                 document.getElementById('model-x').value = x;
@@ -152,10 +159,7 @@
         socket.on('login_failed',(d)=>{alert(d.error);loginBtn.disabled=false;loginBtn.textContent="重试";});
 
         async function loadModel(path, cfg) {
-            if(!app_pixi) {
-                app_pixi = new PIXI.Application({ view:document.getElementById('live2d-canvas'), autoStart:true, resizeTo:document.getElementById('stage-container'), transparent:true });
-                initInteraction();
-            }
+            if(!app_pixi) { app_pixi = new PIXI.Application({ view:document.getElementById('live2d-canvas'), autoStart:true, resizeTo:document.getElementById('stage-container'), transparent:true }); initInteraction(); }
             try {
                 if(model) { app_pixi.stage.removeChild(model); model.destroy(); model=null; }
                 app_pixi.stage.removeChildren(); 
@@ -174,6 +178,7 @@
 
         document.getElementById('studio-btn').onclick=()=>{document.getElementById('studio-overlay').style.display='flex';socket.emit('get_studio_data');};
         function closeStudio(){document.getElementById('studio-overlay').style.display='none';}
+        
         socket.on('studio_data',(d)=>{
             const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id;
             d.models.forEach(m=>{
@@ -183,20 +188,17 @@
                 if(m.id===d.current_id){
                     document.getElementById('persona-model-name').textContent=m.name;
                     document.getElementById('persona-text').value=m.persona;
+                    const vSelect=document.getElementById('voice-select');
                     
-                    // 【关键修复】直接清空并填充后端发来的列表
-                    const vSelect = document.getElementById('voice-select');
-                    vSelect.innerHTML = "";
+                    // 【核心修复】只追加，不替换，保留 HTML 里的 Edge-TTS 选项
                     if(d.voices) {
-                        d.voices.forEach(v => {
-                            let opt = document.createElement('option');
-                            opt.value = v.id;
-                            opt.textContent = v.name;
-                            vSelect.appendChild(opt);
+                        d.voices.forEach(v=>{
+                            if(!Array.from(vSelect.options).some(o=>o.value===v.id)){
+                                let opt=document.createElement('option');opt.value=v.id;opt.textContent=v.name;vSelect.appendChild(opt);
+                            }
                         });
                     }
-                    // 选中当前语音，如果当前语音无效则选第一个
-                    if (m.voice) vSelect.value = m.voice;
+                    if(m.voice) vSelect.value=m.voice;
                     
                     let r=parseInt(m.rate)||0, p=parseInt(m.pitch)||0;
                     document.getElementById('rate-range').value=r; updateVal('rate',r);
@@ -206,6 +208,7 @@
                 }
             });
         });
+        
         socket.on('model_switched',(m)=>{currentCfg=m;loadModel(m.path,m);document.getElementById('room-title').textContent=`🤖 ${m.name}`;if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');showToast(`✨ 已切换为 ${m.name}`);});
         document.getElementById('save-settings-btn').onclick=()=>{
             let r=document.getElementById('rate-range').value, p=document.getElementById('pitch-range').value;
@@ -216,6 +219,7 @@
                 scale:document.getElementById('model-scale').value, x:document.getElementById('model-x').value, y:document.getElementById('model-y').value
             });
         };
+
         window.delModel=(id,e)=>{e.stopPropagation();if(confirm('删除？'))socket.emit('delete_model',{id});};window.dlModel=(n)=>socket.emit('download_model',{name:n});window.uploadFile=(f)=>{let fd=new FormData();fd.append('file',f);showToast("📤 上传中...");fetch('/upload_model',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{if(d.success){showToast("✅ 成功");socket.emit('get_studio_data');}else showToast("❌ "+d.msg,"error")});}
         socket.on('admin_unlocked', () => { iAmAdmin = true; showToast("👑 管理员权限已解锁！"); document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'block'); if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data'); });
         const HISTORY_KEY='pico_chat_history';const MEMORY_KEY='pico_user_memories';const HISTORY_LIMIT=200;const MEMORY_LIMIT=50;
