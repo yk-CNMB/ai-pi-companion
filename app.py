@@ -1,5 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (Python 3.13 语法兼容版)
+# Pico AI Server - app.py (全功能 + 语法严格展开 + 语音双保险)
 # 启动: gunicorn --worker-class gthread --threads 4 -w 1 --bind 0.0.0.0:5000 app:app
 # =======================================================================
 import os
@@ -15,7 +15,7 @@ import subprocess
 import requests
 import threading
 
-# 【关键】不再导入 eventlet/gevent，使用原生多线程
+# 【关键】使用原生线程，不再导入 eventlet/gevent
 import edge_tts
 import soundfile as sf
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
@@ -26,9 +26,9 @@ from google import genai
 # --- 1. 初始化 ---
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY', 'default_secret')
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024 # 限制上传 100MB
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 
-# 【关键】async_mode='threading'，使用 Python 原生线程处理并发
+# 使用 threading 模式，兼容性最强
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60)
 SERVER_VERSION = str(int(time.time()))
 
@@ -67,14 +67,13 @@ else:
 # --- 4. 核心功能函数 ---
 
 def load_user_memories(u):
-    # 记忆已移交前端，保留空壳防止旧代码报错
     return []
 
 # 模型配置管理
 CURRENT_MODEL = {
     "id": "default", "path": "", "persona": "", 
     "voice": "zh-CN-XiaoxiaoNeural", "rate": "+0%", "pitch": "+0Hz", 
-    "scale": 0.5, "x": 0.0, "y": 0.0,
+    "scale": 0.5, "x": 0.5, "y": 0.5,
     "api_url": "", "api_key": "", "model_id": ""
 }
 
@@ -84,7 +83,7 @@ def get_model_config(model_id):
         "persona": f"你是一个名为{model_id}的AI。请用中文简短回复。",
         "voice": "zh-CN-XiaoxiaoNeural",
         "rate": "+0%", "pitch": "+0Hz",
-        "scale": 0.5, "x": 0.0, "y": 0.0,
+        "scale": 0.5, "x": 0.5, "y": 0.5,
         "api_url": "", "api_key": "", "model_id": ""
     }
     if os.path.exists(p):
@@ -123,55 +122,47 @@ def init_model():
         CURRENT_MODEL = t
 init_model()
 
-# --- 5. 语音合成引擎 ---
+# --- 5. 语音合成引擎 (三级火箭 - 修复版) ---
 
 def run_openai_tts(text, api_url, api_key, model_id, output_path):
+    """Fish Audio / OpenAI 兼容接口"""
     try:
-        # 智能补全 Fish Audio URL
-        if not api_url.endswith("/v1/audio/speech") and not api_url.endswith("/v1/tts"):
-             if "fish.audio" in api_url:
-                 api_url = "https://api.fish.audio/v1/tts"
-             else:
-                 api_url = api_url.rstrip("/") + "/v1/audio/speech"
+        # 智能修正 URL，确保指向正确的端点
+        target_url = api_url
+        if "fish.audio" in target_url and not target_url.endswith("/v1/audio/speech"):
+            target_url = "https://api.fish.audio/v1/audio/speech"
+        elif not target_url.endswith("/speech"):
+             # 默认假设是 OpenAI 格式
+             target_url = target_url.rstrip("/") + "/v1/audio/speech"
+
+        print(f"📡 [API] 尝试调用: {target_url} (Model: {model_id})")
         
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
-
-        # Fish Audio 原生格式适配
-        if "fish.audio" in api_url:
-             payload = {
-                 "text": text,
-                 "reference_id": model_id,
-                 "format": "mp3",
-                 "mp3_bitrate": 128
-             }
-             print(f"🐟 [Fish] 原生调用: {model_id}")
-        else:
-             # OpenAI 格式
-             payload = {
-                 "model": model_id,
-                 "input": text,
-                 "voice": model_id,
-                 "response_format": "mp3"
-             }
-             print(f"📡 [OpenAI] 调用: {model_id}")
+        payload = {
+            "model": model_id,
+            "input": text,
+            "voice": model_id,
+            "response_format": "mp3"
+        }
         
-        resp = requests.post(api_url, json=payload, headers=headers, timeout=20)
+        resp = requests.post(target_url, json=payload, headers=headers, timeout=15)
         
         if resp.status_code == 200:
             with open(output_path, "wb") as f:
                 f.write(resp.content)
             return True
         else:
-            print(f"❌ [TTS] API Error {resp.status_code}: {resp.text}")
+            print(f"❌ [API] 错误 {resp.status_code}: {resp.text}")
             return False
     except Exception as e:
-        print(f"❌ [TTS] Request Error: {e}")
+        print(f"❌ [API] 请求异常: {e}")
         return False
 
 def run_piper_tts(text, model_file, output_path):
+    """本地 Piper 引擎"""
     model_path = os.path.join(VOICES_DIR, model_file)
     if not os.path.exists(PIPER_BIN):
         return False
@@ -183,6 +174,7 @@ def run_piper_tts(text, model_file, output_path):
         return False
 
 def bg_tts(text, voice, rate, pitch, api_url, api_key, model_id, room=None, sid=None):
+    """智能 TTS 调度器：Fish -> Piper -> Edge"""
     clean = re.sub(r'\[(.*?)\]', '', text).strip()
     if not clean:
         return
@@ -191,34 +183,41 @@ def bg_tts(text, voice, rate, pitch, api_url, api_key, model_id, room=None, sid=
     success = False
     url = ""
     
-    # 1. Fish Audio / OpenAI
-    if api_key and model_id:
-        # 如果填了 api_key 和 model_id，默认它是 Fish Audio 或兼容服务
+    # 1. 第一优先级：Fish Audio / 自定义 API
+    # 必须显式选择了 'fish-audio' 且配置了 Key
+    if voice == "fish-audio" and api_key and model_id:
         out_path = os.path.join(AUDIO_DIR, f"{fname}.mp3")
-        # 使用默认 fish audio url 如果用户没填
-        target_url = api_url if api_url else "https://api.fish.audio/v1/tts"
-        
-        if run_openai_tts(clean, target_url, api_key, model_id, out_path):
+        if run_openai_tts(clean, api_url, api_key, model_id, out_path):
             success = True
             url = f"/static/audio/{fname}.mp3"
+        else:
+            print("⚠️ Fish Audio 失败，正在尝试降级到 Edge-TTS...")
 
-    # 2. Piper
-    if not success and voice and voice.endswith(".onnx"):
+    # 2. 第二优先级：本地 Piper (.onnx)
+    if not success and voice.endswith(".onnx"):
          out_path = os.path.join(AUDIO_DIR, f"{fname}.wav")
          if run_piper_tts(clean, voice, out_path):
              success = True
              url = f"/static/audio/{fname}.wav"
 
-    # 3. Edge-TTS (兜底)
+    # 3. 最终兜底：Edge-TTS
+    # 如果上面都失败了，或者没配置 API，就用这个
     if not success:
         out_path = os.path.join(AUDIO_DIR, f"{fname}.mp3")
-        # 如果 voice 是无效值，强制改回晓晓
-        safe_voice = voice if (voice and "Neural" in voice) else "zh-CN-XiaoxiaoNeural"
+        
+        # 如果当前的 voice 是 'fish-audio' (说明上面失败了)，强制改成 '晓晓'
+        safe_voice = voice
+        if voice == "fish-audio" or voice.endswith(".onnx"):
+            safe_voice = "zh-CN-XiaoxiaoNeural"
+        
+        print(f"☁️ [Edge] 使用兜底语音: {safe_voice}")
+        
         try:
             async def _run():
                 cm = edge_tts.Communicate(clean, safe_voice, rate=rate, pitch=pitch)
                 await cm.save(out_path)
             
+            # 原生线程模式下，必须创建新的 loop
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             loop.run_until_complete(_run())
@@ -227,8 +226,9 @@ def bg_tts(text, voice, rate, pitch, api_url, api_key, model_id, room=None, sid=
             success = True
             url = f"/static/audio/{fname}.mp3"
         except Exception as e:
-            print(f"❌ Edge-TTS Error: {e}")
+            print(f"❌ Edge-TTS 严重错误: {e}")
 
+    # 发送结果
     if success:
         if room:
             socketio.emit('audio_response', {'audio': url}, to=room, namespace='/')
@@ -237,12 +237,10 @@ def bg_tts(text, voice, rate, pitch, api_url, api_key, model_id, room=None, sid=
 
 # --- 6. 路由 ---
 @app.route('/')
-def idx():
-    return redirect(url_for('pico_v', v=SERVER_VERSION))
+def idx(): return redirect(url_for('pico_v', v=SERVER_VERSION))
 
 @app.route('/pico')
-def pico_legacy():
-    return redirect(url_for('pico_v', v=SERVER_VERSION))
+def pico_legacy(): return redirect(url_for('pico_v', v=SERVER_VERSION))
 
 @app.route('/pico/<v>')
 def pico_v(v):
@@ -373,7 +371,11 @@ def is_admin(sid):
 
 @socketio.on('get_studio_data')
 def on_get_data():
-    voices = [{"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓"},{"id":"zh-CN-YunxiNeural","name":"☁️ 云希"}]
+    voices = [
+        {"id":"fish-audio", "name":"🐟 Fish Audio (自定义)"},
+        {"id":"zh-CN-XiaoxiaoNeural", "name":"☁️ 晓晓 (默认)"},
+        {"id":"zh-CN-YunxiNeural", "name":"☁️ 云希 (少年)"}
+    ]
     for onnx in glob.glob(os.path.join(VOICES_DIR, "*.onnx")):
         mid = os.path.basename(onnx)
         name = mid.replace(".onnx", "")
@@ -381,6 +383,7 @@ def on_get_data():
             with open(os.path.join(VOICES_DIR, f"{name}.txt"),'r') as f:
                 name = f.read().strip()
         voices.append({"id": mid, "name": f"🏠 {name} (本地)"})
+    
     emit('studio_data', {'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 'voices': voices})
 
 @socketio.on('switch_model')
@@ -395,17 +398,15 @@ def on_switch(d):
 @socketio.on('save_settings')
 def on_save_settings(d):
     global CURRENT_MODEL
-    if not is_admin(request.sid):
-        return emit('toast', {'text': '❌ 无权限', 'type': 'error'})
+    if not is_admin(request.sid): return emit('toast', {'text': '❌ 无权限', 'type': 'error'})
     
-    # 强制类型转换，防止错误
+    # 转换数字，防止报错
     try:
         d['scale'] = float(d['scale'])
         d['x'] = float(d['x'])
         d['y'] = float(d['y'])
-    except:
-        pass
-
+    except: pass
+    
     updated = save_model_config(d['id'], d)
     
     if CURRENT_MODEL['id'] == d['id']:
@@ -416,10 +417,8 @@ def on_save_settings(d):
 
 @socketio.on('delete_model')
 def on_del(d):
-    if not is_admin(request.sid):
-        return emit('toast', {'text': '❌ 权限不足', 'type': 'error'})
-    if d['id'] == CURRENT_MODEL['id']:
-        return emit('toast', {'text': '❌ 占用中', 'type': 'error'})
+    if not is_admin(request.sid): return
+    if d['id'] == CURRENT_MODEL['id']: return emit('toast', {'text': '❌ 占用中', 'type': 'error'})
     try:
         shutil.rmtree(os.path.join(MODELS_DIR, d['id']))
         emit('toast', {'text': '🗑️ 已删除', 'type': 'success'})
@@ -429,25 +428,22 @@ def on_del(d):
 
 @socketio.on('download_model')
 def on_dl(d):
-    if not is_admin(request.sid):
-        return emit('toast', {'text': '❌ 权限不足', 'type': 'error'})
+    if not is_admin(request.sid): return
     name = d.get('name')
     if name:
         emit('toast', {'text': f'🚀 开始下载 {name}...', 'type': 'info'})
         socketio.start_background_task(bg_dl_task, name)
 
 def bg_dl_task(name):
-    u = {"Mao":".../Mao","Natori":".../Natori"}.get(name, "https://github.com/Live2D/CubismWebSamples/trunk/Samples/Resources/"+name)
-    t = os.path.join(MODELS_DIR, name.lower())
+    u={"Mao":".../Mao","Natori":".../Natori"}.get(name,"https://github.com/Live2D/CubismWebSamples/trunk/Samples/Resources/"+name)
+    t=os.path.join(MODELS_DIR,name.lower())
     if os.path.exists(t):
         shutil.rmtree(t, ignore_errors=True)
     os.makedirs(t, exist_ok=True)
     try:
         os.system(f"svn export --force -q {u} {t}")
         socketio.emit('toast',{'text':f'✅ {name} 完成!'},namespace='/')
-    except:
-        pass
+    except: pass
 
 if __name__ == '__main__':
-    # 【关键】使用原生 threading 模式
     socketio.run(app, host='0.0.0.0', port=5000)
