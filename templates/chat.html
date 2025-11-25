@@ -9,8 +9,8 @@
     <script src="/static/js/pixi.min.js"></script>
     <script src="/static/js/index.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+    <!-- 样式保持上一版的完整样式，这里只展示核心部分 -->
     <style>
-        /* --- 样式 (保持不变) --- */
         body{font-family:"Segoe UI",sans-serif;margin:0;padding:0;height:100vh;background-color:#2d3436;display:flex;flex-direction:row;overflow:hidden;color:#333}
         #stage-container{flex:1;position:relative;background-image:radial-gradient(circle,#636e72 10%,#2d3436 90%);overflow:hidden;touch-action:none}
         #live2d-canvas{position:absolute;top:0;left:0;width:100%;height:100%}
@@ -47,9 +47,6 @@
         .model-card.active{border-color:#6c5ce7;background:#e0dfff;font-weight:bold}
         .chip{display:inline-block;background:#eee;padding:6px 12px;border-radius:15px;margin:5px;cursor:pointer}
         .btn-del{color:red;font-size:12px;display:block;margin-top:5px}
-        .fish-settings{background:#e3f2fd;padding:10px;border-radius:8px;border:1px solid #90caf9;margin-bottom:10px}
-        .fish-label{color:#1565c0;font-weight:bold;font-size:13px;margin-bottom:5px;display:block}
-        .api-input{width:100%;padding:8px;margin-bottom:8px;border:1px solid #ccc;border-radius:5px;font-size:12px;box-sizing:border-box}
         #toast-container{position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:11000;text-align:center;width:100%}
         .toast{display:inline-block;background:rgba(0,0,0,0.8);color:white;padding:8px 20px;border-radius:20px;margin-top:10px;animation:fadeOut 3s forwards 2s}
         @keyframes fadeOut{to{opacity:0;visibility:hidden}}
@@ -72,21 +69,10 @@
                 <textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea>
                 
                 <label style="font-size:12px;color:#666">声线选择:</label>
-                <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd" onchange="toggleFishPanel()">
-                    <!-- 【核心】默认写死基础选项，确保有底 -->
+                <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd">
+                    <!-- 默认选项，以防万一 -->
                     <option value="zh-CN-XiaoxiaoNeural">🇨🇳 晓晓 (默认)</option>
-                    <option value="zh-CN-YunxiNeural">🇨🇳 云希 (少年)</option>
-                    <option value="zh-TW-HsiaoChenNeural">🇹🇼 晓臻 (台湾)</option>
-                    <option value="ja-JP-NanamiNeural">🇯🇵 七海 (日语)</option>
-                    <option value="fish-audio">🐟 Fish Audio (自定义)</option>
                 </select>
-
-                <div id="fish-panel" class="fish-settings" style="display:none">
-                    <span class="fish-label">Fish Audio 配置</span>
-                    <input id="api-url" class="api-input" placeholder="API URL">
-                    <input id="api-key" class="api-input" type="password" placeholder="API Key">
-                    <input id="model-id" class="api-input" placeholder="Model ID">
-                </div>
 
                 <div class="slider-container"><div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div><input type="range" id="rate-range" min="-50" max="50" oninput="updateVal('rate', this.value)"></div>
                 <div class="slider-container"><div class="slider-label"><span>音调</span><span id="pitch-val">0Hz</span></div><input type="range" id="pitch-range" min="-50" max="50" oninput="updateVal('pitch', this.value)"></div>
@@ -114,7 +100,6 @@
         let isDragging=false, dragData, initialScale, initialDist, iAmAdmin=false;
 
         function updateVal(type, val) { document.getElementById(`${type}-val`).textContent = (val > 0 ? '+' : '') + val + (type==='rate'?'%':'Hz'); }
-        function toggleFishPanel() { document.getElementById('fish-panel').style.display = (document.getElementById('voice-select').value === 'fish-audio') ? 'block' : 'none'; }
 
         function previewTransform() {
             if(!model) return;
@@ -193,7 +178,6 @@
 
         document.getElementById('studio-btn').onclick=()=>{document.getElementById('studio-overlay').style.display='flex';socket.emit('get_studio_data');};
         function closeStudio(){document.getElementById('studio-overlay').style.display='none';}
-        
         socket.on('studio_data',(d)=>{
             const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id;
             d.models.forEach(m=>{
@@ -203,85 +187,29 @@
                 if(m.id===d.current_id){
                     document.getElementById('persona-model-name').textContent=m.name;
                     document.getElementById('persona-text').value=m.persona;
-                    
-                    // 【核心修复】清空旧列表，但保留 HTML 里写的默认值
-                    const vSelect = document.getElementById('voice-select');
-                    // 先获取默认选项
-                    const defaultOpts = Array.from(vSelect.querySelectorAll('option[data-default]'));
-                    vSelect.innerHTML = "";
-                    
-                    // 1. 插入硬编码的默认值 (HTML里写了)
-                    // 这里我们直接在JS里补全几个最常用的，双重保险
-                    const baseVoices = [
-                        {id: "zh-CN-XiaoxiaoNeural", name: "🇨🇳 晓晓 (默认)"},
-                        {id: "zh-CN-YunxiNeural", name: "🇨🇳 云希 (少年)"},
-                        {id: "fish-audio", name: "🐟 Fish Audio (自定义)"}
-                    ];
-                    
-                    baseVoices.forEach(v => {
-                         let opt = document.createElement('option');
-                         opt.value = v.id;
-                         opt.textContent = v.name;
-                         vSelect.appendChild(opt);
-                    });
-
-                    // 2. 插入后端发来的 Piper 本地模型
-                    if(d.voices) {
-                        d.voices.forEach(v => {
-                            // 避免重复添加
-                            if (!Array.from(vSelect.options).some(o => o.value === v.id)) {
-                                let opt = document.createElement('option');
-                                opt.value = v.id;
-                                opt.textContent = v.name;
-                                vSelect.appendChild(opt);
-                            }
-                        });
-                    }
-                    
-                    // 3. 选中当前值
-                    if(m.voice) vSelect.value = m.voice;
-                    toggleFishPanel();
-
-                    // 填充高级配置
-                    document.getElementById('api-url').value = m.api_url || "https://api.fish.audio/v1/tts";
-                    document.getElementById('api-key').value = m.api_key || "";
-                    document.getElementById('model-id').value = m.model_id || "";
+                    const vSelect=document.getElementById('voice-select');
+                    vSelect.innerHTML=""; 
+                    if(d.voices) d.voices.forEach(v=>{let o=document.createElement('option');o.value=v.id;o.textContent=v.name;vSelect.appendChild(o);});
+                    if(m.voice) vSelect.value=m.voice;
                     
                     let r=parseInt(m.rate)||0, p=parseInt(m.pitch)||0;
                     document.getElementById('rate-range').value=r; updateVal('rate',r);
                     document.getElementById('pitch-range').value=p; updateVal('pitch',p);
-                    
                     let s=m.scale!==undefined?m.scale:0.5, x=m.x!==undefined?m.x:0.5, y=m.y!==undefined?m.y:0.5;
                     updateValLabels(s,x,y);
                 }
             });
         });
-        
-        socket.on('model_switched',(m)=>{
-            currentCfg = m; 
-            loadModel(m.path, m); 
-            document.getElementById('room-title').textContent=`🤖 ${m.name}`;
-            if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');
-            showToast(`✨ 已切换为 ${m.name}`);
-        });
-        
+        socket.on('model_switched',(m)=>{currentCfg=m;loadModel(m.path,m);document.getElementById('room-title').textContent=`🤖 ${m.name}`;if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');showToast(`✨ 已切换为 ${m.name}`);});
         document.getElementById('save-settings-btn').onclick=()=>{
-            const isFish = document.getElementById('voice-select').value === 'fish-audio';
             let r=document.getElementById('rate-range').value, p=document.getElementById('pitch-range').value;
             socket.emit('save_settings',{
-                id: currentModelId, 
-                persona: document.getElementById('persona-text').value,
-                voice: document.getElementById('voice-select').value,
-                api_url: isFish ? document.getElementById('api-url').value.trim() : "",
-                api_key: isFish ? document.getElementById('api-key').value.trim() : "",
-                model_id: isFish ? document.getElementById('model-id').value.trim() : "",
-                rate: (r>=0?'+':'')+r+'%', pitch: (p>=0?'+':'')+p+'Hz',
-                scale: document.getElementById('model-scale').value,
-                x: document.getElementById('model-x').value,
-                y: document.getElementById('model-y').value
+                id:currentModelId, persona:document.getElementById('persona-text').value,
+                voice:document.getElementById('voice-select').value,
+                rate:(r>=0?'+':'')+r+'%', pitch:(p>=0?'+':'')+p+'Hz',
+                scale:document.getElementById('model-scale').value, x:document.getElementById('model-x').value, y:document.getElementById('model-y').value
             });
         };
-
         window.delModel=(id,e)=>{e.stopPropagation();if(confirm('删除？'))socket.emit('delete_model',{id});};window.dlModel=(n)=>socket.emit('download_model',{name:n});window.uploadFile=(f)=>{let fd=new FormData();fd.append('file',f);showToast("📤 上传中...");fetch('/upload_model',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{if(d.success){showToast("✅ 成功");socket.emit('get_studio_data');}else showToast("❌ "+d.msg,"error")});}
         socket.on('admin_unlocked', () => { iAmAdmin = true; showToast("👑 管理员权限已解锁！"); document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'block'); if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data'); });
         const HISTORY_KEY='pico_chat_history';const MEMORY_KEY='pico_user_memories';const HISTORY_LIMIT=200;const MEMORY_LIMIT=50;
