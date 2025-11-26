@@ -1,5 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (完整修复版)
+# Pico AI Server - app.py (终极硬编码版)
 # =======================================================================
 import os
 import json
@@ -18,7 +18,6 @@ import edge_tts
 import soundfile as sf
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
-from werkzeug.utils import secure_filename
 from google import genai
 
 app = Flask(__name__, static_folder='static')
@@ -48,7 +47,7 @@ client = None
 api_key = CONFIG.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
 if api_key and "在这里" not in api_key:
     try: client = genai.Client(api_key=api_key)
-    except Exception as e: print(f"API Error: {e}")
+    except: pass
 
 def load_user_memories(u): return []
 CURRENT_MODEL = {"id": "default", "path": "", "persona": "", "voice": "zh-CN-XiaoxiaoNeural", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.5, "y": 0.5}
@@ -61,38 +60,46 @@ def get_model_config(mid):
             with open(p, "r", encoding="utf-8") as f: d.update(json.load(f)) 
         except: pass
     return d
+
 def save_model_config(mid, data):
     p = os.path.join(MODELS_DIR, mid, "config.json")
     curr = get_model_config(mid); curr.update(data)
     with open(p, "w", encoding="utf-8") as f: json.dump(curr, f, indent=2, ensure_ascii=False)
     return curr
 
-# 【核心修复】强力模型扫描
+# 【核心修改】手动指定模型列表
 def scan_models():
     ms = []
-    # 遍历一级目录
-    for item in os.listdir(MODELS_DIR):
-        full_path = os.path.join(MODELS_DIR, item)
-        if os.path.isdir(full_path):
-            # 在该目录下寻找 model3.json
-            json_files = glob.glob(os.path.join(full_path, "*.model3.json"))
-            if json_files:
-                # 找到了模型
-                mid = item
-                cfg = get_model_config(mid)
-                # 构造 web 路径
-                rel_path = os.path.relpath(json_files[0], BASE_DIR)
-                web_path = "/" + rel_path.replace("\\", "/")
-                
-                ms.append({"id": mid, "name": mid.capitalize(), "path": web_path, **cfg})
     
-    if not ms: print("⚠️ 未扫描到任何模型！")
+    # 1. 尝试自动扫描
+    for j in glob.glob(os.path.join(MODELS_DIR, "**", "*.model3.json"), recursive=True):
+        mid = os.path.basename(os.path.dirname(j))
+        cfg = get_model_config(mid)
+        path = "/" + os.path.relpath(j, BASE_DIR).replace("\\", "/")
+        # 避免重复
+        if not any(m['id'] == mid for m in ms):
+             ms.append({"id": mid, "name": mid.capitalize(), "path": path, **cfg})
+    
+    # 2. 强行添加 Miku (如果自动扫描漏了)
+    # 假设你的文件在 static/live2d/miku/miku.model3.json
+    miku_path = "/static/live2d/miku/miku.model3.json"
+    if not any(m['id'] == 'miku' for m in ms):
+         # 检查文件是否存在
+         real_path = os.path.join(BASE_DIR, "static/live2d/miku/miku.model3.json")
+         if os.path.exists(real_path):
+             cfg = get_model_config("miku")
+             ms.append({"id": "miku", "name": "Miku (强行添加)", "path": miku_path, **cfg})
+             print("✅ 强行添加 Miku")
+    
     return sorted(ms, key=lambda x: x['name'])
 
 def init_model():
     global CURRENT_MODEL
     ms = scan_models()
-    t = next((m for m in ms if "hiyori" in m['id'].lower()), ms[0] if ms else None)
+    t = None
+    for m in ms:
+        if "hiyori" in m['id'].lower(): t = m; break
+    if t is None and len(ms) > 0: t = ms[0]
     if t: CURRENT_MODEL = t
 init_model()
 
@@ -115,14 +122,24 @@ def bg_tts(text, voice, rate, pitch, room=None, sid=None):
     success = False; url = ""
     
     # Piper
-    if voice.endswith(".onnx"):
+    # 只要 voice 是以 .onnx 结尾，或者是 "glados_local"，都尝试 Piper
+    is_piper = voice.endswith(".onnx") or voice == "glados_local"
+    
+    if is_piper:
+         model_file = voice
+         if voice == "glados_local": model_file = "en_US-glados.onnx"
+         
          out_path = os.path.join(AUDIO_DIR, f"{fname}.wav")
-         if run_piper_tts(clean, voice, out_path): success=True; url=f"/static/audio/{fname}.wav"
+         if run_piper_tts(clean, model_file, out_path): 
+             success=True; url=f"/static/audio/{fname}.wav"
     
     # Edge
     if not success:
         out_path = os.path.join(AUDIO_DIR, f"{fname}.mp3")
-        safe_voice = voice if ("Neural" in voice) else "zh-CN-XiaoxiaoNeural"
+        safe_voice = voice
+        # 过滤掉 piper 的名字
+        if ".onnx" in safe_voice or "glados" in safe_voice: safe_voice = "zh-CN-XiaoxiaoNeural"
+        
         try:
             async def _run():
                 cm = edge_tts.Communicate(clean, safe_voice, rate=rate, pitch=pitch)
@@ -145,23 +162,21 @@ def pico_v(v):
     return r
 @app.route('/upload_model', methods=['POST'])
 def upload_model():
-    if 'file' not in request.files: return jsonify({'success': False, 'msg': '无文件'})
+    if 'file' not in request.files: return jsonify({'success': False})
     f = request.files['file']
-    if f.filename == '': return jsonify({'success': False, 'msg': '未选择'})
-    if f and f.filename.endswith('.zip'):
+    if f.filename.endswith('.zip'):
         try:
             n = secure_filename(f.filename).rsplit('.', 1)[0].lower()
-            p = os.path.join(MODELS_DIR, n)
-            if os.path.exists(p): shutil.rmtree(p)
+            p = os.path.join(MODELS_DIR, n); shutil.rmtree(p, ignore_errors=True)
             with zipfile.ZipFile(f, 'r') as z: z.extractall(p)
-            items = os.listdir(p)
-            if len(items) == 1 and os.path.isdir(os.path.join(p, items[0])):
-                sub = os.path.join(p, items[0])
-                for i in os.listdir(sub): shutil.move(os.path.join(sub, i), p)
-                os.rmdir(sub)
+            for root, dirs, files in os.walk(p):
+                if any(f.endswith('.model3.json') for f in files):
+                    if root != p: 
+                         for item in os.listdir(root): shutil.move(os.path.join(root, item), p)
+                    break
             return jsonify({'success': True})
-        except Exception as e: return jsonify({'success': False, 'msg': str(e)})
-    return jsonify({'success': False, 'msg': '仅支持 .zip'})
+        except: return jsonify({'success': False})
+    return jsonify({'success': False})
 
 users = {}
 chatroom_chat = None
@@ -199,19 +214,27 @@ def on_message(d):
     except: init_chatroom()
 
 def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
+
+# 【核心修改】
 @socketio.on('get_studio_data')
 def on_get_data():
-    # Edge 列表
+    # 1. Edge 列表 (硬编码兜底)
     voices = [{"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓 (默认)"},{"id":"en-US-AnaNeural","name":"☁️ Ana"}]
-    # Piper 扫描
+    
+    # 2. 强制添加 GlaDOS (不管扫没扫到)
+    # 只要文件路径存在，就加
+    if os.path.exists(os.path.join(VOICES_DIR, "en_US-glados.onnx")):
+        voices.append({"id": "glados_local", "name": "🤖 GlaDOS (本地)"})
+
+    # 3. 扫描其他 Piper
     if os.path.exists(VOICES_DIR):
         for onnx in glob.glob(os.path.join(VOICES_DIR, "*.onnx")):
-            mid = os.path.basename(onnx); name = mid.replace(".onnx", "")
-            if os.path.exists(os.path.join(VOICES_DIR, f"{name}.txt")): 
-                try: name = open(os.path.join(VOICES_DIR, f"{name}.txt")).read().strip()
-                except: pass
-            voices.append({"id": mid, "name": f"🏠 {name} (本地)"})
+            mid = os.path.basename(onnx)
+            if "glados" in mid: continue # 避免重复
+            voices.append({"id": mid, "name": f"🏠 {mid.replace('.onnx','')} (本地)"})
+            
     emit('studio_data', {'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 'voices': voices})
+
 @socketio.on('switch_model')
 def on_switch(d):
     global CURRENT_MODEL
