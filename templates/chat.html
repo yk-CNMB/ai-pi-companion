@@ -1,16 +1,14 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-    <!-- (Head 内容保持不变，复用之前的样式) -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pico Live</title>
+    <title>Pico Studio</title>
     <script src="/static/js/live2d.min.js"></script>
     <script src="/static/js/live2dcubismcore.min.js"></script>
     <script src="/static/js/pixi.min.js"></script>
     <script src="/static/js/index.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
-    <!-- 样式区省略，请直接使用上一版的 CSS -->
     <style>
         body{font-family:"Segoe UI",sans-serif;margin:0;padding:0;height:100vh;background-color:#2d3436;display:flex;flex-direction:row;overflow:hidden;color:#333}
         #stage-container{flex:1;position:relative;background-image:radial-gradient(circle,#636e72 10%,#2d3436 90%);overflow:hidden;touch-action:none}
@@ -55,80 +53,206 @@
     </style>
 </head>
 <body>
-    <!-- ... (HTML 结构保持不变，直接复用即可) ... -->
     <div id="toast-container"></div>
     <div id="login-overlay" class="overlay"><div class="modal-box" style="text-align:center"><h2>Pico 直播间</h2><input id="username-input" placeholder="请输入昵称" maxlength="12" autocomplete="off"><br><button id="login-btn" disabled>连接中...</button></div></div>
-    <div id="studio-overlay" class="overlay"><div class="modal-box"><div style="display:flex;justify-content:space-between;align-items:center"><h3>🛠️ 工作室</h3><div onclick="document.getElementById('studio-overlay').style.display='none'" style="font-size:24px;padding:0 10px;cursor:pointer">×</div></div><div id="model-list" class="model-list">加载中...</div><div class="admin-only"><hr><h4>⚙️ 调音 & 位置</h4><label style="font-size:12px;color:#666">人设提示词:</label><textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea><label style="font-size:12px;color:#666">声线选择:</label><select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd"><option value="zh-CN-XiaoxiaoNeural">🇨🇳 晓晓 (默认)</option></select><div class="slider-container"><div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div><input type="range" id="rate-range" min="-50" max="50" oninput="updateVal('rate', this.value)"></div><div class="slider-container"><div class="slider-label"><span>音调</span><span id="pitch-val">0Hz</span></div><input type="range" id="pitch-range" min="-50" max="50" oninput="updateVal('pitch', this.value)"></div><div class="slider-container"><div class="slider-label"><span>位置 X</span><span id="x-val">0.5</span></div><input type="range" id="model-x" min="0" max="1" step="0.01" oninput="previewTransform()"></div><div class="slider-container"><div class="slider-label"><span>位置 Y</span><span id="y-val">0.5</span></div><input type="range" id="model-y" min="0" max="2" step="0.01" oninput="previewTransform()"></div><div class="slider-container"><div class="slider-label"><span>缩放</span><span id="scale-val">0.5</span></div><input type="range" id="model-scale" min="0.1" max="2.0" step="0.05" oninput="previewTransform()"></div><button id="save-settings-btn" style="width:100%;padding:10px;margin-top:10px;background:#6c5ce7;color:white;border:none;border-radius:10px">保存所有配置</button><hr><h4>☁️ 上传/下载</h4><div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 .zip<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div><div style="margin-top:10px"><span class="chip" onclick="dlModel('Mao')">Mao</span><span class="chip" onclick="dlModel('Natori')">Natori</span></div></div><hr><h4>🧹 缓存</h4><div><span class="chip" onclick="clearLocalMemories()">清除记忆</span></div></div></div>
+    
+    <div id="studio-overlay" class="overlay">
+        <div class="modal-box">
+            <div style="display:flex;justify-content:space-between;align-items:center"><h3>🛠️ 工作室</h3><div onclick="document.getElementById('studio-overlay').style.display='none'" style="font-size:24px;padding:0 10px;cursor:pointer">×</div></div>
+            <div id="model-list" class="model-list">加载中...</div>
+            
+            <div class="admin-only">
+                <hr>
+                <h4>⚙️ 调音 & 位置</h4>
+                <label style="font-size:12px;color:#666">人设提示词:</label>
+                <textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea>
+                
+                <label style="font-size:12px;color:#666">声线选择:</label>
+                <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd">
+                    <option value="zh-CN-XiaoxiaoNeural">🇨🇳 晓晓 (默认)</option>
+                    <option value="zh-CN-YunxiNeural">🇨🇳 云希 (少年)</option>
+                    <option value="zh-TW-HsiaoChenNeural">🇹🇼 晓臻 (台湾)</option>
+                    <option value="ja-JP-NanamiNeural">🇯🇵 七海 (日语)</option>
+                    <option value="en-US-AnaNeural">🇺🇸 Ana (英文)</option>
+                </select>
+
+                <div class="slider-container"><div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div><input type="range" id="rate-range" min="-50" max="50" oninput="updateVal('rate', this.value)"></div>
+                <div class="slider-container"><div class="slider-label"><span>音调</span><span id="pitch-val">0Hz</span></div><input type="range" id="pitch-range" min="-50" max="50" oninput="updateVal('pitch', this.value)"></div>
+
+                <div class="slider-container"><div class="slider-label"><span>位置 X</span><span id="x-val">0.5</span></div><input type="range" id="model-x" min="0" max="1" step="0.01" oninput="previewTransform()"></div>
+                <div class="slider-container"><div class="slider-label"><span>位置 Y</span><span id="y-val">0.5</span></div><input type="range" id="model-y" min="0" max="2" step="0.01" oninput="previewTransform()"></div>
+                <div class="slider-container"><div class="slider-label"><span>缩放</span><span id="scale-val">0.5</span></div><input type="range" id="model-scale" min="0.1" max="2.0" step="0.05" oninput="previewTransform()"></div>
+
+                <button id="save-settings-btn" style="width:100%;padding:10px;margin-top:10px;background:#6c5ce7;color:white;border:none;border-radius:10px">保存所有配置</button>
+                <hr><h4>☁️ 上传/下载</h4><div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 .zip<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div><div style="margin-top:10px"><span class="chip" onclick="dlModel('Mao')">Mao</span><span class="chip" onclick="dlModel('Natori')">Natori</span></div>
+            </div>
+            <hr><h4>🧹 缓存</h4><div><span class="chip" onclick="clearLocalHistory()">清除历史</span><span class="chip" onclick="clearLocalMemories()">清除记忆</span></div>
+        </div>
+    </div>
+
     <div id="stage-container"><canvas id="live2d-canvas"></canvas><div id="debug-pos"></div></div>
     <div id="chat-container"><div id="header"><span id="room-title">🤖 互动区</span><div style="display:flex;gap:10px"><div class="icon-btn" id="reset-btn" title="归位">🎯</div><div class="icon-btn" id="studio-btn" title="设置">🛠️</div></div></div><div id="chat-window"></div><div id="input-area"><input id="user-input" placeholder="发送弹幕..."><button id="send-btn">发送</button></div></div>
 
     <script>
         const socket = io({reconnection:true});
         let app_pixi, model, myUser="", currentModelId="", currentCfg={scale:0.5,x:0.5,y:0.5}, audioCtx, analyser, dataArray, isTalking=false;
-        let iAmAdmin=false;
+        let isDragging=false, dragData, initialScale, initialDist, iAmAdmin=false;
 
-        // --- 历史同步逻辑 (核心) ---
-        socket.on('history_sync', (history) => {
-            const win = document.getElementById('chat-window');
-            win.innerHTML = ""; // 清空当前显示
-            
-            history.forEach(item => {
-                let type = 'other';
-                if (item.sender === myUser) type = 'self';
-                if (item.role === 'pico') type = 'pico';
-                if (item.role === 'system') type = 'system';
-                
-                addMsg(item.text, item.sender, type, item.emotion);
-            });
-            win.scrollTop = 99999;
+        function updateVal(type, val) { document.getElementById(`${type}-val`).textContent = (val > 0 ? '+' : '') + val + (type==='rate'?'%':'Hz'); }
+
+        function previewTransform() {
+            if(!model) return;
+            const s = parseFloat(document.getElementById('model-scale').value);
+            const x = parseFloat(document.getElementById('model-x').value);
+            const y = parseFloat(document.getElementById('model-y').value);
+            document.getElementById('scale-val').textContent = s.toFixed(2);
+            document.getElementById('x-val').textContent = x.toFixed(2);
+            document.getElementById('y-val').textContent = y.toFixed(2);
+            applyToModel(s, x, y);
+        }
+
+        function applyToModel(s, x, y) {
+            if(!model || !app_pixi) return;
+            const st = document.getElementById('stage-container');
+            if(!model.width) return;
+            const absScale = (st.clientHeight / model.height) * s;
+            model.scale.set(absScale);
+            model.x = (st.clientWidth * x) - (model.width / 2);
+            model.y = (st.clientHeight * y) - (model.height / 2);
+            document.getElementById('debug-pos').textContent = `S:${s.toFixed(2)} X:${x.toFixed(2)} Y:${y.toFixed(2)}`;
+        }
+
+        function applyConfig(cfg) {
+            if(!model || !app_pixi) return;
+            const target = cfg || currentCfg || {scale:0.5, x:0.5, y:0.5};
+            const s = (target.scale !== undefined) ? target.scale : 0.5;
+            const x = (target.x !== undefined) ? target.x : 0.5;
+            const y = (target.y !== undefined) ? target.y : 0.5;
+            if(document.getElementById('model-scale')) {
+                document.getElementById('model-scale').value = s;
+                document.getElementById('model-x').value = x;
+                document.getElementById('model-y').value = y;
+                updateValLabels(s, x, y);
+            }
+            applyToModel(s, x, y);
+        }
+        function updateValLabels(s,x,y) { document.getElementById('scale-val').textContent=s.toFixed(2); document.getElementById('x-val').textContent=x.toFixed(2); document.getElementById('y-val').textContent=y.toFixed(2); }
+
+        document.getElementById('reset-btn').onclick = () => { applyConfig(currentCfg); showToast("🎯 已恢复", "info"); };
+        window.addEventListener('resize', () => setTimeout(() => applyConfig(currentCfg), 100));
+
+        const loginBtn = document.getElementById('login-btn');
+        socket.on('connect', ()=>{});
+        socket.on('server_ready', ()=>{loginBtn.textContent="进入直播间";loginBtn.disabled=false;});
+        socket.on('disconnect', ()=>{loginBtn.textContent="已断开...";loginBtn.disabled=true;});
+        loginBtn.onclick=()=>{let n=document.getElementById('username-input').value.trim();if(n){myUser=n;loginBtn.disabled=true;loginBtn.textContent="登录中...";socket.emit('login',{username:n});initAudio();}};
+        socket.on('login_success',(d)=>{
+            document.getElementById('login-overlay').style.display='none';
+            document.getElementById('room-title').textContent=`🤖 ${d.current_model.name}`;
+            currentCfg = d.current_model;
+            if(d.current_model.path) loadModel(d.current_model.path, d.current_model);
+            loadHistory();
         });
+        socket.on('login_failed',(d)=>{alert(d.error);loginBtn.disabled=false;loginBtn.textContent="重试";});
 
-        // ... (其他逻辑：updateVal, previewTransform, applyToModel, applyConfig, loadModel, initInteraction, lipSync, triggerMotion 等保持不变) ...
-        // 请务必复用 Turn 88 中的 JS 代码，只替换 socket.on('history_sync') 部分
-        // 为了篇幅，这里简写了，但你需要完整的
-        
-        // --- JS 补全 ---
-        function updateVal(t,v){document.getElementById(`${t}-val`).textContent=(v>0?'+':'')+v+(t==='rate'?'%':'Hz');}
-        function updateValLabels(s,x,y){document.getElementById('scale-val').textContent=s.toFixed(2);document.getElementById('x-val').textContent=x.toFixed(2);document.getElementById('y-val').textContent=y.toFixed(2);}
-        function previewTransform(){if(!model)return;const s=parseFloat(document.getElementById('model-scale').value),x=parseFloat(document.getElementById('model-x').value),y=parseFloat(document.getElementById('model-y').value);updateValLabels(s,x,y);applyToModel(s,x,y);}
-        function applyToModel(s,x,y){if(!model)return;const st=document.getElementById('stage-container'),absScale=(st.clientHeight/model.height)*s;model.scale.set(absScale);model.x=(st.clientWidth*x)-(model.width/2);model.y=(st.clientHeight*y)-(model.height/2);document.getElementById('debug-pos').textContent=`S:${s.toFixed(2)} X:${x.toFixed(2)} Y:${y.toFixed(2)}`;}
-        function applyConfig(c){if(!model)return;const t=c||currentCfg||{scale:0.5,x:0.5,y:0.5},s=t.scale??0.5,x=t.x??0.5,y=t.y??0.5;if(document.getElementById('model-scale')){document.getElementById('model-scale').value=s;document.getElementById('model-x').value=x;document.getElementById('model-y').value=y;updateValLabels(s,x,y);}applyToModel(s,x,y);}
-        document.getElementById('reset-btn').onclick=()=>{applyConfig(currentCfg);showToast("🎯 已恢复","info");};window.addEventListener('resize',()=>setTimeout(()=>applyConfig(currentCfg),100));
-        
-        const loginBtn=document.getElementById('login-btn');
-        socket.on('connect',()=>loginBtn.disabled=false);
-        socket.on('disconnect',()=>loginBtn.disabled=true);
-        loginBtn.onclick=()=>{let n=document.getElementById('username-input').value.trim();if(n){myUser=n;loginBtn.disabled=true;socket.emit('login',{username:n});initAudio();}};
-        socket.on('login_success',(d)=>{document.getElementById('login-overlay').style.display='none';document.getElementById('room-title').textContent=`🤖 ${d.current_model.name}`;currentCfg=d.current_model;if(d.current_model.path)loadModel(d.current_model.path,d.current_model);});
+        async function loadModel(path, cfg) {
+            if(!app_pixi) { app_pixi = new PIXI.Application({ view:document.getElementById('live2d-canvas'), autoStart:true, resizeTo:document.getElementById('stage-container'), transparent:true }); initInteraction(); }
+            try {
+                if(model) { app_pixi.stage.removeChild(model); model.destroy(); model=null; }
+                app_pixi.stage.removeChildren(); 
+                console.log("Load:", path);
+                model = await PIXI.live2d.Live2DModel.from(path);
+                app_pixi.stage.addChild(model);
+                setTimeout(() => applyConfig(cfg || currentCfg), 100);
+                app_pixi.ticker.remove(lipSync); app_pixi.ticker.add(lipSync);
+                if(model.internalModel.motionManager) model.internalModel.motionManager.startRandomMotion('Idle');
+            } catch(e) { console.error(e); showToast("❌ 模型加载失败","error"); }
+        }
 
-        async function loadModel(p,c){if(!app_pixi){app_pixi=new PIXI.Application({view:document.getElementById('live2d-canvas'),autoStart:true,resizeTo:document.getElementById('stage-container'),transparent:true});initInteraction();}try{if(model){app_pixi.stage.removeChild(model);model.destroy();model=null;}app_pixi.stage.removeChildren();model=await PIXI.live2d.Live2DModel.from(p);app_pixi.stage.addChild(model);setTimeout(()=>applyConfig(c||currentCfg),100);app_pixi.ticker.remove(lipSync);app_pixi.ticker.add(lipSync);if(model.internalModel.motionManager)model.internalModel.motionManager.startRandomMotion('Idle');}catch(e){console.error(e);}}
-        function initInteraction(){const s=document.getElementById('stage-container');app_pixi.stage.interactive=true;app_pixi.stage.on('pointerdown',(e)=>{if(model){isDragging=true;dragData=e.data;model.alpha=0.8;}}).on('pointerup',()=>{isDragging=false;if(model)model.alpha=1;}).on('pointerupoutside',()=>{isDragging=false;if(model)model.alpha=1;}).on('pointermove',()=>{if(isDragging&&model){const p=dragData.getLocalPosition(model.parent);model.x=p.x-model.width/2;model.y=p.y-model.height/2;}});}
+        function initInteraction() { const s=document.getElementById('stage-container');app_pixi.stage.interactive=true;app_pixi.stage.on('pointerdown',(e)=>{if(model&&(!e.data.originalEvent.touches||e.data.originalEvent.touches.length===1)){isDragging=true;dragData=e.data;model.alpha=0.8;}});app_pixi.stage.on('pointerup',()=>{isDragging=false;if(model)model.alpha=1;}).on('pointerupoutside',()=>{isDragging=false;if(model)model.alpha=1;});app_pixi.stage.on('pointermove',()=>{if(isDragging&&model){const p=dragData.getLocalPosition(model.parent);model.x=p.x-model.width/2;model.y=p.y-model.height/2;}});s.addEventListener('wheel',(e)=>{e.preventDefault();if(model){model.scale.x*=(e.deltaY<0?1.1:0.9);model.scale.y=model.scale.x;}},{passive:false});s.addEventListener('touchstart',(e)=>{if(e.touches.length===2&&model){isDragging=false;initialDist=Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY);initialScale=model.scale.x;}});s.addEventListener('touchmove',(e)=>{if(e.touches.length===2&&model&&initialDist){e.preventDefault();model.scale.set(initialScale*(Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY)/initialDist));}}); }
         function lipSync(){if(!model||!analyser||!isTalking)return;analyser.getByteFrequencyData(dataArray);let sum=0;for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];if(model.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',Math.min(1.0,(sum/dataArray.length)/30));}
-        function triggerMotion(e){if(!model?.internalModel?.motionManager)return;try{let m=model.internalModel.motionManager;switch(e){case 'HAPPY':m.startRandomMotion('TapBody');break;default:m.startRandomMotion('Idle');}}catch(e){}}
+        function triggerMotion(emo){if(!model?.internalModel?.motionManager)return;try{let m=model.internalModel.motionManager;switch(emo){case 'HAPPY':if(m.motionGroups.includes('Charm'))m.startRandomMotion('Charm');else m.startRandomMotion('TapBody');break;case 'ANGRY':case 'SHOCK':if(m.motionGroups.includes('Shame'))m.startRandomMotion('Shame');else m.startRandomMotion('Shake');break;default:m.startRandomMotion('Idle');}if(model.internalModel.settings.expressions){let idx=0;if(emo==='SAD')idx=1;else if(emo==='ANGRY')idx=3;else if(emo==='HAPPY')idx=4;else if(emo==='SHOCK')idx=5;if(model.internalModel.settings.expressions[idx])model.expression(model.internalModel.settings.expressions[idx].Name);}}catch(e){}}
 
         document.getElementById('studio-btn').onclick=()=>{document.getElementById('studio-overlay').style.display='flex';socket.emit('get_studio_data');};
-        socket.on('studio_data',(d)=>{const l=document.getElementById('model-list');l.innerHTML="";currentModelId=d.current_id;d.models.forEach(m=>{let e=document.createElement('div');e.className=`model-card ${m.id===d.current_id?'active':''}`;e.innerHTML=`<div>${m.name}</div>`;if(iAmAdmin&&m.id!==d.current_id)e.innerHTML+=`<div class="btn-del" onclick="delModel('${m.id}',event)">🗑️</div>`;e.onclick=()=>socket.emit('switch_model',{id:m.id});l.appendChild(e);if(m.id===d.current_id){document.getElementById('persona-model-name').textContent=m.name;document.getElementById('persona-text').value=m.persona;const s=document.getElementById('voice-select');if(d.voices)d.voices.forEach(v=>{if(!Array.from(s.options).some(o=>o.value===v.id)){let o=document.createElement('option');o.value=v.id;o.textContent=v.name;s.appendChild(o);}});if(m.voice)s.value=m.voice;let r=parseInt(m.rate)||0,p=parseInt(m.pitch)||0;document.getElementById('rate-range').value=r;updateVal('rate',r);document.getElementById('pitch-range').value=p;updateVal('pitch',p);let sc=m.scale??0.5,x=m.x??0.5,y=m.y??0.5;updateValLabels(sc,x,y);}});});
-        socket.on('model_switched',(m)=>{currentCfg=m;loadModel(m.path,m);document.getElementById('room-title').textContent=`🤖 ${m.name}`;if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');});
-        document.getElementById('save-settings-btn').onclick=()=>{let r=document.getElementById('rate-range').value,p=document.getElementById('pitch-range').value;socket.emit('save_settings',{id:currentModelId,persona:document.getElementById('persona-text').value,voice:document.getElementById('voice-select').value,rate:(r>=0?'+':'')+r+'%',pitch:(p>=0?'+':'')+p+'Hz',scale:document.getElementById('model-scale').value,x:document.getElementById('model-x').value,y:document.getElementById('model-y').value});};
-        window.delModel=(id,e)=>{e.stopPropagation();if(confirm('删除?'))socket.emit('delete_model',{id});};window.dlModel=(n)=>socket.emit('download_model',{name:n});window.uploadFile=(f)=>{let fd=new FormData();fd.append('file',f);fetch('/upload_model',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{if(d.success){showToast("✅ 成功");socket.emit('get_studio_data');}else showToast("❌ "+d.msg,"error")});};
-        socket.on('admin_unlocked',()=>{iAmAdmin=true;document.querySelectorAll('.admin-only').forEach(e=>e.style.display='block');});
+        function closeStudio(){document.getElementById('studio-overlay').style.display='none';}
+        socket.on('studio_data',(d)=>{
+            const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id;
+            d.models.forEach(m=>{
+                let el=document.createElement('div');el.className=`model-card ${m.id===d.current_id?'active':''}`;
+                let delBtn=iAmAdmin&&m.id!==d.current_id?`<div class="btn-del" onclick="delModel('${m.id}',event)">🗑️</div>`:"";
+                el.innerHTML=`<div>${m.name}</div>${delBtn}`;el.onclick=()=>socket.emit('switch_model',{id:m.id});list.appendChild(el);
+                if(m.id===d.current_id){
+                    document.getElementById('persona-model-name').textContent=m.name;
+                    document.getElementById('persona-text').value=m.persona;
+                    
+                    // 【核心修复】硬编码 + 动态追加
+                    const vSelect = document.getElementById('voice-select');
+                    // 如果已经有硬编码的选项了，就不清空了，只把新来的加进去
+                    // (为了保险，这里每次都重置为硬编码的初始状态，然后追加)
+                    vSelect.innerHTML = `
+                        <option value="zh-CN-XiaoxiaoNeural">🇨🇳 晓晓 (默认)</option>
+                        <option value="zh-CN-YunxiNeural">🇨🇳 云希 (少年)</option>
+                        <option value="zh-TW-HsiaoChenNeural">🇹🇼 晓臻 (台湾)</option>
+                        <option value="ja-JP-NanamiNeural">🇯🇵 七海 (日语)</option>
+                        <option value="en-US-AnaNeural">🇺🇸 Ana (英文)</option>
+                    `;
+                    
+                    if(d.voices) {
+                        d.voices.forEach(v => {
+                            // 避免重复添加硬编码的
+                            if (!Array.from(vSelect.options).some(o => o.value === v.id)) {
+                                let opt = document.createElement('option');
+                                opt.value = v.id;
+                                opt.textContent = v.name;
+                                vSelect.appendChild(opt);
+                            }
+                        });
+                    }
+                    if(m.voice) vSelect.value = m.voice;
+                    
+                    let r=parseInt(m.rate)||0, p=parseInt(m.pitch)||0;
+                    document.getElementById('rate-range').value=r; updateVal('rate',r);
+                    document.getElementById('pitch-range').value=p; updateVal('pitch',p);
+                    let s=m.scale!==undefined?m.scale:0.5, x=m.x!==undefined?m.x:0.5, y=m.y!==undefined?m.y:0.5;
+                    updateValLabels(s,x,y);
+                }
+            });
+        });
         
-        const M_KEY='pico_mem';
-        window.clearLocalMemories=()=>{localStorage.removeItem(M_KEY);showToast('🧠 记忆已清除');};
-        function getLocalMemories(){return JSON.parse(localStorage.getItem(M_KEY))||[];}
-        function saveLocalMemory(f){let m=getLocalMemories();if(f&&!m.includes(f)){m.push(f);if(m.length>50)m=m.slice(-50);localStorage.setItem(M_KEY,JSON.stringify(m));return true;}return false;}
+        socket.on('model_switched',(m)=>{currentCfg=m;loadModel(m.path,m);document.getElementById('room-title').textContent=`🤖 ${m.name}`;if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');showToast(`✨ 已切换为 ${m.name}`);});
+        document.getElementById('save-settings-btn').onclick=()=>{
+            let r=document.getElementById('rate-range').value, p=document.getElementById('pitch-range').value;
+            socket.emit('save_settings',{
+                id:currentModelId, persona:document.getElementById('persona-text').value,
+                voice:document.getElementById('voice-select').value,
+                rate:(r>=0?'+':'')+r+'%', pitch:(p>=0?'+':'')+p+'Hz',
+                scale:document.getElementById('model-scale').value, x:document.getElementById('model-x').value, y:document.getElementById('model-y').value
+            });
+        };
+
+        window.delModel=(id,e)=>{e.stopPropagation();if(confirm('删除？'))socket.emit('delete_model',{id});};window.dlModel=(n)=>socket.emit('download_model',{name:n});window.uploadFile=(f)=>{let fd=new FormData();fd.append('file',f);showToast("📤 上传中...");fetch('/upload_model',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{if(d.success){showToast("✅ 成功");socket.emit('get_studio_data');}else showToast("❌ "+d.msg,"error")});}
+        socket.on('admin_unlocked', () => { iAmAdmin = true; showToast("👑 管理员权限已解锁！"); document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'block'); if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data'); });
         
-        socket.on('chat_message',(d)=>{addMsg(d.text,d.sender,d.sender===myUser?'self':'other');});
-        socket.on('system_message',(d)=>{addMsg(d.text,'系统','system');});
-        socket.on('response',(d)=>{addMsg(d.text,'Pico','pico',d.emotion);triggerMotion(d.emotion||'NORMAL');});
+        const HISTORY_KEY='pico_chat_history';const MEMORY_KEY='pico_user_memories';const HISTORY_LIMIT=200;const MEMORY_LIMIT=50;
+        function saveHistory(type,data){let h=JSON.parse(localStorage.getItem(HISTORY_KEY))||[];h.push({type,data,ts:Date.now()});if(h.length>HISTORY_LIMIT)h=h.slice(-HISTORY_LIMIT);localStorage.setItem(HISTORY_KEY,JSON.stringify(h));}
+        function loadHistory(){const h=JSON.parse(localStorage.getItem(HISTORY_KEY))||[];document.getElementById('chat-window').innerHTML="";h.forEach(i=>{if(i.type==='chat_message')addMsg(i.data.text,i.data.sender,i.data.sender===myUser?'self':'other');else if(i.type==='response')addMsg(i.data.text,'Pico','pico',i.data.emotion);else if(i.type==='system_message')addMsg(i.data.text,'系统','system');});document.getElementById('chat-window').scrollTop=99999;}
+        window.clearLocalHistory=()=>{if(confirm('确定清除聊天记录？')){localStorage.removeItem(HISTORY_KEY);document.getElementById('chat-window').innerHTML="";showToast('🧹 已清除');}}
+        window.clearLocalMemories=()=>{if(confirm('确定清除专属记忆？')){localStorage.removeItem(MEMORY_KEY);showToast('🧠 已清除');}}
+        function getLocalMemories(){return JSON.parse(localStorage.getItem(MEMORY_KEY))||[];}
+        function saveLocalMemory(f){let m=getLocalMemories();if(f&&!m.includes(f)){m.push(f);if(m.length>50)m=m.slice(-50);localStorage.setItem(MEMORY_KEY,JSON.stringify(m));return true;}return false;}
+        socket.on('chat_message',(d)=>{addMsg(d.text,d.sender,d.sender===myUser?'self':'other'); saveHistory('chat_message',d);});
+        socket.on('system_message',(d)=>{addMsg(d.text,'系统','system'); saveHistory('system_message',d);});
+        socket.on('response',(d)=>{addMsg(d.text,'Pico','pico',d.emotion);triggerMotion(d.emotion||'NORMAL'); saveHistory('response',d);});
         let lastPico=null;
-        socket.on('audio_response',(d)=>{if(d.audio&&lastPico){let a=new Audio();a.crossOrigin="anonymous";a.src=d.audio;let ui=document.createElement('audio');ui.className='audio-player';ui.controls=true;ui.src=d.audio;lastPico.appendChild(ui);if(audioCtx){if(audioCtx.state==='suspended')audioCtx.resume();try{let s=audioCtx.createMediaElementSource(a);s.connect(analyser);analyser.connect(audioCtx.destination);a.onplay=()=>{isTalking=true};a.onpause=a.onended=()=>{isTalking=false;if(model?.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',0)};}catch(e){}}a.play().catch(()=>{});}});
+        socket.on('audio_response',(d)=>{if(d.audio&&lastPico){let a=new Audio();a.crossOrigin="anonymous";a.src=d.audio;let ui=document.createElement('audio');ui.className='audio-player';ui.controls=true;ui.src=d.audio;lastPico.appendChild(ui);document.getElementById('chat-window').scrollTop=99999;if(audioCtx){if(audioCtx.state==='suspended')audioCtx.resume();try{let s=audioCtx.createMediaElementSource(a);s.connect(analyser);analyser.connect(audioCtx.destination);a.onplay=()=>{isTalking=true};a.onpause=a.onended=()=>{isTalking=false;if(model?.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',0)};}catch(e){}}a.play().catch(()=>{});}});
         socket.on('toast',(d)=>showToast(d.text,d.type));
-        
         function initAudio(){if(!audioCtx)try{audioCtx=new(window.AudioContext||window.webkitAudioContext)();analyser=audioCtx.createAnalyser();analyser.fftSize=512;dataArray=new Uint8Array(analyser.frequencyBinCount);}catch(e){}}
         function addMsg(t,u,y,e){let d=document.createElement('div');d.className=`message-container ${y}`;if(y!=='system')d.innerHTML=`<div class="message-info">${u} ${e?`<span class="emotion-tag">${e}</span>`:''}</div>`;d.innerHTML+=`<div class="message-bubble">${t}</div>`;document.getElementById('chat-window').appendChild(d);document.getElementById('chat-window').scrollTop=99999;if(y==='pico')lastPico=d;}
-        function showToast(m,t='success'){let d=document.createElement('div');d.className='toast';d.textContent=m;if(t==='error')d.style.background='#d63031';document.getElementById('toast-container').appendChild(d);setTimeout(()=>d.remove(),3500);}
-        const send=()=>{let i=document.getElementById('user-input'),t=i.value.trim();if(!t)return;if(t.startsWith('/')){if(t.startsWith('/记 ')){if(saveLocalMemory(t.substring(3).trim()))showToast('🧠 已记');}else if(t==='/清除记忆')clearLocalMemories();else if(t.toLowerCase()==='/管理员'){socket.emit('message',{text:t});}else{showToast('未知指令','error');}}else{socket.emit('message',{text:t,memories:getLocalMemories()});}i.value='';};
+        function showToast(m,t='success'){let d=document.createElement('div');d.className='toast';d.textContent=m;if(t==='error'||t==='info')d.style.backgroundColor=t==='error'?'#d63031':(t==='info'?'#0984e3':'#00b894');document.getElementById('toast-container').appendChild(d);setTimeout(()=>d.remove(),3500);}
+        const send=()=>{let i=document.getElementById('user-input');let t=i.value.trim();if(!t)return;
+            if(t.startsWith('/')){if(t.startsWith('/记 ')){let f=t.substring(3).trim();if(f&&saveLocalMemory(f)){addMsg(`(本地) 记住了: ${f}`,'我','self');showToast('🧠 记忆已保存');}}else if(t==='/清除记忆'){clearLocalMemories();}else if(t.toLowerCase()==='/管理员'){socket.emit('message',{text:t,memories:getLocalMemories()});}else{showToast('未知指令','error');}}else{socket.emit('message',{text:t,memories:getLocalMemories()});}
+            i.value='';
+        };
         document.getElementById('send-btn').onclick=send; document.getElementById('user-input').onkeypress=(e)=>{if(e.key==='Enter')send();};
     </script>
 </body>
