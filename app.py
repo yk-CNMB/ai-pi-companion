@@ -1,5 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (完整保留版 - 适配 Miku 动作)
+# Pico AI Server - app.py (情感引擎修复版)
 # =======================================================================
 import os
 import json
@@ -36,34 +36,58 @@ MODELS_DIR = os.path.join(BASE_DIR, "static", "live2d")
 VOICES_DIR = os.path.join(BASE_DIR, "static", "voices")
 PIPER_BIN = os.path.join(BASE_DIR, "piper_engine", "piper")
 
-# 确保目录存在
 for d in [MEMORIES_DIR, AUDIO_DIR, MODELS_DIR, VOICES_DIR]:
     if not os.path.exists(d): os.makedirs(d)
 
-# 加载配置
 CONFIG = {}
 try:
     if os.path.exists("config.json"):
         with open("config.json", "r") as f: CONFIG = json.load(f)
 except: pass
 
-# 初始化 Gemini
 client = None
 api_key = CONFIG.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
 if api_key and "在这里" not in api_key:
     try: client = genai.Client(api_key=api_key)
     except: pass
 
+# --- 情感核心 ---
+# 这是强制让 Gemini 输出标签的关键指令
+EMOTION_INSTRUCTION = """
+【重要系统指令】
+你必须在每次回复的开头，明确标记你当前的心情。
+请严格从以下标签中选择一个，放在句首：
+[HAPPY] - 开心、兴奋、害羞、爱意 (对应高兴、大笑、害羞等)
+[ANGRY] - 生气、愤怒、烦躁 (对应愤怒、不满)
+[SAD] - 悲伤、哭泣、失望 (对应大哭、沮丧)
+[SHOCK] - 惊讶、震惊、困惑 (对应吃惊、转头)
+[NORMAL] - 平静、普通、思考 (对应点头、发呆)
+
+例如：
+[HAPPY] 哇！真的吗？太棒了！
+[ANGRY] 哼，我不理你了！
+[SHOCK] 诶？你在说什么呀？
+
+请务必遵守格式，否则无法驱动虚拟形象。
+"""
+
 def load_user_memories(u): return []
 CURRENT_MODEL = {"id": "default", "path": "", "persona": "", "voice": "zh-CN-XiaoxiaoNeural", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.5, "y": 0.5}
 
 def get_model_config(mid):
-    # 尝试读取同目录下的 config.json，如果没有则给默认值
     p = os.path.join(MODELS_DIR, mid, "config.json")
-    d = {"persona":f"你是{mid}。", "voice":"zh-CN-XiaoxiaoNeural", "rate":"+0%", "pitch":"+0Hz", "scale":0.5, "x":0.5, "y":0.5}
+    # 默认人设加上情感指令
+    default_persona = f"你是{mid}。{EMOTION_INSTRUCTION}"
+    d = {"persona": default_persona, "voice":"zh-CN-XiaoxiaoNeural", "rate":"+0%", "pitch":"+0Hz", "scale":0.5, "x":0.5, "y":0.5}
+    
     if os.path.exists(p):
         try:
-            with open(p, "r", encoding="utf-8") as f: d.update(json.load(f)) 
+            with open(p, "r", encoding="utf-8") as f: 
+                loaded = json.load(f)
+                # 如果配置文件里有人设，也要追加情感指令，防止被覆盖
+                if 'persona' in loaded and EMOTION_INSTRUCTION not in loaded['persona']:
+                    loaded['persona'] += EMOTION_INSTRUCTION
+                d.update(loaded)
         except: pass
     return d
 
@@ -73,81 +97,48 @@ def save_model_config(mid, data):
     with open(p, "w", encoding="utf-8") as f: json.dump(curr, f, indent=2, ensure_ascii=False)
     return curr
 
-# 【核心修改】超强力模型扫描逻辑：深度遍历查找所有 .model3.json
 def scan_models():
     ms = []
     print(f"🔍 开始扫描模型目录: {MODELS_DIR}")
-    
-    # 使用 os.walk 深度遍历，不再依赖 glob，确保找出每一个 .model3.json
     for root, dirs, files in os.walk(MODELS_DIR):
         for file in files:
             if file.endswith(".model3.json"):
-                # 找到模型文件了
                 full_path = os.path.join(root, file)
-                
-                # 计算相对路径，用于前端加载 (例如 /static/live2d/miku/miku.model3.json)
                 rel_path = os.path.relpath(full_path, BASE_DIR).replace("\\", "/")
                 if not rel_path.startswith("/"): rel_path = "/" + rel_path
-                
-                # 计算 ID：通常取所在文件夹的名字 (例如 miku)
                 folder_name = os.path.basename(os.path.dirname(full_path))
                 model_id = folder_name
-                
-                # 防止重复 (如果同一个文件夹下有多个 json，只取第一个，或者根据文件名区分)
                 if any(m['id'] == model_id for m in ms):
                     model_id = f"{folder_name}_{os.path.splitext(file)[0]}"
-
-                # 获取配置 (尝试从文件夹里读 config.json)
-                config_path = os.path.join(root, "config.json")
-                cfg = {"persona":f"你是{model_id}。", "voice":"zh-CN-XiaoxiaoNeural", "rate":"+0%", "pitch":"+0Hz", "scale":0.5, "x":0.5, "y":0.5}
-                if os.path.exists(config_path):
-                    try:
-                        with open(config_path, "r", encoding="utf-8") as f: cfg.update(json.load(f))
-                    except: pass
                 
+                # 获取配置
+                cfg = get_model_config(model_id) # 这里会包含情感指令
                 print(f"   ✅ 发现: {model_id} -> {rel_path}")
                 ms.append({"id": model_id, "name": model_id.capitalize(), "path": rel_path, **cfg})
-    
-    if not ms:
-        print("⚠️ 警告：没有扫描到任何模型！请检查 static/live2d 文件夹。")
-        
     return sorted(ms, key=lambda x: x['name'])
 
 def init_model():
     global CURRENT_MODEL
     ms = scan_models()
     t = None
-    # 优先找 Hiyori 做默认，没有就取第一个
     for m in ms:
         if "hiyori" in m['id'].lower(): t = m; break
     if t is None and len(ms) > 0: t = ms[0]
     if t: CURRENT_MODEL = t
     print(f"🤖 当前加载模型: {CURRENT_MODEL['id']}")
 
-# 初始化一次
 init_model()
 
-# TTS 功能区
 def run_piper_tts(text, model_file, output_path):
     if not os.path.isabs(model_file): model_path = os.path.join(VOICES_DIR, model_file)
     else: model_path = model_file
-    
-    # 检查 Piper 二进制和模型文件
-    if not os.path.exists(PIPER_BIN): 
-        print(f"❌ Piper 引擎未找到: {PIPER_BIN}")
-        return False
-    if not os.path.exists(model_path): 
-        print(f"❌ 语音模型未找到: {model_path}")
-        return False
-        
+    if not os.path.exists(PIPER_BIN): return False
+    if not os.path.exists(model_path): return False
     try:
-        # Piper 需要从 stdin 读取文本
         cmd = [PIPER_BIN, "--model", model_path, "--output_file", output_path]
         subprocess.run(cmd, input=text.encode('utf-8'), check=True, capture_output=True)
         return True
-    except Exception as e: 
-        print(f"❌ Piper 运行出错: {e}")
-        return False
+    except: return False
 
 def bg_tts(text, voice, rate, pitch, room=None, sid=None):
     clean = re.sub(r'\[(.*?)\]', '', text).strip()
@@ -155,51 +146,35 @@ def bg_tts(text, voice, rate, pitch, room=None, sid=None):
     fname = f"{uuid.uuid4()}"
     success = False; url = ""
     
-    # --- Piper 逻辑 ---
-    # 只要 voice 是以 .onnx 结尾，或者是 "glados_local"，都尝试 Piper
     is_piper = voice.endswith(".onnx") or voice == "glados_local"
-    
     if is_piper:
          model_file = voice
          if voice == "glados_local": model_file = "en_US-glados.onnx"
-         
          out_path = os.path.join(AUDIO_DIR, f"{fname}.wav")
-         if run_piper_tts(clean, model_file, out_path): 
-             success=True; url=f"/static/audio/{fname}.wav"
-             print(f"🔊 Piper 生成成功: {url}")
+         if run_piper_tts(clean, model_file, out_path): success=True; url=f"/static/audio/{fname}.wav"
     
-    # --- Edge-TTS 兜底 ---
     if not success:
         out_path = os.path.join(AUDIO_DIR, f"{fname}.mp3")
         safe_voice = voice
-        # 过滤掉 piper 的名字，防止传给 Edge 报错
         if ".onnx" in safe_voice or "glados" in safe_voice: safe_voice = "zh-CN-XiaoxiaoNeural"
-        
         try:
             async def _run():
                 cm = edge_tts.Communicate(clean, safe_voice, rate=rate, pitch=pitch)
                 await cm.save(out_path)
-            # Python 3.13 兼容性写法
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(_run())
-            loop.close()
+            loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop); loop.run_until_complete(_run()); loop.close()
             success=True; url=f"/static/audio/{fname}.mp3"
-        except Exception as e: print(f"❌ Edge-TTS 失败: {e}")
+        except: pass
 
     if success:
         payload = {'audio': url}
         if room: socketio.emit('audio_response', payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_response', payload, to=sid, namespace='/')
 
-# 路由部分
 @app.route('/')
 def idx(): return redirect(url_for('pico_v', v=SERVER_VERSION))
-
 @app.route('/pico/<v>')
 def pico_v(v):
     r = make_response(render_template('chat.html'))
-    # 禁用缓存，确保前端改动立即生效
     r.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     return r
 
@@ -212,7 +187,6 @@ def upload_model():
             n = secure_filename(f.filename).rsplit('.', 1)[0].lower()
             p = os.path.join(MODELS_DIR, n); shutil.rmtree(p, ignore_errors=True)
             with zipfile.ZipFile(f, 'r') as z: z.extractall(p)
-            # 自动调整目录结构：如果解压出来只有一层文件夹，就移出来
             for root, dirs, files in os.walk(p):
                 if any(f.endswith('.model3.json') for f in files):
                     if root != p: 
@@ -230,7 +204,12 @@ chatroom_chat = None
 def init_chatroom():
     global chatroom_chat
     if not client: return
-    try: chatroom_chat = client.chats.create(model="gemini-2.5-flash", config={"system_instruction": CURRENT_MODEL['persona']})
+    # 强制在系统指令中包含情感要求
+    sys_prompt = CURRENT_MODEL.get('persona', "")
+    if EMOTION_INSTRUCTION not in sys_prompt:
+        sys_prompt += EMOTION_INSTRUCTION
+        
+    try: chatroom_chat = client.chats.create(model="gemini-2.5-flash", config={"system_instruction": sys_prompt})
     except: pass
 
 @socketio.on('connect')
@@ -250,24 +229,25 @@ def on_message(d):
     sid = request.sid
     if sid not in users: return
     msg = d['text']
-    
-    # 管理员后门
     if "/管理员" in msg and users[sid]['username'].lower()=="yk": 
         users[sid]['is_admin']=True; emit('admin_unlocked'); return
-    
     emit('chat_message', {'text': msg, 'sender': users[sid]['username']}, to='lobby')
     
     try:
         if not chatroom_chat: init_chatroom()
-        # 调用 Gemini
         resp = chatroom_chat.send_message(f"【{users[sid]['username']}】: {msg}")
         
-        # 解析情感
+        # 严格正则匹配，抓取 [HAPPY] 等标签
         emo='NORMAL'
         match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
-        txt=resp.text.replace(match.group(0),'').strip() if match else resp.text
-        if match: emo=match.group(1)
         
+        if match:
+            emo = match.group(1) # 抓取到的情感，如 HAPPY
+            # 去掉标签后的纯文本
+            txt = resp.text.replace(match.group(0), '').strip()
+        else:
+            txt = resp.text
+            
         emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
         socketio.start_background_task(bg_tts, txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], room='lobby')
     except Exception as e:
@@ -276,43 +256,23 @@ def on_message(d):
 
 def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
 
-# 【核心修改】工作室数据获取
 @socketio.on('get_studio_data')
 def on_get_data():
-    # 1. Edge 列表 (硬编码兜底)
-    voices = [{"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓 (默认)"},
-              {"id":"zh-CN-YunxiNeural","name":"☁️ 云希 (男)"},
-              {"id":"en-US-AnaNeural","name":"☁️ Ana (英)"}]
-    
-    # 2. 强制添加 GlaDOS (不管扫没扫到，只要文件在)
-    glados_path = os.path.join(VOICES_DIR, "en_US-glados.onnx")
-    if os.path.exists(glados_path):
+    voices = [{"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓 (默认)"},{"id":"zh-CN-YunxiNeural","name":"☁️ 云希 (男)"},{"id":"en-US-AnaNeural","name":"☁️ Ana (英)"}]
+    if os.path.exists(os.path.join(VOICES_DIR, "en_US-glados.onnx")):
         voices.append({"id": "glados_local", "name": "🤖 GlaDOS (本地 Piper)"})
-        print("✅ 检测到 GlaDOS 模型")
-    else:
-        print(f"⚠️ 未检测到 GlaDOS: {glados_path}")
-
-    # 3. 扫描其他 Piper
     if os.path.exists(VOICES_DIR):
         for onnx in glob.glob(os.path.join(VOICES_DIR, "*.onnx")):
             mid = os.path.basename(onnx)
-            if "glados" in mid: continue # 避免重复
+            if "glados" in mid: continue
             voices.append({"id": mid, "name": f"🏠 {mid.replace('.onnx','')} (本地)"})
-            
-    # 发送：最新扫描的模型列表 + 语音列表
-    models_list = scan_models()
-    emit('studio_data', {'models': models_list, 'current_id': CURRENT_MODEL['id'], 'voices': voices})
+    emit('studio_data', {'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 'voices': voices})
 
 @socketio.on('switch_model')
 def on_switch(d):
     global CURRENT_MODEL
-    # 从重新扫描的列表中查找
     t = next((m for m in scan_models() if m['id'] == d['id']), None)
-    if t: 
-        CURRENT_MODEL = t
-        init_chatroom()
-        emit('model_switched', CURRENT_MODEL, to='lobby')
-        print(f"🔄 切换模型为: {t['name']}")
+    if t: CURRENT_MODEL = t; init_chatroom(); emit('model_switched', CURRENT_MODEL, to='lobby')
 
 @socketio.on('save_settings')
 def on_save_settings(d):
@@ -321,43 +281,26 @@ def on_save_settings(d):
     try: d['scale']=float(d['scale']); d['x']=float(d['x']); d['y']=float(d['y'])
     except: pass
     updated = save_model_config(d['id'], d)
-    if CURRENT_MODEL['id'] == d['id']: 
-        CURRENT_MODEL.update(updated)
-        init_chatroom()
-        emit('model_switched', CURRENT_MODEL, to='lobby')
-    emit('toast', {'text': '✅ 配置已保存'})
+    if CURRENT_MODEL['id'] == d['id']: CURRENT_MODEL.update(updated); init_chatroom(); emit('model_switched', CURRENT_MODEL, to='lobby')
+    emit('toast', {'text': '✅ 保存成功'})
 
 @socketio.on('delete_model')
 def on_del(d):
     if not is_admin(request.sid): return
     if d['id']==CURRENT_MODEL['id']: return
-    try: 
-        # 删除文件夹
-        tgt = os.path.join(MODELS_DIR, d['id'])
-        shutil.rmtree(tgt)
-        emit('toast',{'text':'🗑️ 已删除'})
-        # 刷新列表
-        on_get_data()
-    except Exception as e: print(f"删除失败: {e}")
+    try: shutil.rmtree(os.path.join(MODELS_DIR, d['id'])); emit('toast',{'text':'🗑️ 已删除'}); on_get_data()
+    except: pass
 
 @socketio.on('download_model')
 def on_dl(d):
     if not is_admin(request.sid): return
-    name=d.get('name')
-    emit('toast',{'text':f'🚀 下载 {name}...','type':'info'})
-    socketio.start_background_task(bg_dl_task, name)
+    name=d.get('name'); emit('toast',{'text':f'🚀 下载 {name}...','type':'info'}); socketio.start_background_task(bg_dl_task, name)
 
 def bg_dl_task(name):
-    # 简易下载逻辑，仅供参考
     u={"Mao":".../Mao","Natori":".../Natori"}.get(name,"https://github.com/Live2D/CubismWebSamples/trunk/Samples/Resources/"+name)
-    t=os.path.join(MODELS_DIR,name.lower())
-    shutil.rmtree(t, ignore_errors=True)
-    os.makedirs(t,exist_ok=True)
-    try: 
-        os.system(f"svn export --force -q {u} {t}")
-        socketio.emit('toast',{'text':f'✅ {name} 完成!'},namespace='/')
+    t=os.path.join(MODELS_DIR,name.lower()); shutil.rmtree(t, ignore_errors=True); os.makedirs(t,exist_ok=True)
+    try: os.system(f"svn export --force -q {u} {t}"); socketio.emit('toast',{'text':f'✅ {name} 完成!'},namespace='/')
     except: pass
 
 if __name__ == '__main__':
-    print(f"🚀 Pico Server 启动中... (v{SERVER_VERSION})")
     socketio.run(app, host='0.0.0.0', port=5000)
