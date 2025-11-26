@@ -1,6 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (Piper 深层扫描版)
-# 功能: 递归扫描所有子目录，确保找到 .onnx 模型
+# Pico AI Server - app.py (Python 3.13 兼容 / Piper / Edge / 完整功能)
 # =======================================================================
 import os
 import json
@@ -13,9 +12,13 @@ import re
 import zipfile
 import subprocess
 import threading
+import requests
+
 import edge_tts
+import soundfile as sf
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
-from flask_socketio import SocketIO, emit, join_room
+from flask_socketio import SocketIO, emit, join_room, leave_room
+from werkzeug.utils import secure_filename
 from google import genai
 
 app = Flask(__name__, static_folder='static')
@@ -24,7 +27,6 @@ app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60)
 SERVER_VERSION = str(int(time.time()))
 
-# --- 目录配置 ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MEMORIES_DIR = os.path.join(BASE_DIR, "memories")
 AUDIO_DIR = os.path.join(BASE_DIR, "static", "audio")
@@ -33,123 +35,85 @@ VOICES_DIR = os.path.join(BASE_DIR, "static", "voices")
 PIPER_BIN = os.path.join(BASE_DIR, "piper_engine", "piper")
 
 for d in [MEMORIES_DIR, AUDIO_DIR, MODELS_DIR, VOICES_DIR]:
-    if not os.path.exists(d):
-        os.makedirs(d)
+    if not os.path.exists(d): os.makedirs(d)
 
-# --- API 配置 ---
 CONFIG = {}
 try:
     if os.path.exists("config.json"):
-        with open("config.json", "r") as f:
-            CONFIG = json.load(f)
+        with open("config.json", "r") as f: CONFIG = json.load(f)
 except: pass
 
 client = None
 api_key = CONFIG.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
 if api_key and "在这里" not in api_key:
-    try:
-        client = genai.Client(api_key=api_key)
-    except Exception as e:
-        print(f"API Error: {e}")
+    try: client = genai.Client(api_key=api_key)
+    except Exception as e: print(f"API Error: {e}")
 
-# --- 核心 ---
 def load_user_memories(u): return []
-
 CURRENT_MODEL = {"id": "default", "path": "", "persona": "", "voice": "zh-CN-XiaoxiaoNeural", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.5, "y": 0.5}
 
 def get_model_config(mid):
     p = os.path.join(MODELS_DIR, mid, "config.json")
-    data = {"persona":f"你是{mid}。", "voice":"zh-CN-XiaoxiaoNeural", "rate":"+0%", "pitch":"+0Hz", "scale":0.5, "x":0.5, "y":0.5}
+    d = {"persona":f"你是{mid}。", "voice":"zh-CN-XiaoxiaoNeural", "rate":"+0%", "pitch":"+0Hz", "scale":0.5, "x":0.5, "y":0.5}
     if os.path.exists(p):
         try:
-            with open(p, "r", encoding="utf-8") as f:
-                data.update(json.load(f))
+            with open(p, "r", encoding="utf-8") as f: d.update(json.load(f)) 
         except: pass
-    return data
-
+    return d
 def save_model_config(mid, data):
     p = os.path.join(MODELS_DIR, mid, "config.json")
     curr = get_model_config(mid); curr.update(data)
-    with open(p, "w", encoding="utf-8") as f: json.dump(curr, f, indent=2, ensure_ascii=False)
+    with open(p, "w", encoding="utf-8") as f: json.dump(curr, f, ensure_ascii=False, indent=2)
     return curr
-
 def scan_models():
     ms = []
     for j in glob.glob(os.path.join(MODELS_DIR, "**", "*.model3.json"), recursive=True):
         mid = os.path.basename(os.path.dirname(j))
         cfg = get_model_config(mid)
-        path = "/" + os.path.relpath(j, BASE_DIR).replace("\\", "/")
-        ms.append({"id": mid, "name": mid.capitalize(), "path": path, **cfg})
+        ms.append({"id": mid, "name": mid.capitalize(), "path": "/"+os.path.relpath(j, BASE_DIR).replace("\\","/"), **cfg})
     return sorted(ms, key=lambda x: x['name'])
-
 def init_model():
     global CURRENT_MODEL
     ms = scan_models()
-    t = None
-    for m in ms:
-        if "hiyori" in m['id'].lower(): t = m; break
-    if t is None and len(ms) > 0: t = ms[0]
+    t = next((m for m in ms if "hiyori" in m['id'].lower()), ms[0] if ms else None)
     if t: CURRENT_MODEL = t
 init_model()
 
-# --- TTS 引擎 ---
-def run_piper_tts(text, model_path, output_path):
-    # model_path 现在接收绝对路径，不再拼接
-    if not os.path.exists(PIPER_BIN): 
-        print(f"❌ Piper引擎丢失: {PIPER_BIN}"); return False
-    if not os.path.exists(model_path):
-        print(f"❌ 模型文件丢失: {model_path}"); return False
-        
+def run_piper_tts(text, model_file, output_path):
+    if not os.path.isabs(model_file): model_path = os.path.join(VOICES_DIR, model_file)
+    else: model_path = model_file
+    if not os.path.exists(PIPER_BIN): return False
     try:
-        print(f"🎤 [Piper] 生成中: {os.path.basename(model_path)}")
         cmd = [PIPER_BIN, "--model", model_path, "--output_file", output_path]
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        out, err = proc.communicate(input=text.encode('utf-8'))
-        if proc.returncode == 0:
-            print("✅ [Piper] 成功")
-            return True
-        else:
-            print(f"❌ [Piper] 报错: {err.decode()}")
-            return False
-    except Exception as e:
-        print(f"❌ [Piper] 异常: {e}")
-        return False
+        subprocess.run(cmd, input=text.encode('utf-8'), check=True, capture_output=True)
+        return True
+    except: return False
 
 def bg_tts(text, voice, rate, pitch, room=None, sid=None):
     clean = re.sub(r'\[(.*?)\]', '', text).strip()
     if not clean: return
     fname = f"{uuid.uuid4()}"
-    success = False
-    url = ""
+    success = False; url = ""
     
-    # 1. Piper (判断是否为绝对路径的 .onnx)
     if voice.endswith(".onnx"):
          out_path = os.path.join(AUDIO_DIR, f"{fname}.wav")
-         # 直接传 voice (它现在是绝对路径)
-         if run_piper_tts(clean, voice, out_path):
-             success = True
-             url = f"/static/audio/{fname}.wav"
+         if run_piper_tts(clean, voice, out_path): success=True; url=f"/static/audio/{fname}.wav"
 
-    # 2. Edge-TTS
     if not success:
         out_path = os.path.join(AUDIO_DIR, f"{fname}.mp3")
-        safe_voice = "zh-CN-XiaoxiaoNeural"
-        if "Neural" in voice: safe_voice = voice
+        safe_voice = voice if ("Neural" in voice) else "zh-CN-XiaoxiaoNeural"
         try:
             async def _run():
                 cm = edge_tts.Communicate(clean, safe_voice, rate=rate, pitch=pitch)
                 await cm.save(out_path)
             loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop); loop.run_until_complete(_run()); loop.close()
-            success = True
-            url = f"/static/audio/{fname}.mp3"
+            success=True; url=f"/static/audio/{fname}.mp3"
         except: pass
-
     if success:
         payload = {'audio': url}
         if room: socketio.emit('audio_response', payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_response', payload, to=sid, namespace='/')
 
-# --- 路由 ---
 @app.route('/')
 def idx(): return redirect(url_for('pico_v', v=SERVER_VERSION))
 @app.route('/pico/<v>')
@@ -168,14 +132,13 @@ def upload_model():
             with zipfile.ZipFile(f, 'r') as z: z.extractall(p)
             for root, dirs, files in os.walk(p):
                 if any(f.endswith('.model3.json') for f in files):
-                    if root != p:
+                    if root != p: 
                          for item in os.listdir(root): shutil.move(os.path.join(root, item), p)
                     break
             return jsonify({'success': True})
         except: return jsonify({'success': False})
     return jsonify({'success': False})
 
-# --- SocketIO ---
 users = {}
 chatroom_chat = None
 def init_chatroom():
@@ -192,7 +155,7 @@ def on_login(d):
     join_room('lobby')
     if not chatroom_chat: init_chatroom()
     emit('login_success', {'username': u, 'current_model': CURRENT_MODEL})
-    socketio.start_background_task(bg_tts, f"嗨 {u}", CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], sid=request.sid)
+    socketio.start_background_task(bg_tts, f"Hi {u}", CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], sid=request.sid)
 @socketio.on('message')
 def on_message(d):
     sid = request.sid
@@ -212,41 +175,17 @@ def on_message(d):
     except: init_chatroom()
 
 def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
-
 @socketio.on('get_studio_data')
 def on_get_data():
-    # Edge-TTS 基础列表
-    voices = [
-        {"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓 (默认)"},
-        {"id":"zh-CN-YunxiNeural","name":"☁️ 云希 (少年)"},
-        {"id":"zh-TW-HsiaoChenNeural","name":"☁️ 晓臻 (台湾)"},
-        {"id":"en-US-AnaNeural","name":"☁️ Ana (English)"}
-    ]
-    
-    # 【核心】递归扫描所有子目录，寻找 .onnx
-    print(f"🔍 [System] 深度扫描: {VOICES_DIR}")
+    voices = [{"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓 (默认)"},{"id":"zh-CN-YunxiNeural","name":"☁️ 云希 (少年)"}]
     if os.path.exists(VOICES_DIR):
-        # recursive=True 穿透所有子文件夹
-        for onnx_path in glob.glob(os.path.join(VOICES_DIR, "**", "*.onnx"), recursive=True):
-            # 使用绝对路径作为 ID，确保不管文件在哪都能找到
-            abs_path = os.path.abspath(onnx_path)
-            filename = os.path.basename(onnx_path)
-            name = filename.replace(".onnx", "")
-            
-            # 尝试找同名的 txt 文件 (在同一目录下)
-            txt_path = os.path.splitext(onnx_path)[0] + ".txt"
-            if os.path.exists(txt_path):
-                try:
-                    with open(txt_path, 'r') as f:
-                        custom_name = f.read().strip()
-                        if custom_name: name = custom_name
+        for onnx in glob.glob(os.path.join(VOICES_DIR, "*.onnx")):
+            mid = os.path.basename(onnx); name = mid.replace(".onnx", "")
+            if os.path.exists(os.path.join(VOICES_DIR, f"{name}.txt")): 
+                try: name = open(os.path.join(VOICES_DIR, f"{name}.txt")).read().strip()
                 except: pass
-            
-            voices.append({"id": abs_path, "name": f"🏠 {name} (本地)"})
-            print(f"   -> 发现: {name}")
-            
+            voices.append({"id": mid, "name": f"🏠 {name} (本地)"})
     emit('studio_data', {'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 'voices': voices})
-
 @socketio.on('switch_model')
 def on_switch(d):
     global CURRENT_MODEL
@@ -265,16 +204,16 @@ def on_save_settings(d):
 def on_del(d):
     if not is_admin(request.sid): return
     if d['id']==CURRENT_MODEL['id']: return
-    try: shutil.rmtree(os.path.join(MODELS_DIR, d['id'])); emit('toast',{'text':'已删除'}); on_get_data()
+    try: shutil.rmtree(os.path.join(MODELS_DIR, d['id'])); emit('toast',{'text':'🗑️ 已删除'}); on_get_data()
     except: pass
 @socketio.on('download_model')
 def on_dl(d):
     if not is_admin(request.sid): return
-    name=d.get('name'); emit('toast',{'text':'下载中...'}); socketio.start_background_task(bg_dl_task, name)
+    name=d.get('name'); emit('toast',{'text':f'🚀 下载 {name}...','type':'info'}); socketio.start_background_task(bg_dl_task, name)
 def bg_dl_task(name):
     u={"Mao":".../Mao","Natori":".../Natori"}.get(name,"https://github.com/Live2D/CubismWebSamples/trunk/Samples/Resources/"+name)
     t=os.path.join(MODELS_DIR,name.lower()); shutil.rmtree(t, ignore_errors=True); os.makedirs(t,exist_ok=True)
-    try: os.system(f"svn export --force -q {u} {t}"); socketio.emit('toast',{'text':'完成!'},namespace='/')
+    try: os.system(f"svn export --force -q {u} {t}"); socketio.emit('toast',{'text':f'✅ {name} 完成!'},namespace='/')
     except: pass
 
 if __name__ == '__main__':
