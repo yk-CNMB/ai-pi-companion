@@ -1,18 +1,15 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-    <!-- Head 保持不变 -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Pico Studio</title>
-    <!-- 依赖库 -->
     <script src="/static/js/live2d.min.js"></script>
     <script src="/static/js/live2dcubismcore.min.js"></script>
     <script src="/static/js/pixi.min.js"></script>
     <script src="/static/js/index.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <style>
-        /* CSS 样式全保留 */
         body{font-family:"Segoe UI",sans-serif;margin:0;padding:0;height:100vh;background-color:#2d3436;display:flex;flex-direction:row;overflow:hidden;color:#333}
         #stage-container{flex:1;position:relative;background-image:radial-gradient(circle,#636e72 10%,#2d3436 90%);overflow:hidden;touch-action:none}
         #live2d-canvas{position:absolute;top:0;left:0;width:100%;height:100%}
@@ -63,26 +60,19 @@
         <div class="modal-box">
             <div style="display:flex;justify-content:space-between;align-items:center"><h3>🛠️ 工作室</h3><div onclick="document.getElementById('studio-overlay').style.display='none'" style="font-size:24px;padding:0 10px;cursor:pointer">×</div></div>
             <div id="model-list" class="model-list">加载中...</div>
-            
             <div class="admin-only">
                 <hr>
                 <h4>⚙️ 调音 & 位置</h4>
                 <div>当前模型: <span id="persona-model-name" style="font-weight:bold">--</span></div>
                 <label style="font-size:12px;color:#666">人设提示词:</label>
                 <textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea>
-                
                 <label style="font-size:12px;color:#666">声线选择:</label>
-                <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd">
-                    <!-- 这里的选项会被 JS 覆盖 -->
-                </select>
-
+                <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd"></select>
                 <div class="slider-container"><div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div><input type="range" id="rate-range" min="-50" max="50" oninput="updateVal('rate', this.value)"></div>
                 <div class="slider-container"><div class="slider-label"><span>音调</span><span id="pitch-val">0Hz</span></div><input type="range" id="pitch-range" min="-50" max="50" oninput="updateVal('pitch', this.value)"></div>
-
                 <div class="slider-container"><div class="slider-label"><span>位置 X</span><span id="x-val">0.5</span></div><input type="range" id="model-x" min="0" max="1" step="0.01" oninput="previewTransform()"></div>
                 <div class="slider-container"><div class="slider-label"><span>位置 Y</span><span id="y-val">0.5</span></div><input type="range" id="model-y" min="0" max="2" step="0.01" oninput="previewTransform()"></div>
                 <div class="slider-container"><div class="slider-label"><span>缩放</span><span id="scale-val">0.5</span></div><input type="range" id="model-scale" min="0.1" max="2.0" step="0.05" oninput="previewTransform()"></div>
-
                 <button id="save-settings-btn" style="width:100%;padding:10px;margin-top:10px;background:#6c5ce7;color:white;border:none;border-radius:10px">保存所有配置</button>
                 <hr><h4>☁️ 上传/下载</h4><div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 .zip<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div><div style="margin-top:10px"><span class="chip" onclick="dlModel('Mao')">Mao</span><span class="chip" onclick="dlModel('Natori')">Natori</span></div>
             </div>
@@ -99,7 +89,6 @@
         let isDragging=false, dragData, initialScale, initialDist, iAmAdmin=false;
 
         function updateVal(type, val) { document.getElementById(`${type}-val`).textContent = (val > 0 ? '+' : '') + val + (type==='rate'?'%':'Hz'); }
-
         function previewTransform() {
             if(!model) return;
             const s = parseFloat(document.getElementById('model-scale').value);
@@ -110,28 +99,22 @@
             document.getElementById('y-val').textContent = y.toFixed(2);
             applyToModel(s, x, y);
         }
-
         function applyToModel(s, x, y) {
             if(!model || !app_pixi) return;
             const st = document.getElementById('stage-container');
             if(!model.width) return;
-            // 计算等比缩放
             const absScale = (st.clientHeight / model.height) * s;
             model.scale.set(absScale);
-            // 计算位置
             model.x = (st.clientWidth * x) - (model.width / 2);
             model.y = (st.clientHeight * y) - (model.height / 2);
             document.getElementById('debug-pos').textContent = `S:${s.toFixed(2)} X:${x.toFixed(2)} Y:${y.toFixed(2)}`;
         }
-
         function applyConfig(cfg) {
             if(!model || !app_pixi) return;
             const target = cfg || currentCfg || {scale:0.5, x:0.5, y:0.5};
             const s = (target.scale !== undefined) ? target.scale : 0.5;
             const x = (target.x !== undefined) ? target.x : 0.5;
             const y = (target.y !== undefined) ? target.y : 0.5;
-            
-            // 更新UI滑块
             if(document.getElementById('model-scale')) {
                 document.getElementById('model-scale').value = s;
                 document.getElementById('model-x').value = x;
@@ -149,21 +132,12 @@
         socket.on('connect', ()=>{});
         socket.on('server_ready', ()=>{loginBtn.textContent="进入直播间";loginBtn.disabled=false;});
         socket.on('disconnect', ()=>{loginBtn.textContent="已断开...";loginBtn.disabled=true;});
-        
-        loginBtn.onclick=()=>{
-            let n=document.getElementById('username-input').value.trim();
-            if(n){
-                myUser=n;loginBtn.disabled=true;loginBtn.textContent="登录中...";
-                socket.emit('login',{username:n});
-                initAudio();
-            }
-        };
+        loginBtn.onclick=()=>{let n=document.getElementById('username-input').value.trim();if(n){myUser=n;loginBtn.disabled=true;loginBtn.textContent="登录中...";socket.emit('login',{username:n});initAudio();}};
 
         socket.on('login_success',(d)=>{
             document.getElementById('login-overlay').style.display='none';
             document.getElementById('room-title').textContent=`🤖 ${d.current_model.name}`;
             currentCfg = d.current_model;
-            // 登录即加载模型
             if(d.current_model.path) loadModel(d.current_model.path, d.current_model);
             loadHistory();
         });
@@ -178,20 +152,14 @@
             try {
                 if(model) { app_pixi.stage.removeChild(model); model.destroy(); model=null; }
                 app_pixi.stage.removeChildren(); 
-                
-                // 加载模型
                 model = await PIXI.live2d.Live2DModel.from(path);
                 app_pixi.stage.addChild(model);
-                
-                // 应用配置
                 setTimeout(() => applyConfig(cfg || currentCfg), 100);
-                
-                // 启动口型同步
                 app_pixi.ticker.remove(lipSync); app_pixi.ticker.add(lipSync);
-                
-                // 启动随机待机动作
                 if(model.internalModel.motionManager) model.internalModel.motionManager.startRandomMotion('Idle');
                 
+                // ★ DEBUG: 打印所有可用动作组，帮您确认 Miku 到底加载了什么
+                console.log("🎬 Available Motions:", model.internalModel.motionManager.definitions || model.internalModel.motionManager.motionGroups);
                 console.log("✅ Model Loaded Successfully");
             } catch(e) { 
                 console.error("❌ Model Load Failed:", e); 
@@ -202,101 +170,67 @@
         function initInteraction() { const s=document.getElementById('stage-container');app_pixi.stage.interactive=true;app_pixi.stage.on('pointerdown',(e)=>{if(model&&(!e.data.originalEvent.touches||e.data.originalEvent.touches.length===1)){isDragging=true;dragData=e.data;model.alpha=0.8;}});app_pixi.stage.on('pointerup',()=>{isDragging=false;if(model)model.alpha=1;}).on('pointerupoutside',()=>{isDragging=false;if(model)model.alpha=1;});app_pixi.stage.on('pointermove',()=>{if(isDragging&&model){const p=dragData.getLocalPosition(model.parent);model.x=p.x-model.width/2;model.y=p.y-model.height/2;}});s.addEventListener('wheel',(e)=>{e.preventDefault();if(model){model.scale.x*=(e.deltaY<0?1.1:0.9);model.scale.y=model.scale.x;}},{passive:false});s.addEventListener('touchstart',(e)=>{if(e.touches.length===2&&model){isDragging=false;initialDist=Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY);initialScale=model.scale.x;}});s.addEventListener('touchmove',(e)=>{if(e.touches.length===2&&model&&initialDist){e.preventDefault();model.scale.set(initialScale*(Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY)/initialDist));}}); }
         function lipSync(){if(!model||!analyser||!isTalking)return;analyser.getByteFrequencyData(dataArray);let sum=0;for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];if(model.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',Math.min(1.0,(sum/dataArray.length)/30));}
         
-        // 【核心】Miku 动作触发逻辑 (适配改名后的文件)
+        // 【核心修改】Miku 动作触发逻辑 (已适配您的特定文件名)
         function triggerMotion(emo){
             if(!model?.internalModel?.motionManager)return;
             try{
                 let m=model.internalModel.motionManager;
-                // 匹配重命名后的文件 (happy_02, angry_01...)
+                // 强制转大写防错
+                emo = emo.toUpperCase();
+
+                // 映射表：包含您提供的所有特定文件名关键词
                 let map = {
-                    'HAPPY': ['happy', 'joy', '02', '04'],
-                    'ANGRY': ['angry', 'mad', '10', '01'],
-                    'SAD':   ['sad', 'cry', '06'],
-                    'SHOCK': ['shock', '05', 'turn'],
-                    'IDLE':  ['idle', 'wait', 'stand']
+                    'HAPPY': ['happy_02', 'happy_04', '02', '04', '03', 'love', '11', 'cute', 'joy'],
+                    'ANGRY': ['angry_01', 'angry_10', '01', '10', 'mad', '愤怒'],
+                    'SAD':   ['sad_06', '06', 'cry', '悲伤'],
+                    'SHOCK': ['shock', 'turn_05', '05', 'turn', 'chijing', 'surprise'],
+                    'IDLE':  ['idle', 'sleep_09', '09', 'wait', 'stand', 'nod', '07', '14']
                 };
                 
+                // 获取当前模型所有动作组
                 let groups = [];
                 if(m.definitions && m.definitions.Motions) groups=Object.keys(m.definitions.Motions);
                 else if(m.motionGroups) groups=Object.keys(m.motionGroups);
 
+                // 查找匹配的动作组
                 let k = map[emo] || [];
                 let target = groups.find(g => k.some(key => g.toLowerCase().includes(key)));
                 
                 if(target) {
-                    console.log(`🎬 触发动作: ${emo} -> ${target}`);
+                    console.log(`🎬 触发动作 [${emo}] -> 播放文件: ${target}`);
                     m.startRandomMotion(target);
                 } else {
-                    console.log(`⚠️ 未找到动作: ${emo}`);
+                    console.log(`⚠️ 未找到 [${emo}] 的对应动作。可用动作组:`, groups);
                 }
             }catch(e){console.error(e);}
         }
 
         document.getElementById('studio-btn').onclick=()=>{document.getElementById('studio-overlay').style.display='flex';socket.emit('get_studio_data');};
-        
-        // 【核心】工作室数据渲染
         socket.on('studio_data',(d)=>{
-            console.log("🛠️ Studio Data:", d);
-            const list=document.getElementById('model-list');
-            list.innerHTML="";
-            currentModelId=d.current_id;
-            
-            // 渲染模型卡片
-            if(!d.models || d.models.length === 0) {
-                 list.innerHTML = "<div style='grid-column:1/-1;text-align:center;color:red'>❌ 未找到模型</div>";
-            } else {
+            const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id;
+            if(!d.models||d.models.length===0){list.innerHTML="<div style='grid-column:1/-1;text-align:center;color:red'>❌ 未找到模型</div>";}
+            else{
                 d.models.forEach(m=>{
-                    let el=document.createElement('div');
-                    el.className=`model-card ${m.id===d.current_id?'active':''}`;
-                    // 管理员可删除
+                    let el=document.createElement('div');el.className=`model-card ${m.id===d.current_id?'active':''}`;
                     let delBtn=iAmAdmin&&m.id!==d.current_id?`<div class="btn-del" onclick="delModel('${m.id}',event)">🗑️</div>`:"";
-                    el.innerHTML=`<div>${m.name}</div>${delBtn}`;
-                    el.onclick=()=>socket.emit('switch_model',{id:m.id});
-                    list.appendChild(el);
-
-                    // 如果是当前模型，填充设置区域
+                    el.innerHTML=`<div>${m.name}</div>${delBtn}`;el.onclick=()=>socket.emit('switch_model',{id:m.id});list.appendChild(el);
                     if(m.id===d.current_id){
-                        document.getElementById('persona-model-name').textContent=m.name;
-                        document.getElementById('persona-text').value=m.persona || "";
-                        
-                        const vSelect=document.getElementById('voice-select');
-                        vSelect.innerHTML = "";
-                        
-                        // 填充语音选项
-                        if(d.voices) {
-                            d.voices.forEach(v=>{
-                                let opt = document.createElement('option');
-                                opt.value = v.id;
-                                opt.textContent = v.name;
-                                vSelect.appendChild(opt);
-                            });
-                        }
-                        if(m.voice) vSelect.value=m.voice;
-                        
-                        let r=parseInt(m.rate)||0, p=parseInt(m.pitch)||0;
-                        document.getElementById('rate-range').value=r; updateVal('rate',r);
-                        document.getElementById('pitch-range').value=p; updateVal('pitch',p);
-                        let s=m.scale!==undefined?m.scale:0.5, x=m.x!==undefined?m.x:0.5, y=m.y!==undefined?m.y:0.5;
-                        updateValLabels(s,x,y);
+                        document.getElementById('persona-model-name').textContent=m.name;document.getElementById('persona-text').value=m.persona||"";
+                        const vSelect=document.getElementById('voice-select');vSelect.innerHTML="";
+                        if(d.voices){d.voices.forEach(v=>{let opt=document.createElement('option');opt.value=v.id;opt.textContent=v.name;vSelect.appendChild(opt);});}
+                        if(m.voice)vSelect.value=m.voice;
+                        let r=parseInt(m.rate)||0,p=parseInt(m.pitch)||0;document.getElementById('rate-range').value=r;updateVal('rate',r);document.getElementById('pitch-range').value=p;updateVal('pitch',p);
+                        let s=m.scale!==undefined?m.scale:0.5,x=m.x!==undefined?m.x:0.5,y=m.y!==undefined?m.y:0.5;updateValLabels(s,x,y);
                     }
                 });
             }
         });
         
-        socket.on('model_switched',(m)=>{
-            currentCfg=m;
-            loadModel(m.path,m);
-            document.getElementById('room-title').textContent=`🤖 ${m.name}`;
-            // 如果工作室开着，刷新一下数据以更新选中状态
-            if(document.getElementById('studio-overlay').style.display==='flex') socket.emit('get_studio_data');
-            showToast(`✨ 已切换为 ${m.name}`);
-        });
-        
+        socket.on('model_switched',(m)=>{currentCfg=m;loadModel(m.path,m);document.getElementById('room-title').textContent=`🤖 ${m.name}`;if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');showToast(`✨ 已切换为 ${m.name}`);});
         document.getElementById('save-settings-btn').onclick=()=>{let r=document.getElementById('rate-range').value,p=document.getElementById('pitch-range').value;socket.emit('save_settings',{id:currentModelId,persona:document.getElementById('persona-text').value,voice:document.getElementById('voice-select').value,rate:(r>=0?'+':'')+r+'%',pitch:(p>=0?'+':'')+p+'Hz',scale:document.getElementById('model-scale').value,x:document.getElementById('model-x').value,y:document.getElementById('model-y').value});};
         window.delModel=(id,e)=>{e.stopPropagation();if(confirm('删除？'))socket.emit('delete_model',{id});};window.dlModel=(n)=>socket.emit('download_model',{name:n});window.uploadFile=(f)=>{let fd=new FormData();fd.append('file',f);showToast("📤 上传中...");fetch('/upload_model',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{if(d.success){showToast("✅ 成功");socket.emit('get_studio_data');}else showToast("❌ "+d.msg,"error")});}
         socket.on('admin_unlocked', () => { iAmAdmin = true; showToast("👑 管理员权限已解锁！"); document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'block'); if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data'); });
         
-        // 历史与记忆逻辑
         const HISTORY_KEY='pico_chat_history';const MEMORY_KEY='pico_user_memories';const HISTORY_LIMIT=200;
         function saveHistory(type,data){let h=JSON.parse(localStorage.getItem(HISTORY_KEY))||[];h.push({type,data,ts:Date.now()});if(h.length>HISTORY_LIMIT)h=h.slice(-HISTORY_LIMIT);localStorage.setItem(HISTORY_KEY,JSON.stringify(h));}
         function loadHistory(){const h=JSON.parse(localStorage.getItem(HISTORY_KEY))||[];document.getElementById('chat-window').innerHTML="";h.forEach(i=>{if(i.type==='chat_message')addMsg(i.data.text,i.data.sender,i.data.sender===myUser?'self':'other');else if(i.type==='response')addMsg(i.data.text,'Pico','pico',i.data.emotion);else if(i.type==='system_message')addMsg(i.data.text,'系统','system');});document.getElementById('chat-window').scrollTop=99999;}
