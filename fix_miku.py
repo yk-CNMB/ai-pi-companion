@@ -4,119 +4,123 @@ import glob
 import shutil
 import re
 
-# 自动定位 live2d 目录
+# 定位 Miku 目录
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LIVE2D_ROOT = os.path.join(BASE_DIR, "static", "live2d")
 
-print("🔧 正在搜索 Miku 模型...")
-
-# 1. 寻找 Miku 文件夹
+print("🔧 正在定位 Miku 模型...")
 target_dir = None
 for root, dirs, files in os.walk(LIVE2D_ROOT):
     for f in files:
         if f.lower().endswith(".model3.json") and "miku" in root.lower():
             target_dir = root
-            print(f"✅ 找到模型目录: {target_dir}")
             break
     if target_dir: break
 
 if not target_dir:
-    print("❌ 未找到 Miku 模型，请确认已上传。")
+    print("❌ 未找到 Miku 文件夹")
     exit()
+print(f"📂 锁定目录: {target_dir}")
 
-# 2. 处理中文文件夹 "表情和动作"
+# 1. 归拢文件夹 (处理乱码目录)
 motions_dir = os.path.join(target_dir, "motions")
-if not os.path.exists(motions_dir):
-    os.makedirs(motions_dir)
+if not os.path.exists(motions_dir): os.makedirs(motions_dir)
 
-chinese_dir_candidates = ["表情和动作", "motions_chn"]
-found_chinese_dir = None
+# 扫描所有子文件夹，把里面的 json 提出来
+for item in os.listdir(target_dir):
+    full_path = os.path.join(target_dir, item)
+    if os.path.isdir(full_path) and item not in ["motions", "livehimeConfig", "MIKU.4096"]:
+        print(f"📦 处理资源文件夹: {item}")
+        for f in os.listdir(full_path):
+            shutil.move(os.path.join(full_path, f), motions_dir)
+        os.rmdir(full_path)
 
-for d in os.listdir(target_dir):
-    # 尝试匹配中文文件夹，或者非标准的文件夹
-    if os.path.isdir(os.path.join(target_dir, d)) and d not in ["livehimeConfig", "MIKU.4096", "motions"]:
-        # 检查里面是不是有 .json 文件
-        if glob.glob(os.path.join(target_dir, d, "*.json")):
-            found_chinese_dir = os.path.join(target_dir, d)
-            print(f"📂 发现资源文件夹: {d}")
-            break
-
-if found_chinese_dir:
-    print("🚚 正在迁移文件...")
-    for f in os.listdir(found_chinese_dir):
-        shutil.move(os.path.join(found_chinese_dir, f), motions_dir)
-    os.rmdir(found_chinese_dir)
-
-# 3. 读取配置文件
+# 2. 读取配置
 config_file = glob.glob(os.path.join(target_dir, "*.model3.json"))[0]
 try:
     with open(config_file, 'r', encoding='utf-8') as f: data = json.load(f)
 except:
     with open(config_file, 'r', encoding='gbk', errors='ignore') as f: data = json.load(f)
 
-# 4. 智能重命名映射表
-# 将中文关键词映射为英文，方便前端调用
-name_map = {
-    "生气": "angry", "愤怒": "angry",
-    "高兴": "happy", "开心": "happy", "爱情": "love",
-    "大哭": "sad",
-    "点头": "nod",
-    "走路": "walk", "扭腰": "twist", "活动身体": "active", "转头": "turn",
-    "渐入睡眠": "sleepy", "装可爱": "cute",
-    "Saihong": "blush", "liuhan": "sweat", "Chijing": "shock", "Mimiyan": "squint", "Dazhihui": "smart"
-}
+# 3. 智能匹配重命名
+# 逻辑：读取 JSON 里的旧文件名 -> 提取特征(数字) -> 在磁盘里找对应文件 -> 重命名
+disk_files = os.listdir(motions_dir)
 
-def sanitize_files(file_list_obj, prefix):
+def sanitize(file_list_obj, type_prefix):
     items = []
     if isinstance(file_list_obj, dict):
         for k, v in file_list_obj.items(): items.extend(v)
     else:
         items = file_list_obj
         
-    for i, item in enumerate(items):
+    for item in items:
         old_path = item.get("File", "")
-        old_filename = os.path.basename(old_path)
+        old_name = os.path.basename(old_path) # e.g. "01_生气.json"
         
-        # 在 motions 目录下找文件
-        old_abs = os.path.join(motions_dir, old_filename)
-        if not os.path.exists(old_abs):
-            continue
+        # 提取特征：开头的数字 (01, 14...) 或 英文关键词 (Saihong)
+        # 如果有数字，优先用数字匹配
+        match_num = re.match(r"^(\d+)", old_name)
+        target_file_on_disk = None
         
-        # 智能生成新名字
-        new_base = f"{prefix}_{i}"
-        for cn, en in name_map.items():
-            if cn in old_filename:
-                new_base = en # 比如 happy
-                # 保留原文件名里的数字编号防止冲突
-                num_match = re.search(r'\d+', old_filename)
-                if num_match:
-                    new_base += f"_{num_match.group()}"
-                break
+        if match_num:
+            num_prefix = match_num.group(1) # "01"
+            # 在磁盘文件里找以 "01" 开头的文件
+            for df in disk_files:
+                if df.startswith(num_prefix):
+                    target_file_on_disk = df
+                    break
+        else:
+            # 尝试模糊匹配 (比如 Saihong)
+            clean_name = re.sub(r'[^\w]', '', old_name.split('.')[0]) # 去掉符号
+            for df in disk_files:
+                if clean_name in df or old_name[:3] in df:
+                    target_file_on_disk = df
+                    break
         
-        new_filename = f"{new_base}.json"
-        if "motion" in prefix: new_filename = f"{new_base}.motion3.json"
-        elif "exp" in prefix: new_filename = f"{new_base}.exp3.json"
+        if target_file_on_disk:
+            # 生成标准新名字
+            ext = ".json"
+            if "motion3" in target_file_on_disk: ext = ".motion3.json"
+            elif "exp3" in target_file_on_disk: ext = ".exp3.json"
+            
+            # 保留数字前缀以便人类阅读，或者用纯英文
+            safe_name = f"{type_prefix}_{target_file_on_disk}"
+            # 简单化：直接用 hash 或者是标准命名
+            # 如果找到了数字，就用 motion_01.json
+            if match_num:
+                safe_name = f"{type_prefix}_{match_num.group(1)}{ext}"
+            else:
+                # 拼音/英文文件直接保留原名的小写版，去乱码
+                safe_base = re.sub(r'[^a-zA-Z0-9]', '', target_file_on_disk.split('.')[0])
+                safe_name = f"{type_prefix}_{safe_base}{ext}"
 
-        new_abs = os.path.join(motions_dir, new_filename)
-        
-        # 重命名文件
-        if old_abs != new_abs:
-            shutil.move(old_abs, new_abs)
-            print(f"✨ {old_filename} -> {new_filename}")
-        
-        # 更新 JSON 引用
-        item["File"] = f"motions/{new_filename}"
+            # 执行重命名
+            src = os.path.join(motions_dir, target_file_on_disk)
+            dst = os.path.join(motions_dir, safe_name)
+            
+            if os.path.exists(src):
+                if src != dst: shutil.move(src, dst)
+                # 更新磁盘缓存列表，防止重复处理
+                if target_file_on_disk in disk_files:
+                    disk_files.remove(target_file_on_disk)
+                    disk_files.append(safe_name)
+                
+                # 更新 JSON
+                item["File"] = f"motions/{safe_name}"
+                print(f"✨ 修复: {old_name} -> {safe_name}")
+        else:
+            print(f"⚠️ 丢失: {old_name} (磁盘上没找到对应文件)")
 
-print("\n🔄 处理动作文件...")
+print("🔄 处理动作...")
 if "Motions" in data.get("FileReferences", {}):
-    sanitize_files(data["FileReferences"]["Motions"], "motion")
+    sanitize(data["FileReferences"]["Motions"], "motion")
 
-print("\n🔄 处理表情文件...")
+print("🔄 处理表情...")
 if "Expressions" in data.get("FileReferences", {}):
-    sanitize_files(data["FileReferences"]["Expressions"], "exp")
+    sanitize(data["FileReferences"]["Expressions"], "exp")
 
-# 保存
+# 4. 保存
 with open(config_file, 'w', encoding='utf-8') as f:
     json.dump(data, f, indent=2, ensure_ascii=False)
 
-print("\n✅ Miku 修复完成！现在浏览器可以加载了。")
+print("\n✅ 修复完成！")
