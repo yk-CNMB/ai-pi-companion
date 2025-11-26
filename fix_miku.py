@@ -1,158 +1,103 @@
 import os
 import json
-import shutil
 import glob
+import shutil
 
 # --- 配置 ---
-# 这里指向你的 miku 文件夹
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_ROOT = os.path.join(BASE_DIR, "static", "live2d", "miku")
-# ----------------
+LIVE2D_DIR = os.path.join(BASE_DIR, "static", "live2d")
+# 假设只有一个 miku 文件夹，自动寻找
+miku_candidates = glob.glob(os.path.join(LIVE2D_DIR, "*miku*"))
+if not miku_candidates:
+    # 如果没找到带 miku 的，就找所有文件夹
+    miku_candidates = [d for d in glob.glob(os.path.join(LIVE2D_DIR, "*")) if os.path.isdir(d)]
 
-print(f"🔧 正在修复 Miku 模型路径: {MODEL_ROOT}")
-
-if not os.path.exists(MODEL_ROOT):
-    print(f"❌ 错误：找不到目录 {MODEL_ROOT}")
-    print("请确认你的 miku 文件夹名字是小写的 'miku' 还是大写的 'MIKU'？")
-    # 尝试自动纠错大小写
-    parent = os.path.dirname(MODEL_ROOT)
-    if os.path.exists(os.path.join(parent, "MIKU")):
-        MODEL_ROOT = os.path.join(parent, "MIKU")
-        print(f"⚠️ 已自动修正为: {MODEL_ROOT}")
-    else:
-        exit()
-
-# 1. 处理中文文件夹 "表情和动作"
-# 目标是将它改名为 "motions"
-CHINESE_DIR_NAME = "表情和动作"
-TARGET_DIR_NAME = "motions"
-
-old_motion_dir = os.path.join(MODEL_ROOT, CHINESE_DIR_NAME)
-new_motion_dir = os.path.join(MODEL_ROOT, TARGET_DIR_NAME)
-
-# 尝试寻找各种可能的乱码名，或者直接找中文名
-found_dir = False
-if os.path.exists(old_motion_dir):
-    print(f"✅ 发现中文文件夹: {CHINESE_DIR_NAME}")
-    if os.path.exists(new_motion_dir):
-        print("   (motions 文件夹已存在，准备合并)")
-    else:
-        os.rename(old_motion_dir, new_motion_dir)
-        print(f"✅ 已重命名为: {TARGET_DIR_NAME}")
-    found_dir = True
-elif os.path.exists(new_motion_dir):
-    print("✅ 文件夹已经是 motions 了，继续检查文件...")
-    found_dir = True
-else:
-    # 暴力搜索：找那个不是 livehimeConfig 且包含 json 的文件夹
-    print("⚠️ 未找到标准中文文件夹，尝试智能搜索...")
-    for item in os.listdir(MODEL_ROOT):
-        full_path = os.path.join(MODEL_ROOT, item)
-        if os.path.isdir(full_path) and item not in ["livehimeConfig", "MIKU.4096", "motions"]:
-            # 检查里面有没有 json
-            if glob.glob(os.path.join(full_path, "*.json")):
-                print(f"🧐 发现疑似动作文件夹: {item}")
-                os.rename(full_path, new_motion_dir)
-                print(f"✅ 强制重命名为: {TARGET_DIR_NAME}")
-                found_dir = True
-                break
-
-if not found_dir:
-    print("❌ 无法定位动作文件夹，请手动检查目录结构。")
+if not miku_candidates:
+    print("❌ 错误：static/live2d 下没有找到任何模型文件夹！")
     exit()
 
-# 2. 读取并修改 .model3.json
+MODEL_ROOT = miku_candidates[0] # 取第一个找到的
+print(f"🔧 锁定模型目录: {MODEL_ROOT}")
+
+# 1. 文件夹标准化 (把中文文件夹改名为 motions)
+target_motion_dir = os.path.join(MODEL_ROOT, "motions")
+if not os.path.exists(target_motion_dir):
+    os.makedirs(target_motion_dir)
+
+# 扫描目录下所有子文件夹，寻找存放 json 的那个（通常是中文名）
+for item in os.listdir(MODEL_ROOT):
+    full_path = os.path.join(MODEL_ROOT, item)
+    if os.path.isdir(full_path) and item not in ["motions", "livehimeConfig", "MIKU.4096"]:
+        # 检查里面是否有 json
+        if glob.glob(os.path.join(full_path, "*.json")):
+            print(f"📦 发现资源文件夹: {item} -> 正在迁移...")
+            # 把里面的文件全部移到 motions
+            for f in os.listdir(full_path):
+                shutil.move(os.path.join(full_path, f), target_motion_dir)
+            os.rmdir(full_path)
+            print("✅ 迁移完成")
+
+# 2. 读取配置文件
 json_files = glob.glob(os.path.join(MODEL_ROOT, "*.model3.json"))
 if not json_files:
-    print("❌ 找不到 .model3.json 配置文件")
+    print("❌ 找不到 .model3.json")
     exit()
-
 config_file = json_files[0]
-print(f"📄 读取配置: {os.path.basename(config_file)}")
 
 try:
-    with open(config_file, 'r', encoding='utf-8') as f:
-        data = json.load(f)
+    with open(config_file, 'r', encoding='utf-8') as f: data = json.load(f)
 except:
-    # 尝试 GBK (防乱码)
-    with open(config_file, 'r', encoding='gbk', errors='ignore') as f:
-        data = json.load(f)
+    with open(config_file, 'r', encoding='gbk', errors='ignore') as f: data = json.load(f)
 
-# 3. 遍历动作和表情，重命名文件并更新引用
-# 这一步最关键：我们要把 data 里的引用和磁盘上的文件同步修改
-
-def process_files(file_list_dict, type_name):
+# 3. 暴力重命名逻辑
+def rename_and_update(file_list_obj, prefix):
     """
-    file_list_dict: 比如 data['FileReferences']['Motions']
-    type_name: 'motion' 或 'exp'
+    遍历列表/字典，重命名物理文件，并更新 JSON 引用
     """
-    if not file_list_dict: return
+    count = 0
     
-    count = 1
-    print(f"\n🔄 处理 {type_name}...")
-    
-    # 如果是 Motions，它是  Group -> List -> Item
-    # 如果是 Expressions，它是 List -> Item
-    
-    # 统一处理逻辑：找到旧路径 -> 生成新路径 -> 重命名 -> 更新 JSON
-    
-    # 辅助函数：处理单个文件条目
-    def handle_item(item_data):
-        nonlocal count
-        old_rel_path = item_data.get("File", "")
-        if not old_rel_path: return
-        
-        # 无论旧路径写的是 "表情和动作/xx" 还是 "motions/xx"
-        # 我们都去 new_motion_dir (也就是现在的 motions 文件夹) 里找
-        old_filename = os.path.basename(old_rel_path)
-        current_abs_path = os.path.join(new_motion_dir, old_filename)
-        
-        if not os.path.exists(current_abs_path):
-            print(f"   ⚠️ 丢失: {old_filename} (跳过)")
-            return
-
-        # 生成纯英文新名字
-        ext = old_filename.split('.')[-1]
-        # 简单起见，动作叫 m_01.json, 表情叫 e_01.json
-        # 实际上你的文件通常是 .motion3.json
-        new_filename = f"{type_name}_{count:02d}_{uuid.uuid4().hex[:4]}.json"
-        if "motion3.json" in old_filename:
-             new_filename = f"{type_name}_{count:02d}.motion3.json"
-        
-        new_abs_path = os.path.join(new_motion_dir, new_filename)
-        
-        # 重命名文件
-        os.rename(current_abs_path, new_abs_path)
-        
-        # 更新 JSON 配置
-        item_data["File"] = f"{TARGET_DIR_NAME}/{new_filename}"
-        print(f"   ✨ {old_filename} -> {new_filename}")
-        count += 1
-
-    # 开始遍历
-    if isinstance(file_list_dict, dict): # Motions 是字典
-        for group, items in file_list_dict.items():
-            print(f"  📂 分组: {group}")
+    # 统一转为列表处理 (因为 Motions 是字典，Expressions 是列表)
+    items_to_process = []
+    if isinstance(file_list_obj, dict):
+        for group, items in file_list_obj.items():
             for item in items:
-                handle_item(item)
-    elif isinstance(file_list_dict, list): # Expressions 是列表
-        for item in file_list_dict:
-            handle_item(item)
+                items_to_process.append(item)
+    elif isinstance(file_list_obj, list):
+        items_to_process = file_list_obj
 
-import uuid
+    for item in items_to_process:
+        old_rel_path = item.get("File", "")
+        if not old_rel_path: continue
+        
+        old_name = os.path.basename(old_rel_path)
+        # 在 motions 目录下找文件
+        old_abs_path = os.path.join(target_motion_dir, old_name)
+        
+        if os.path.exists(old_abs_path):
+            new_name = f"{prefix}_{count:02d}.json"
+            new_abs_path = os.path.join(target_motion_dir, new_name)
+            
+            # 重命名物理文件
+            if old_abs_path != new_abs_path:
+                shutil.move(old_abs_path, new_abs_path)
+            
+            # 更新 JSON
+            item["File"] = f"motions/{new_name}"
+            print(f"   ✨ {old_name} -> {new_name}")
+            count += 1
 
-# 处理动作
+# 执行重命名
+print("\n🔄 处理动作 (Motions)...")
 if "Motions" in data.get("FileReferences", {}):
-    process_files(data["FileReferences"]["Motions"], "motion")
+    rename_and_update(data["FileReferences"]["Motions"], "motion")
 
-# 处理表情
+print("\n🔄 处理表情 (Expressions)...")
 if "Expressions" in data.get("FileReferences", {}):
-    process_files(data["FileReferences"]["Expressions"], "exp")
+    rename_and_update(data["FileReferences"]["Expressions"], "exp")
 
-# 4. 保存修改后的配置
+# 4. 保存配置
 with open(config_file, 'w', encoding='utf-8') as f:
     json.dump(data, f, indent=2, ensure_ascii=False)
 
-print("\n✅ 修复完成！所有中文路径已标准化。")
-print("请刷新网页，应该能看到模型了。")
-
+print("\n✅ 修复完毕！文件名已全部标准化。")
+print("请刷新网页查看效果。")
