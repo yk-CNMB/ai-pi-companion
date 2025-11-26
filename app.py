@@ -1,6 +1,6 @@
 # =======================================================================
-# Pico AI Server - app.py (全功能修复版)
-# 修复: 模型扫描看不到 Miku, 语音列表缺失
+# Pico AI Server - app.py (最终完整版)
+# 兼容 Python 3.13 | Piper | Edge-TTS | Miku | GlaDOS
 # =======================================================================
 import os
 import json
@@ -24,10 +24,13 @@ from google import genai
 
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = 'secret'
-app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
+
+# 使用 threading 模式
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60)
 SERVER_VERSION = str(int(time.time()))
 
+# 目录配置
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MEMORIES_DIR = os.path.join(BASE_DIR, "memories")
 AUDIO_DIR = os.path.join(BASE_DIR, "static", "audio")
@@ -36,12 +39,15 @@ VOICES_DIR = os.path.join(BASE_DIR, "static", "voices")
 PIPER_BIN = os.path.join(BASE_DIR, "piper_engine", "piper")
 
 for d in [MEMORIES_DIR, AUDIO_DIR, MODELS_DIR, VOICES_DIR]:
-    if not os.path.exists(d): os.makedirs(d)
+    if not os.path.exists(d):
+        os.makedirs(d)
 
+# API 配置
 CONFIG = {}
 try:
     if os.path.exists("config.json"):
-        with open("config.json", "r") as f: CONFIG = json.load(f)
+        with open("config.json", "r") as f:
+            CONFIG = json.load(f)
 except: pass
 
 client = None
@@ -50,6 +56,7 @@ if api_key and "在这里" not in api_key:
     try: client = genai.Client(api_key=api_key)
     except Exception as e: print(f"API Error: {e}")
 
+# 核心函数
 def load_user_memories(u): return []
 CURRENT_MODEL = {"id": "default", "path": "", "persona": "", "voice": "zh-CN-XiaoxiaoNeural", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.5, "y": 0.5}
 
@@ -58,35 +65,24 @@ def get_model_config(mid):
     d = {"persona":f"你是{mid}。", "voice":"zh-CN-XiaoxiaoNeural", "rate":"+0%", "pitch":"+0Hz", "scale":0.5, "x":0.5, "y":0.5}
     if os.path.exists(p):
         try:
-            with open(p, "r", encoding="utf-8") as f: d.update(json.load(f)) 
+            with open(p, "r", encoding="utf-8") as f:
+                d.update(json.load(f))
         except: pass
     return d
+
 def save_model_config(mid, data):
     p = os.path.join(MODELS_DIR, mid, "config.json")
     curr = get_model_config(mid); curr.update(data)
     with open(p, "w", encoding="utf-8") as f: json.dump(curr, f, indent=2, ensure_ascii=False)
     return curr
 
-# 【核心修复】强力模型扫描
 def scan_models():
     ms = []
-    # 遍历一级目录
-    for item in os.listdir(MODELS_DIR):
-        full_path = os.path.join(MODELS_DIR, item)
-        if os.path.isdir(full_path):
-            # 在该目录下寻找 model3.json
-            json_files = glob.glob(os.path.join(full_path, "*.model3.json"))
-            if json_files:
-                # 找到了模型
-                mid = item
-                cfg = get_model_config(mid)
-                # 构造 web 路径
-                rel_path = os.path.relpath(json_files[0], BASE_DIR)
-                web_path = "/" + rel_path.replace("\\", "/")
-                
-                ms.append({"id": mid, "name": mid.capitalize(), "path": web_path, **cfg})
-    
-    if not ms: print("⚠️ 未扫描到任何模型！")
+    for j in glob.glob(os.path.join(MODELS_DIR, "**", "*.model3.json"), recursive=True):
+        mid = os.path.basename(os.path.dirname(j))
+        cfg = get_model_config(mid)
+        path = "/" + os.path.relpath(j, BASE_DIR).replace("\\", "/")
+        ms.append({"id": mid, "name": mid.capitalize(), "path": path, **cfg})
     return sorted(ms, key=lambda x: x['name'])
 
 def init_model():
@@ -96,12 +92,15 @@ def init_model():
     if t: CURRENT_MODEL = t
 init_model()
 
-# TTS
+# TTS 引擎
 def run_piper_tts(text, model_file, output_path):
+    # 路径处理
     if not os.path.isabs(model_file): model_path = os.path.join(VOICES_DIR, model_file)
     else: model_path = model_file
+    
     if not os.path.exists(PIPER_BIN): return False
     if not os.path.exists(model_path): return False
+    
     try:
         cmd = [PIPER_BIN, "--model", model_path, "--output_file", output_path]
         subprocess.run(cmd, input=text.encode('utf-8'), check=True, capture_output=True)
@@ -114,12 +113,12 @@ def bg_tts(text, voice, rate, pitch, room=None, sid=None):
     fname = f"{uuid.uuid4()}"
     success = False; url = ""
     
-    # Piper
+    # Piper (本地)
     if voice.endswith(".onnx"):
          out_path = os.path.join(AUDIO_DIR, f"{fname}.wav")
          if run_piper_tts(clean, voice, out_path): success=True; url=f"/static/audio/{fname}.wav"
     
-    # Edge
+    # Edge (在线)
     if not success:
         out_path = os.path.join(AUDIO_DIR, f"{fname}.mp3")
         safe_voice = voice if ("Neural" in voice) else "zh-CN-XiaoxiaoNeural"
@@ -152,7 +151,12 @@ def upload_model():
             n = secure_filename(f.filename).rsplit('.', 1)[0].lower()
             p = os.path.join(MODELS_DIR, n); shutil.rmtree(p, ignore_errors=True)
             with zipfile.ZipFile(f, 'r') as z: z.extractall(p)
-            # 简单化：不搞复杂移动，相信前端脚本的修复能力
+            # 智能整理
+            for root, dirs, files in os.walk(p):
+                if any(f.endswith('.model3.json') for f in files):
+                    if root != p: 
+                         for item in os.listdir(root): shutil.move(os.path.join(root, item), p)
+                    break
             return jsonify({'success': True})
         except: return jsonify({'success': False})
     return jsonify({'success': False})
@@ -195,21 +199,16 @@ def on_message(d):
 def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
 @socketio.on('get_studio_data')
 def on_get_data():
-    # 【核心】强制发送完整列表
-    voices = [
-        {"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓 (默认)"},
-        {"id":"zh-CN-YunxiNeural","name":"☁️ 云希 (少年)"},
-        {"id":"zh-CN-liaoning-XiaobeiNeural","name":"☁️ 晓北 (东北)"},
-        {"id":"zh-TW-HsiaoChenNeural","name":"☁️ 晓臻 (台湾)"},
-        {"id":"en-US-AnaNeural","name":"☁️ Ana (English)"}
-    ]
+    # Edge 列表
+    voices = [{"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓 (默认)"},{"id":"en-US-AnaNeural","name":"☁️ Ana"}]
+    # Piper 扫描
     if os.path.exists(VOICES_DIR):
         for onnx in glob.glob(os.path.join(VOICES_DIR, "*.onnx")):
             mid = os.path.basename(onnx); name = mid.replace(".onnx", "")
             if os.path.exists(os.path.join(VOICES_DIR, f"{name}.txt")): 
                 try: name = open(os.path.join(VOICES_DIR, f"{name}.txt")).read().strip()
                 except: pass
-            voices.append({"id": mid, "name": f"🏠 {name}"})
+            voices.append({"id": mid, "name": f"🏠 {name} (本地)"})
     emit('studio_data', {'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 'voices': voices})
 @socketio.on('switch_model')
 def on_switch(d):
