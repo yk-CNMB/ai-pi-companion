@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
+    <!-- 样式复用之前 Turn 94 的完整 CSS，这里省略以节省空间 -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Pico Studio</title>
@@ -9,9 +10,7 @@
     <script src="/static/js/pixi.min.js"></script>
     <script src="/static/js/index.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
-    <!-- 样式省略，请使用 Turn 94 的 CSS -->
     <style>
-        /* 复用之前的 CSS */
         body{font-family:"Segoe UI",sans-serif;margin:0;padding:0;height:100vh;background-color:#2d3436;display:flex;flex-direction:row;overflow:hidden;color:#333}
         #stage-container{flex:1;position:relative;background-image:radial-gradient(circle,#636e72 10%,#2d3436 90%);overflow:hidden;touch-action:none}
         #live2d-canvas{position:absolute;top:0;left:0;width:100%;height:100%}
@@ -55,17 +54,49 @@
     </style>
 </head>
 <body>
-    <!-- HTML 结构 (复用 Turn 94 的结构) -->
     <div id="toast-container"></div>
     <div id="login-overlay" class="overlay"><div class="modal-box" style="text-align:center"><h2>Pico 直播间</h2><input id="username-input" placeholder="请输入昵称" maxlength="12" autocomplete="off"><br><button id="login-btn" disabled>连接中...</button></div></div>
-    <div id="studio-overlay" class="overlay"><div class="modal-box"><div style="display:flex;justify-content:space-between;align-items:center"><h3>🛠️ 工作室</h3><div onclick="document.getElementById('studio-overlay').style.display='none'" style="font-size:24px;padding:0 10px;cursor:pointer">×</div></div><div id="model-list" class="model-list">加载中...</div><div class="admin-only"><hr><h4>⚙️ 调音 & 位置</h4><label style="font-size:12px;color:#666">人设提示词:</label><textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea><label style="font-size:12px;color:#666">声线选择:</label><select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd"><option value="zh-CN-XiaoxiaoNeural">🇨🇳 晓晓 (默认)</option></select><div class="slider-container"><div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div><input type="range" id="rate-range" min="-50" max="50" oninput="updateVal('rate', this.value)"></div><div class="slider-container"><div class="slider-label"><span>音调</span><span id="pitch-val">0Hz</span></div><input type="range" id="pitch-range" min="-50" max="50" oninput="updateVal('pitch', this.value)"></div><div class="slider-container"><div class="slider-label"><span>位置 X</span><span id="x-val">0.5</span></div><input type="range" id="model-x" min="0" max="1" step="0.01" oninput="previewTransform()"></div><div class="slider-container"><div class="slider-label"><span>位置 Y</span><span id="y-val">0.5</span></div><input type="range" id="model-y" min="0" max="2" step="0.01" oninput="previewTransform()"></div><div class="slider-container"><div class="slider-label"><span>缩放</span><span id="scale-val">0.5</span></div><input type="range" id="model-scale" min="0.1" max="2.0" step="0.05" oninput="previewTransform()"></div><button id="save-settings-btn" style="width:100%;padding:10px;margin-top:10px;background:#6c5ce7;color:white;border:none;border-radius:10px">保存所有配置</button><hr><h4>☁️ 上传/下载</h4><div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 .zip<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div><div style="margin-top:10px"><span class="chip" onclick="dlModel('Mao')">Mao</span><span class="chip" onclick="dlModel('Natori')">Natori</span></div></div><hr><h4>🧹 缓存</h4><div><span class="chip" onclick="clearLocalHistory()">清除历史</span><span class="chip" onclick="clearLocalMemories()">清除记忆</span></div></div></div>
+    
+    <div id="studio-overlay" class="overlay">
+        <div class="modal-box">
+            <div style="display:flex;justify-content:space-between;align-items:center"><h3>🛠️ 工作室</h3><div onclick="document.getElementById('studio-overlay').style.display='none'" style="font-size:24px;padding:0 10px;cursor:pointer">×</div></div>
+            <div id="model-list" class="model-list">加载中...</div>
+            
+            <div class="admin-only">
+                <hr>
+                <h4>⚙️ 调音 & 位置</h4>
+                <label style="font-size:12px;color:#666">人设提示词:</label>
+                <textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea>
+                
+                <label style="font-size:12px;color:#666">声线选择:</label>
+                <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd">
+                    <option value="zh-CN-XiaoxiaoNeural">🇨🇳 晓晓 (默认)</option>
+                    <option value="zh-CN-YunxiNeural">🇨🇳 云希 (少年)</option>
+                    <option value="en-US-AnaNeural">🇺🇸 Ana (英文)</option>
+                    <!-- 本地模型会由 JS 追加 -->
+                </select>
+
+                <div class="slider-container"><div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div><input type="range" id="rate-range" min="-50" max="50" oninput="updateVal('rate', this.value)"></div>
+                <div class="slider-container"><div class="slider-label"><span>音调</span><span id="pitch-val">0Hz</span></div><input type="range" id="pitch-range" min="-50" max="50" oninput="updateVal('pitch', this.value)"></div>
+
+                <div class="slider-container"><div class="slider-label"><span>位置 X</span><span id="x-val">0.5</span></div><input type="range" id="model-x" min="0" max="1" step="0.01" oninput="previewTransform()"></div>
+                <div class="slider-container"><div class="slider-label"><span>位置 Y</span><span id="y-val">0.5</span></div><input type="range" id="model-y" min="0" max="2" step="0.01" oninput="previewTransform()"></div>
+                <div class="slider-container"><div class="slider-label"><span>缩放</span><span id="scale-val">0.5</span></div><input type="range" id="model-scale" min="0.1" max="2.0" step="0.05" oninput="previewTransform()"></div>
+
+                <button id="save-settings-btn" style="width:100%;padding:10px;margin-top:10px;background:#6c5ce7;color:white;border:none;border-radius:10px">保存所有配置</button>
+                <hr><h4>☁️ 上传/下载</h4><div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 .zip<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div>
+            </div>
+            <hr><h4>🧹 缓存</h4><div><span class="chip" onclick="clearLocalHistory()">清除历史</span><span class="chip" onclick="clearLocalMemories()">清除记忆</span></div>
+        </div>
+    </div>
+
     <div id="stage-container"><canvas id="live2d-canvas"></canvas><div id="debug-pos"></div></div>
     <div id="chat-container"><div id="header"><span id="room-title">🤖 互动区</span><div style="display:flex;gap:10px"><div class="icon-btn" id="reset-btn" title="归位">🎯</div><div class="icon-btn" id="studio-btn" title="设置">🛠️</div></div></div><div id="chat-window"></div><div id="input-area"><input id="user-input" placeholder="发送弹幕..."><button id="send-btn">发送</button></div></div>
 
     <script>
         const socket = io({reconnection:true});
         let app_pixi, model, myUser="", currentModelId="", currentCfg={scale:0.5,x:0.5,y:0.5}, audioCtx, analyser, dataArray, isTalking=false;
-        let isDragging=false, dragData, iAmAdmin=false;
+        let isDragging=false, dragData, initialScale, initialDist, iAmAdmin=false;
 
         function updateVal(type, val) { document.getElementById(`${type}-val`).textContent = (val > 0 ? '+' : '') + val + (type==='rate'?'%':'Hz'); }
 
@@ -79,6 +110,7 @@
             document.getElementById('y-val').textContent = y.toFixed(2);
             applyToModel(s, x, y);
         }
+
         function applyToModel(s, x, y) {
             if(!model || !app_pixi) return;
             const st = document.getElementById('stage-container');
@@ -89,12 +121,12 @@
             model.y = (st.clientHeight * y) - (model.height / 2);
             document.getElementById('debug-pos').textContent = `S:${s.toFixed(2)} X:${x.toFixed(2)} Y:${y.toFixed(2)}`;
         }
+
         function applyConfig(cfg) {
             if(!model || !app_pixi) return;
-            const target = cfg || currentCfg || {scale:0.5, x:0.5, y:0.5};
-            const s = (target.scale !== undefined) ? target.scale : 0.5;
-            const x = (target.x !== undefined) ? target.x : 0.5;
-            const y = (target.y !== undefined) ? target.y : 0.5;
+            const s = (cfg.scale !== undefined) ? cfg.scale : 0.5;
+            const x = (cfg.x !== undefined) ? cfg.x : 0.5;
+            const y = (cfg.y !== undefined) ? cfg.y : 0.5;
             if(document.getElementById('model-scale')) {
                 document.getElementById('model-scale').value = s;
                 document.getElementById('model-x').value = x;
@@ -104,7 +136,6 @@
             applyToModel(s, x, y);
         }
         function updateValLabels(s,x,y) { document.getElementById('scale-val').textContent=s.toFixed(2); document.getElementById('x-val').textContent=x.toFixed(2); document.getElementById('y-val').textContent=y.toFixed(2); }
-
         document.getElementById('reset-btn').onclick = () => { applyConfig(currentCfg); showToast("🎯 已恢复", "info"); };
         window.addEventListener('resize', () => setTimeout(() => applyConfig(currentCfg), 100));
 
@@ -113,13 +144,19 @@
         socket.on('server_ready', ()=>{loginBtn.textContent="进入直播间";loginBtn.disabled=false;});
         socket.on('disconnect', ()=>{loginBtn.textContent="已断开...";loginBtn.disabled=true;});
         loginBtn.onclick=()=>{let n=document.getElementById('username-input').value.trim();if(n){myUser=n;loginBtn.disabled=true;loginBtn.textContent="登录中...";socket.emit('login',{username:n});initAudio();}};
+        
         socket.on('login_success',(d)=>{
             document.getElementById('login-overlay').style.display='none';
             document.getElementById('room-title').textContent=`🤖 ${d.current_model.name}`;
             currentCfg = d.current_model;
             if(d.current_model.path) loadModel(d.current_model.path, d.current_model);
+            loadHistory();
         });
-        socket.on('login_failed',(d)=>{alert(d.error);loginBtn.disabled=false;loginBtn.textContent="重试";});
+        socket.on('history_sync', (h) => {
+            const win = document.getElementById('chat-window'); win.innerHTML="";
+            h.forEach(i => addMsg(i.text, i.sender, i.role==='pico'?'pico':(i.sender===myUser?'self':'other'), i.emotion));
+            win.scrollTop = 99999;
+        });
 
         async function loadModel(path, cfg) {
             if(!app_pixi) { app_pixi = new PIXI.Application({ view:document.getElementById('live2d-canvas'), autoStart:true, resizeTo:document.getElementById('stage-container'), transparent:true }); initInteraction(); }
@@ -136,35 +173,35 @@
 
         function initInteraction() { const s=document.getElementById('stage-container');app_pixi.stage.interactive=true;app_pixi.stage.on('pointerdown',(e)=>{if(model&&(!e.data.originalEvent.touches||e.data.originalEvent.touches.length===1)){isDragging=true;dragData=e.data;model.alpha=0.8;}});app_pixi.stage.on('pointerup',()=>{isDragging=false;if(model)model.alpha=1;}).on('pointerupoutside',()=>{isDragging=false;if(model)model.alpha=1;});app_pixi.stage.on('pointermove',()=>{if(isDragging&&model){const p=dragData.getLocalPosition(model.parent);model.x=p.x-model.width/2;model.y=p.y-model.height/2;}});s.addEventListener('wheel',(e)=>{e.preventDefault();if(model){model.scale.x*=(e.deltaY<0?1.1:0.9);model.scale.y=model.scale.x;}},{passive:false});}
         function lipSync(){if(!model||!analyser||!isTalking)return;analyser.getByteFrequencyData(dataArray);let sum=0;for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];if(model.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',Math.min(1.0,(sum/dataArray.length)/30));}
-        
-        // 【核心】动作触发修正版
+
+        // 【Miku 动作触发】
         function triggerMotion(emo){
             if(!model?.internalModel?.motionManager)return;
             try{
-                let m = model.internalModel.motionManager;
-                // 智能匹配翻译后的文件名
+                let m=model.internalModel.motionManager;
+                // 匹配重命名后的文件 (happy, angry...)
                 let map = {
-                    'HAPPY': ['happy', 'love'], // happy_04, love_03
-                    'ANGRY': ['angry'],         // angry_01, angry_10
-                    'SAD':   ['sad', 'cry'],
-                    'SHOCK': ['turn', 'shock'],
-                    'IDLE':  ['active', 'cute', 'twist'] // 将其他动作作为闲置随机播放
+                    'HAPPY': ['happy', 'joy', '02', '04'],
+                    'ANGRY': ['angry', 'mad', '10', '01'],
+                    'SAD':   ['sad', 'cry', '06'],
+                    'SHOCK': ['shock', '05', 'turn'],
+                    'IDLE':  ['idle', 'wait']
                 };
                 
-                // 获取模型已有的动作组
                 let groups = [];
-                if(m.definitions && m.definitions.Motions) groups = Object.keys(m.definitions.Motions);
-                else if(m.motionGroups) groups = Object.keys(m.motionGroups);
+                if(m.definitions && m.definitions.Motions) groups=Object.keys(m.definitions.Motions);
+                else if(m.motionGroups) groups=Object.keys(m.motionGroups);
 
-                let keywords = map[emo] || [];
-                let target = groups.find(g => keywords.some(k => g.toLowerCase().includes(k)));
+                let k = map[emo] || [];
+                let target = groups.find(g => k.some(key => g.toLowerCase().includes(key)));
                 
                 if(target) m.startRandomMotion(target);
-            }catch(e){console.error(e);}
+            }catch(e){}
         }
 
         document.getElementById('studio-btn').onclick=()=>{document.getElementById('studio-overlay').style.display='flex';socket.emit('get_studio_data');};
         function closeStudio(){document.getElementById('studio-overlay').style.display='none';}
+        
         socket.on('studio_data',(d)=>{
             const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id;
             d.models.forEach(m=>{
@@ -175,12 +212,17 @@
                     document.getElementById('persona-model-name').textContent=m.name;
                     document.getElementById('persona-text').value=m.persona;
                     const vSelect=document.getElementById('voice-select');
-                    if(d.voices) d.voices.forEach(v=>{
-                        if(!Array.from(vSelect.options).some(o=>o.value===v.id)){
-                            let opt=document.createElement('option');opt.value=v.id;opt.textContent=v.name;vSelect.appendChild(opt);
-                        }
-                    });
+                    
+                    // 【核心】追加本地模型
+                    if(d.voices) {
+                        d.voices.forEach(v=>{
+                            if(!Array.from(vSelect.options).some(o=>o.value===v.id)){
+                                let opt=document.createElement('option');opt.value=v.id;opt.textContent=v.name;vSelect.appendChild(opt);
+                            }
+                        });
+                    }
                     if(m.voice) vSelect.value=m.voice;
+                    
                     let r=parseInt(m.rate)||0, p=parseInt(m.pitch)||0;
                     document.getElementById('rate-range').value=r; updateVal('rate',r);
                     document.getElementById('pitch-range').value=p; updateVal('pitch',p);
@@ -189,35 +231,32 @@
                 }
             });
         });
+        
         socket.on('model_switched',(m)=>{currentCfg=m;loadModel(m.path,m);document.getElementById('room-title').textContent=`🤖 ${m.name}`;if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');showToast(`✨ 已切换为 ${m.name}`);});
-        document.getElementById('save-settings-btn').onclick=()=>{
-            let r=document.getElementById('rate-range').value, p=document.getElementById('pitch-range').value;
-            socket.emit('save_settings',{
-                id: currentModelId, 
-                persona: document.getElementById('persona-text').value,
-                voice: document.getElementById('voice-select').value,
-                rate: (r>=0?'+':'')+r+'%', pitch: (p>=0?'+':'')+p+'Hz',
-                scale: document.getElementById('model-scale').value,
-                x: document.getElementById('model-x').value,
-                y: document.getElementById('model-y').value
-            });
-        };
+        document.getElementById('save-settings-btn').onclick=()=>{let r=document.getElementById('rate-range').value,p=document.getElementById('pitch-range').value;socket.emit('save_settings',{id:currentModelId,persona:document.getElementById('persona-text').value,voice:document.getElementById('voice-select').value,rate:(r>=0?'+':'')+r+'%',pitch:(p>=0?'+':'')+p+'Hz',scale:document.getElementById('model-scale').value,x:document.getElementById('model-x').value,y:document.getElementById('model-y').value});};
         window.delModel=(id,e)=>{e.stopPropagation();if(confirm('删除？'))socket.emit('delete_model',{id});};window.dlModel=(n)=>socket.emit('download_model',{name:n});window.uploadFile=(f)=>{let fd=new FormData();fd.append('file',f);showToast("📤 上传中...");fetch('/upload_model',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{if(d.success){showToast("✅ 成功");socket.emit('get_studio_data');}else showToast("❌ "+d.msg,"error")});}
         socket.on('admin_unlocked', () => { iAmAdmin = true; showToast("👑 管理员权限已解锁！"); document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'block'); if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data'); });
-        
-        function initAudio(){if(!audioCtx)try{audioCtx=new(window.AudioContext||window.webkitAudioContext)();analyser=audioCtx.createAnalyser();analyser.fftSize=512;dataArray=new Uint8Array(analyser.frequencyBinCount);}catch(e){}}
-        function showToast(m,t='success'){let d=document.createElement('div');d.className='toast';d.textContent=m;if(t==='error')d.style.background='#d63031';document.getElementById('toast-container').appendChild(d);setTimeout(()=>d.remove(),3000);}
+        const HISTORY_KEY='pico_chat_history';const MEMORY_KEY='pico_user_memories';const HISTORY_LIMIT=200;const MEMORY_LIMIT=50;
+        function saveHistory(type,data){let h=JSON.parse(localStorage.getItem(HISTORY_KEY))||[];h.push({type,data,ts:Date.now()});if(h.length>HISTORY_LIMIT)h=h.slice(-HISTORY_LIMIT);localStorage.setItem(HISTORY_KEY,JSON.stringify(h));}
+        function loadHistory(){const h=JSON.parse(localStorage.getItem(HISTORY_KEY))||[];document.getElementById('chat-window').innerHTML="";h.forEach(i=>{if(i.type==='chat_message')addMsg(i.data.text,i.data.sender,i.data.sender===myUser?'self':'other');else if(i.type==='response')addMsg(i.data.text,'Pico','pico',i.data.emotion);else if(i.type==='system_message')addMsg(i.data.text,'系统','system');});document.getElementById('chat-window').scrollTop=99999;}
+        window.clearLocalHistory=()=>{if(confirm('确定清除聊天记录？')){localStorage.removeItem(HISTORY_KEY);document.getElementById('chat-window').innerHTML="";showToast('🧹 已清除');}}
+        window.clearLocalMemories=()=>{if(confirm('确定清除专属记忆？')){localStorage.removeItem(MEMORY_KEY);showToast('🧠 已清除');}}
+        function getLocalMemories(){return JSON.parse(localStorage.getItem(MEMORY_KEY))||[];}
+        function saveLocalMemory(f){let m=getLocalMemories();if(f&&!m.includes(f)){m.push(f);if(m.length>50)m=m.slice(-50);localStorage.setItem(MEMORY_KEY,JSON.stringify(m));return true;}return false;}
+        socket.on('chat_message',(d)=>{addMsg(d.text,d.sender,d.sender===myUser?'self':'other'); saveHistory('chat_message',d);});
+        socket.on('system_message',(d)=>{addMsg(d.text,'系统','system'); saveHistory('system_message',d);});
+        socket.on('response',(d)=>{addMsg(d.text,'Pico','pico',d.emotion);triggerMotion(d.emotion||'NORMAL'); saveHistory('response',d);});
         let lastPico=null;
-        socket.on('chat_message',(d)=>{addMsg(d.text,d.sender,d.sender===myUser?'self':'other');});
-        socket.on('response',(d)=>{addMsg(d.text,'Pico','pico',d.emotion);triggerMotion(d.emotion||'NORMAL');});
-        socket.on('audio_response',(d)=>{if(d.audio&&lastPico){let a=new Audio(d.audio);a.crossOrigin="anonymous";let u=document.createElement('audio');u.className='audio-player';u.controls=true;u.src=d.audio;lastPico.appendChild(u);if(audioCtx){if(audioCtx.state==='suspended')audioCtx.resume();try{let s=audioCtx.createMediaElementSource(a);s.connect(analyser);analyser.connect(audioCtx.destination);a.onplay=()=>{isTalking=true};a.onpause=()=>{isTalking=false;if(model?.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',0);};}catch(e){}}a.play().catch(()=>{});}});
-        function addMsg(t,u,y,e){let d=document.createElement('div');d.className=`message-container ${y}`;if(y!=='system')d.innerHTML=`<div class="message-info">${u}</div>`;d.innerHTML+=`<div class="message-bubble">${t}</div>`;document.getElementById('chat-window').appendChild(d);document.getElementById('chat-window').scrollTop=99999;if(y==='pico')lastPico=d;}
-        const send=()=>{let i=document.getElementById('user-input'),t=i.value.trim();if(!t)return;if(t.toLowerCase()==='/管理员')socket.emit('message',{text:t});else socket.emit('message',{text:t});i.value='';};
-        document.getElementById('send-btn').onclick=send;document.getElementById('user-input').onkeypress=(e)=>{if(e.key==='Enter')send();};
-        
-        // 补全记忆清除函数
-        window.clearLocalHistory=()=>{localStorage.removeItem('pico_chat_history');document.getElementById('chat-window').innerHTML="";showToast('🧹 已清除');};
-        window.clearLocalMemories=()=>{localStorage.removeItem('pico_user_memories');showToast('🧠 已清除');};
+        socket.on('audio_response',(d)=>{if(d.audio&&lastPico){let a=new Audio();a.crossOrigin="anonymous";a.src=d.audio;let ui=document.createElement('audio');ui.className='audio-player';ui.controls=true;ui.src=d.audio;lastPico.appendChild(ui);if(audioCtx){if(audioCtx.state==='suspended')audioCtx.resume();try{let s=audioCtx.createMediaElementSource(a);s.connect(analyser);analyser.connect(audioCtx.destination);a.onplay=()=>{isTalking=true};a.onpause=a.onended=()=>{isTalking=false;if(model?.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',0)};}catch(e){}}a.play().catch(()=>{});}});
+        socket.on('toast',(d)=>showToast(d.text,d.type));
+        function initAudio(){if(!audioCtx)try{audioCtx=new(window.AudioContext||window.webkitAudioContext)();analyser=audioCtx.createAnalyser();analyser.fftSize=512;dataArray=new Uint8Array(analyser.frequencyBinCount);}catch(e){}}
+        function addMsg(t,u,y,e){let d=document.createElement('div');d.className=`message-container ${y}`;if(y!=='system')d.innerHTML=`<div class="message-info">${u} ${e?`<span class="emotion-tag">${e}</span>`:''}</div>`;d.innerHTML+=`<div class="message-bubble">${t}</div>`;document.getElementById('chat-window').appendChild(d);document.getElementById('chat-window').scrollTop=99999;if(y==='pico')lastPico=d;}
+        function showToast(m,t='success'){let d=document.createElement('div');d.className='toast';d.textContent=m;if(t==='error'||t==='info')d.style.backgroundColor=t==='error'?'#d63031':(t==='info'?'#0984e3':'#00b894');document.getElementById('toast-container').appendChild(d);setTimeout(()=>d.remove(),3500);}
+        const send=()=>{let i=document.getElementById('user-input');let t=i.value.trim();if(!t)return;
+            if(t.startsWith('/')){if(t.startsWith('/记 ')){let f=t.substring(3).trim();if(f&&saveLocalMemory(f)){addMsg(`(本地) 记住了: ${f}`,'我','self');showToast('🧠 记忆已保存');}}else if(t==='/清除记忆'){clearLocalMemories();}else if(t.toLowerCase()==='/管理员'){socket.emit('message',{text:t,memories:getLocalMemories()});}else{showToast('未知指令','error');}}else{socket.emit('message',{text:t,memories:getLocalMemories()});}
+            i.value='';
+        };
+        document.getElementById('send-btn').onclick=send; document.getElementById('user-input').onkeypress=(e)=>{if(e.key==='Enter')send();};
     </script>
 </body>
 </html>
