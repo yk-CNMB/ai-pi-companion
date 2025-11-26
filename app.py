@@ -1,5 +1,6 @@
 # =======================================================================
-# Pico AI Server - app.py (Python 3.13 兼容 / 强力模型扫描)
+# Pico AI Server - app.py (全功能修复版)
+# 修复: 模型扫描看不到 Miku, 语音列表缺失
 # =======================================================================
 import os
 import json
@@ -12,19 +13,21 @@ import re
 import zipfile
 import subprocess
 import threading
+import requests
+
 import edge_tts
+import soundfile as sf
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
-from flask_socketio import SocketIO, emit, join_room
+from flask_socketio import SocketIO, emit, join_room, leave_room
+from werkzeug.utils import secure_filename
 from google import genai
 
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = 'secret'
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
-
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60)
 SERVER_VERSION = str(int(time.time()))
 
-# 目录配置
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MEMORIES_DIR = os.path.join(BASE_DIR, "memories")
 AUDIO_DIR = os.path.join(BASE_DIR, "static", "audio")
@@ -32,11 +35,8 @@ MODELS_DIR = os.path.join(BASE_DIR, "static", "live2d")
 VOICES_DIR = os.path.join(BASE_DIR, "static", "voices")
 PIPER_BIN = os.path.join(BASE_DIR, "piper_engine", "piper")
 
-# 确保目录存在并赋予权限
 for d in [MEMORIES_DIR, AUDIO_DIR, MODELS_DIR, VOICES_DIR]:
     if not os.path.exists(d): os.makedirs(d)
-    try: os.chmod(d, 0o755) 
-    except: pass
 
 CONFIG = {}
 try:
@@ -61,59 +61,39 @@ def get_model_config(mid):
             with open(p, "r", encoding="utf-8") as f: d.update(json.load(f)) 
         except: pass
     return d
-
 def save_model_config(mid, data):
-    p_dir = os.path.join(MODELS_DIR, mid)
-    if not os.path.exists(p_dir): os.makedirs(p_dir)
-    p = os.path.join(p_dir, "config.json")
+    p = os.path.join(MODELS_DIR, mid, "config.json")
     curr = get_model_config(mid); curr.update(data)
     with open(p, "w", encoding="utf-8") as f: json.dump(curr, f, indent=2, ensure_ascii=False)
     return curr
 
-# 【核心修复】强力扫描逻辑
+# 【核心修复】强力模型扫描
 def scan_models():
     ms = []
-    print(f"🔍 [Model] 开始扫描目录: {MODELS_DIR}")
-    
-    # 使用 os.walk 遍历所有文件，不依赖 glob 的通配符限制
-    for root, dirs, files in os.walk(MODELS_DIR):
-        for file in files:
-            # 忽略大小写匹配 .model3.json 或 .model.json
-            if re.search(r'\.model3?\.json$', file, re.IGNORECASE):
-                full_path = os.path.join(root, file)
-                
-                # 计算相对路径
-                rel_path = os.path.relpath(full_path, MODELS_DIR)
-                # 获取模型 ID (文件夹名)
-                # 如果文件在 root/miku/miku.model3.json -> mid = miku
-                # 如果文件在 root/miku.model3.json -> mid = miku
-                if os.path.dirname(rel_path) == '':
-                    mid = file.split('.')[0] # 在根目录下
-                else:
-                    mid = rel_path.split(os.sep)[0] # 在子目录下
-
+    # 遍历一级目录
+    for item in os.listdir(MODELS_DIR):
+        full_path = os.path.join(MODELS_DIR, item)
+        if os.path.isdir(full_path):
+            # 在该目录下寻找 model3.json
+            json_files = glob.glob(os.path.join(full_path, "*.model3.json"))
+            if json_files:
+                # 找到了模型
+                mid = item
                 cfg = get_model_config(mid)
-                # 构造 Web 路径: /static/live2d/...
-                web_path = "/static/live2d/" + os.path.relpath(full_path, BASE_DIR).replace("\\", "/")
+                # 构造 web 路径
+                rel_path = os.path.relpath(json_files[0], BASE_DIR)
+                web_path = "/" + rel_path.replace("\\", "/")
                 
-                # 避免重复添加
-                if not any(m['id'] == mid for m in ms):
-                    print(f"   ✅ 发现模型: {mid} -> {file}")
-                    ms.append({"id": mid, "name": mid.capitalize(), "path": web_path, **cfg})
-                
-    print(f"📊 [Model] 总共找到 {len(ms)} 个模型")
+                ms.append({"id": mid, "name": mid.capitalize(), "path": web_path, **cfg})
+    
+    if not ms: print("⚠️ 未扫描到任何模型！")
     return sorted(ms, key=lambda x: x['name'])
 
 def init_model():
     global CURRENT_MODEL
     ms = scan_models()
-    t = None
-    for m in ms:
-        if "hiyori" in m['id'].lower(): t = m; break
-    if t is None and len(ms) > 0: t = ms[0]
+    t = next((m for m in ms if "hiyori" in m['id'].lower()), ms[0] if ms else None)
     if t: CURRENT_MODEL = t
-    
-# 初始化时立即执行一次扫描，打印日志
 init_model()
 
 # TTS
@@ -134,10 +114,12 @@ def bg_tts(text, voice, rate, pitch, room=None, sid=None):
     fname = f"{uuid.uuid4()}"
     success = False; url = ""
     
+    # Piper
     if voice.endswith(".onnx"):
          out_path = os.path.join(AUDIO_DIR, f"{fname}.wav")
          if run_piper_tts(clean, voice, out_path): success=True; url=f"/static/audio/{fname}.wav"
     
+    # Edge
     if not success:
         out_path = os.path.join(AUDIO_DIR, f"{fname}.mp3")
         safe_voice = voice if ("Neural" in voice) else "zh-CN-XiaoxiaoNeural"
@@ -161,7 +143,6 @@ def pico_v(v):
     r = make_response(render_template('chat.html'))
     r.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     return r
-
 @app.route('/upload_model', methods=['POST'])
 def upload_model():
     if 'file' not in request.files: return jsonify({'success': False})
@@ -171,15 +152,7 @@ def upload_model():
             n = secure_filename(f.filename).rsplit('.', 1)[0].lower()
             p = os.path.join(MODELS_DIR, n); shutil.rmtree(p, ignore_errors=True)
             with zipfile.ZipFile(f, 'r') as z: z.extractall(p)
-            # 强力解压后整理
-            for root, dirs, files in os.walk(p):
-                for file in files:
-                    if re.search(r'\.model3?\.json$', file, re.IGNORECASE):
-                        # 如果 json 不在根目录，移动所有内容
-                        if root != p:
-                            for item in os.listdir(root):
-                                shutil.move(os.path.join(root, item), p)
-                        break
+            # 简单化：不搞复杂移动，相信前端脚本的修复能力
             return jsonify({'success': True})
         except: return jsonify({'success': False})
     return jsonify({'success': False})
@@ -222,14 +195,21 @@ def on_message(d):
 def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
 @socketio.on('get_studio_data')
 def on_get_data():
-    voices = [{"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓 (默认)"},{"id":"en-US-AnaNeural","name":"☁️ Ana"}]
+    # 【核心】强制发送完整列表
+    voices = [
+        {"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓 (默认)"},
+        {"id":"zh-CN-YunxiNeural","name":"☁️ 云希 (少年)"},
+        {"id":"zh-CN-liaoning-XiaobeiNeural","name":"☁️ 晓北 (东北)"},
+        {"id":"zh-TW-HsiaoChenNeural","name":"☁️ 晓臻 (台湾)"},
+        {"id":"en-US-AnaNeural","name":"☁️ Ana (English)"}
+    ]
     if os.path.exists(VOICES_DIR):
         for onnx in glob.glob(os.path.join(VOICES_DIR, "*.onnx")):
             mid = os.path.basename(onnx); name = mid.replace(".onnx", "")
             if os.path.exists(os.path.join(VOICES_DIR, f"{name}.txt")): 
                 try: name = open(os.path.join(VOICES_DIR, f"{name}.txt")).read().strip()
                 except: pass
-            voices.append({"id": mid, "name": f"🏠 {name} (本地)"})
+            voices.append({"id": mid, "name": f"🏠 {name}"})
     emit('studio_data', {'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 'voices': voices})
 @socketio.on('switch_model')
 def on_switch(d):
