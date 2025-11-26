@@ -1,17 +1,17 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-    <!-- Head 保持不变 -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Pico Studio</title>
+    <!-- 核心库 -->
     <script src="/static/js/live2d.min.js"></script>
     <script src="/static/js/live2dcubismcore.min.js"></script>
     <script src="/static/js/pixi.min.js"></script>
     <script src="/static/js/index.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+    <!-- 样式表 (完整版) -->
     <style>
-        /* 请直接复用 Turn 94 的 CSS，这里为了省篇幅省略 */
         body{font-family:"Segoe UI",sans-serif;margin:0;padding:0;height:100vh;background-color:#2d3436;display:flex;flex-direction:row;overflow:hidden;color:#333}
         #stage-container{flex:1;position:relative;background-image:radial-gradient(circle,#636e72 10%,#2d3436 90%);overflow:hidden;touch-action:none}
         #live2d-canvas{position:absolute;top:0;left:0;width:100%;height:100%}
@@ -71,9 +71,9 @@
                 
                 <label style="font-size:12px;color:#666">声线选择:</label>
                 <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd">
-                    <!-- 默认选项，防止为空 -->
                     <option value="zh-CN-XiaoxiaoNeural">🇨🇳 晓晓 (默认)</option>
                     <option value="zh-CN-YunxiNeural">🇨🇳 云希 (少年)</option>
+                    <option value="en-US-AnaNeural">🇺🇸 Ana (英文)</option>
                 </select>
 
                 <div class="slider-container"><div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div><input type="range" id="rate-range" min="-50" max="50" oninput="updateVal('rate', this.value)"></div>
@@ -156,14 +156,10 @@
         socket.on('login_failed',(d)=>{alert(d.error);loginBtn.disabled=false;loginBtn.textContent="重试";});
 
         async function loadModel(path, cfg) {
-            if(!app_pixi) {
-                app_pixi = new PIXI.Application({ view:document.getElementById('live2d-canvas'), autoStart:true, resizeTo:document.getElementById('stage-container'), transparent:true });
-                initInteraction();
-            }
+            if(!app_pixi) { app_pixi = new PIXI.Application({ view:document.getElementById('live2d-canvas'), autoStart:true, resizeTo:document.getElementById('stage-container'), transparent:true }); initInteraction(); }
             try {
                 if(model) { app_pixi.stage.removeChild(model); model.destroy(); model=null; }
                 app_pixi.stage.removeChildren(); 
-                console.log("Load:", path);
                 model = await PIXI.live2d.Live2DModel.from(path);
                 app_pixi.stage.addChild(model);
                 setTimeout(() => applyConfig(cfg || currentCfg), 100);
@@ -175,34 +171,28 @@
         function initInteraction() { const s=document.getElementById('stage-container');app_pixi.stage.interactive=true;app_pixi.stage.on('pointerdown',(e)=>{if(model&&(!e.data.originalEvent.touches||e.data.originalEvent.touches.length===1)){isDragging=true;dragData=e.data;model.alpha=0.8;}});app_pixi.stage.on('pointerup',()=>{isDragging=false;if(model)model.alpha=1;}).on('pointerupoutside',()=>{isDragging=false;if(model)model.alpha=1;});app_pixi.stage.on('pointermove',()=>{if(isDragging&&model){const p=dragData.getLocalPosition(model.parent);model.x=p.x-model.width/2;model.y=p.y-model.height/2;}});s.addEventListener('wheel',(e)=>{e.preventDefault();if(model){model.scale.x*=(e.deltaY<0?1.1:0.9);model.scale.y=model.scale.x;}},{passive:false});s.addEventListener('touchstart',(e)=>{if(e.touches.length===2&&model){isDragging=false;initialDist=Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY);initialScale=model.scale.x;}});s.addEventListener('touchmove',(e)=>{if(e.touches.length===2&&model&&initialDist){e.preventDefault();model.scale.set(initialScale*(Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY)/initialDist));}}); }
         function lipSync(){if(!model||!analyser||!isTalking)return;analyser.getByteFrequencyData(dataArray);let sum=0;for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];if(model.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',Math.min(1.0,(sum/dataArray.length)/30));}
 
-        // 【核心】Miku 动作匹配
+        // 【核心】Miku 动作映射表 (根据修复脚本生成的文件名)
         function triggerMotion(emo){
             if(!model?.internalModel?.motionManager)return;
             try{
-                let m = model.internalModel.motionManager;
-                // 映射表：根据你上传的文件名特征
+                let m=model.internalModel.motionManager;
                 let map = {
-                    'HAPPY': ['happy', 'joy', '02', '04', 'smile'],
-                    'ANGRY': ['angry', 'mad', '10', '01'],
-                    'SAD':   ['sad', 'cry', '06', '09'],
-                    'SHOCK': ['shock', '05', 'turn'],
+                    'HAPPY': ['happy', 'joy', '02', '04', 'smile'], // happy_02, happy_04
+                    'ANGRY': ['angry', 'mad', '10', '01'],          // angry_01, angry_10
+                    'SAD':   ['sad', 'cry', '06'],                  // cry_06
+                    'SHOCK': ['shock', '05', 'turn'],               // turn_05
                     'IDLE':  ['idle', 'wait', 'stand']
                 };
                 
-                // 查找所有动作组
                 let groups = [];
-                if(m.definitions && m.definitions.Motions) groups = Object.keys(m.definitions.Motions);
-                else if(m.motionGroups) groups = Object.keys(m.motionGroups);
+                if(m.definitions && m.definitions.Motions) groups=Object.keys(m.definitions.Motions);
+                else if(m.motionGroups) groups=Object.keys(m.motionGroups);
+
+                let k = map[emo] || [];
+                let target = groups.find(g => k.some(key => g.toLowerCase().includes(key)));
                 
-                // 模糊匹配
-                let keywords = map[emo] || [];
-                let target = groups.find(g => keywords.some(k => g.toLowerCase().includes(k)));
-                
-                if(target) {
-                    console.log(`播放动作: ${target}`);
-                    m.startRandomMotion(target);
-                }
-            } catch(e) {}
+                if(target) m.startRandomMotion(target);
+            }catch(e){}
         }
 
         document.getElementById('studio-btn').onclick=()=>{document.getElementById('studio-overlay').style.display='flex';socket.emit('get_studio_data');};
@@ -210,22 +200,21 @@
         socket.on('studio_data',(d)=>{
             const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id;
             d.models.forEach(m=>{
-                let el=document.createElement('div');el.className=`model-card ${m.id===d.current_id?'active':''}`;
-                let delBtn=iAmAdmin&&m.id!==d.current_id?`<div class="btn-del" onclick="delModel('${m.id}',event)">🗑️</div>`:"";
-                el.innerHTML=`<div>${m.name}</div>${delBtn}`;el.onclick=()=>socket.emit('switch_model',{id:m.id});list.appendChild(el);
+                let el=document.createElement('div');el.className=`model-card ${m.id===d.current_id?'active':''}`;let delBtn=iAmAdmin&&m.id!==d.current_id?`<div class="btn-del" onclick="delModel('${m.id}',event)">🗑️</div>`:"";el.innerHTML=`<div>${m.name}</div>${delBtn}`;el.onclick=()=>socket.emit('switch_model',{id:m.id});list.appendChild(el);
                 if(m.id===d.current_id){
                     document.getElementById('persona-model-name').textContent=m.name;
                     document.getElementById('persona-text').value=m.persona;
-                    const vSelect=document.getElementById('voice-select');
                     
-                    // 追加本地模型
-                    if(d.voices) {
-                        d.voices.forEach(v=>{
-                            if(!Array.from(vSelect.options).some(o=>o.value===v.id)){
-                                let opt=document.createElement('option');opt.value=v.id;opt.textContent=v.name;vSelect.appendChild(opt);
-                            }
-                        });
-                    }
+                    // 【核心】列表追加逻辑
+                    const vSelect=document.getElementById('voice-select');
+                    // 1. 硬编码的 Edge 选项已经存在 HTML 里
+                    // 2. 追加后端发来的 Piper 模型
+                    if(d.voices) d.voices.forEach(v=>{
+                        if(!Array.from(vSelect.options).some(o=>o.value===v.id)){
+                            let opt=document.createElement('option');opt.value=v.id;opt.textContent=v.name;vSelect.appendChild(opt);
+                        }
+                    });
+                    
                     if(m.voice) vSelect.value=m.voice;
                     
                     let r=parseInt(m.rate)||0, p=parseInt(m.pitch)||0;
@@ -236,21 +225,8 @@
                 }
             });
         });
-        
         socket.on('model_switched',(m)=>{currentCfg=m;loadModel(m.path,m);document.getElementById('room-title').textContent=`🤖 ${m.name}`;if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');showToast(`✨ 已切换为 ${m.name}`);});
-        document.getElementById('save-settings-btn').onclick=()=>{
-            let r=document.getElementById('rate-range').value, p=document.getElementById('pitch-range').value;
-            socket.emit('save_settings',{
-                id: currentModelId, 
-                persona: document.getElementById('persona-text').value,
-                voice: document.getElementById('voice-select').value,
-                rate: (r>=0?'+':'')+r+'%', pitch: (p>=0?'+':'')+p+'Hz',
-                scale: document.getElementById('model-scale').value,
-                x: document.getElementById('model-x').value,
-                y: document.getElementById('model-y').value
-            });
-        };
-
+        document.getElementById('save-settings-btn').onclick=()=>{let r=document.getElementById('rate-range').value,p=document.getElementById('pitch-range').value;socket.emit('save_settings',{id:currentModelId,persona:document.getElementById('persona-text').value,voice:document.getElementById('voice-select').value,rate:(r>=0?'+':'')+r+'%',pitch:(p>=0?'+':'')+p+'Hz',scale:document.getElementById('model-scale').value,x:document.getElementById('model-x').value,y:document.getElementById('model-y').value});};
         window.delModel=(id,e)=>{e.stopPropagation();if(confirm('删除？'))socket.emit('delete_model',{id});};window.dlModel=(n)=>socket.emit('download_model',{name:n});window.uploadFile=(f)=>{let fd=new FormData();fd.append('file',f);showToast("📤 上传中...");fetch('/upload_model',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{if(d.success){showToast("✅ 成功");socket.emit('get_studio_data');}else showToast("❌ "+d.msg,"error")});}
         socket.on('admin_unlocked', () => { iAmAdmin = true; showToast("👑 管理员权限已解锁！"); document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'block'); if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data'); });
         const HISTORY_KEY='pico_chat_history';const MEMORY_KEY='pico_user_memories';const HISTORY_LIMIT=200;const MEMORY_LIMIT=50;
