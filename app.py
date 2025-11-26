@@ -18,6 +18,7 @@ import edge_tts
 import soundfile as sf
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
+from werkzeug.utils import secure_filename
 from google import genai
 
 app = Flask(__name__, static_folder='static')
@@ -56,44 +57,51 @@ def get_model_config(mid):
     p = os.path.join(MODELS_DIR, mid, "config.json")
     d = {"persona":f"你是{mid}。", "voice":"zh-CN-XiaoxiaoNeural", "rate":"+0%", "pitch":"+0Hz", "scale":0.5, "x":0.5, "y":0.5}
     if os.path.exists(p):
-        try: 
+        try:
             with open(p, "r", encoding="utf-8") as f: d.update(json.load(f)) 
         except: pass
     return d
-
 def save_model_config(mid, data):
     p = os.path.join(MODELS_DIR, mid, "config.json")
     curr = get_model_config(mid); curr.update(data)
     with open(p, "w", encoding="utf-8") as f: json.dump(curr, f, indent=2, ensure_ascii=False)
     return curr
 
+# 【核心修复】强力模型扫描
 def scan_models():
     ms = []
-    for j in glob.glob(os.path.join(MODELS_DIR, "**", "*.model3.json"), recursive=True):
-        mid = os.path.basename(os.path.dirname(j))
-        cfg = get_model_config(mid)
-        path = "/" + os.path.relpath(j, BASE_DIR).replace("\\", "/")
-        ms.append({"id": mid, "name": mid.capitalize(), "path": path, **cfg})
+    # 遍历一级目录
+    for item in os.listdir(MODELS_DIR):
+        full_path = os.path.join(MODELS_DIR, item)
+        if os.path.isdir(full_path):
+            # 在该目录下寻找 model3.json
+            json_files = glob.glob(os.path.join(full_path, "*.model3.json"))
+            if json_files:
+                # 找到了模型
+                mid = item
+                cfg = get_model_config(mid)
+                # 构造 web 路径
+                rel_path = os.path.relpath(json_files[0], BASE_DIR)
+                web_path = "/" + rel_path.replace("\\", "/")
+                
+                ms.append({"id": mid, "name": mid.capitalize(), "path": web_path, **cfg})
+    
+    if not ms: print("⚠️ 未扫描到任何模型！")
     return sorted(ms, key=lambda x: x['name'])
 
 def init_model():
     global CURRENT_MODEL
     ms = scan_models()
-    t = None
-    for m in ms:
-        if "hiyori" in m['id'].lower(): t = m; break
-    if t is None and len(ms) > 0: t = ms[0]
+    t = next((m for m in ms if "hiyori" in m['id'].lower()), ms[0] if ms else None)
     if t: CURRENT_MODEL = t
 init_model()
 
-# --- TTS ---
+# TTS
 def run_piper_tts(text, model_file, output_path):
     if not os.path.isabs(model_file): model_path = os.path.join(VOICES_DIR, model_file)
     else: model_path = model_file
-    
     if not os.path.exists(PIPER_BIN): return False
     if not os.path.exists(model_path): return False
-    
     try:
         cmd = [PIPER_BIN, "--model", model_path, "--output_file", output_path]
         subprocess.run(cmd, input=text.encode('utf-8'), check=True, capture_output=True)
@@ -110,7 +118,7 @@ def bg_tts(text, voice, rate, pitch, room=None, sid=None):
     if voice.endswith(".onnx"):
          out_path = os.path.join(AUDIO_DIR, f"{fname}.wav")
          if run_piper_tts(clean, voice, out_path): success=True; url=f"/static/audio/{fname}.wav"
-
+    
     # Edge
     if not success:
         out_path = os.path.join(AUDIO_DIR, f"{fname}.mp3")
@@ -137,22 +145,23 @@ def pico_v(v):
     return r
 @app.route('/upload_model', methods=['POST'])
 def upload_model():
-    if 'file' not in request.files: return jsonify({'success': False})
+    if 'file' not in request.files: return jsonify({'success': False, 'msg': '无文件'})
     f = request.files['file']
-    if f.filename.endswith('.zip'):
+    if f.filename == '': return jsonify({'success': False, 'msg': '未选择'})
+    if f and f.filename.endswith('.zip'):
         try:
             n = secure_filename(f.filename).rsplit('.', 1)[0].lower()
-            p = os.path.join(MODELS_DIR, n); shutil.rmtree(p, ignore_errors=True)
+            p = os.path.join(MODELS_DIR, n)
+            if os.path.exists(p): shutil.rmtree(p)
             with zipfile.ZipFile(f, 'r') as z: z.extractall(p)
-            # 智能解压
-            for root, dirs, files in os.walk(p):
-                if any(f.endswith('.model3.json') for f in files):
-                    if root != p: 
-                         for item in os.listdir(root): shutil.move(os.path.join(root, item), p)
-                    break
+            items = os.listdir(p)
+            if len(items) == 1 and os.path.isdir(os.path.join(p, items[0])):
+                sub = os.path.join(p, items[0])
+                for i in os.listdir(sub): shutil.move(os.path.join(sub, i), p)
+                os.rmdir(sub)
             return jsonify({'success': True})
-        except: return jsonify({'success': False})
-    return jsonify({'success': False})
+        except Exception as e: return jsonify({'success': False, 'msg': str(e)})
+    return jsonify({'success': False, 'msg': '仅支持 .zip'})
 
 users = {}
 chatroom_chat = None
@@ -190,30 +199,19 @@ def on_message(d):
     except: init_chatroom()
 
 def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
-
 @socketio.on('get_studio_data')
 def on_get_data():
-    # 1. Edge 列表 (硬编码兜底)
+    # Edge 列表
     voices = [{"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓 (默认)"},{"id":"en-US-AnaNeural","name":"☁️ Ana"}]
-    
-    # 2. 扫描本地 Piper
+    # Piper 扫描
     if os.path.exists(VOICES_DIR):
-        # 强制扫描
-        print(f"🔍 扫描语音目录: {VOICES_DIR}")
-        all_files = glob.glob(os.path.join(VOICES_DIR, "**", "*.onnx"), recursive=True)
-        for onnx in all_files:
-            mid = os.path.basename(onnx) # 使用文件名作为 ID
-            name = mid.replace(".onnx", "")
-            # 尝试读 txt 名字
-            txt_path = os.path.splitext(onnx)[0] + ".txt"
-            if os.path.exists(txt_path): 
-                try: name = open(txt_path).read().strip()
+        for onnx in glob.glob(os.path.join(VOICES_DIR, "*.onnx")):
+            mid = os.path.basename(onnx); name = mid.replace(".onnx", "")
+            if os.path.exists(os.path.join(VOICES_DIR, f"{name}.txt")): 
+                try: name = open(os.path.join(VOICES_DIR, f"{name}.txt")).read().strip()
                 except: pass
             voices.append({"id": mid, "name": f"🏠 {name} (本地)"})
-            print(f"   -> 添加语音: {name}")
-            
     emit('studio_data', {'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 'voices': voices})
-
 @socketio.on('switch_model')
 def on_switch(d):
     global CURRENT_MODEL
@@ -228,6 +226,21 @@ def on_save_settings(d):
     updated = save_model_config(d['id'], d)
     if CURRENT_MODEL['id'] == d['id']: CURRENT_MODEL.update(updated); init_chatroom(); emit('model_switched', CURRENT_MODEL, to='lobby')
     emit('toast', {'text': '✅ 保存成功'})
-# (删除/下载 省略)
+@socketio.on('delete_model')
+def on_del(d):
+    if not is_admin(request.sid): return
+    if d['id']==CURRENT_MODEL['id']: return
+    try: shutil.rmtree(os.path.join(MODELS_DIR, d['id'])); emit('toast',{'text':'🗑️ 已删除'}); on_get_data()
+    except: pass
+@socketio.on('download_model')
+def on_dl(d):
+    if not is_admin(request.sid): return
+    name=d.get('name'); emit('toast',{'text':f'🚀 下载 {name}...','type':'info'}); socketio.start_background_task(bg_dl_task, name)
+def bg_dl_task(name):
+    u={"Mao":".../Mao","Natori":".../Natori"}.get(name,"https://github.com/Live2D/CubismWebSamples/trunk/Samples/Resources/"+name)
+    t=os.path.join(MODELS_DIR,name.lower()); shutil.rmtree(t, ignore_errors=True); os.makedirs(t,exist_ok=True)
+    try: os.system(f"svn export --force -q {u} {t}"); socketio.emit('toast',{'text':f'✅ {name} 完成!'},namespace='/')
+    except: pass
+
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000)
