@@ -1,5 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (Fish Audio 回归 + Miku 动作修复版)
+# Pico AI Server - app.py (电子歌姬特效版)
 # =======================================================================
 import os
 import json
@@ -34,28 +34,28 @@ MEMORIES_DIR = os.path.join(BASE_DIR, "memories")
 AUDIO_DIR = os.path.join(BASE_DIR, "static", "audio")
 MODELS_DIR = os.path.join(BASE_DIR, "static", "live2d")
 VOICES_DIR = os.path.join(BASE_DIR, "static", "voices")
+PIPER_BIN = os.path.join(BASE_DIR, "piper_engine", "piper")
 
 for d in [MEMORIES_DIR, AUDIO_DIR, MODELS_DIR, VOICES_DIR]:
     if not os.path.exists(d): os.makedirs(d)
 
-# --- 加载配置 ---
+# 加载配置
 CONFIG = {}
 try:
     if os.path.exists("config.json"):
         with open("config.json", "r") as f: 
-            # 过滤掉注释行以免报错
             content = "\n".join([line for line in f.readlines() if not line.strip().startswith("//")])
             try: CONFIG = json.loads(content)
-            except: CONFIG = json.load(open("config.json")) # 备用加载
+            except: CONFIG = json.load(open("config.json"))
 except: pass
 
 client = None
 api_key = CONFIG.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
-if api_key and "在这里" not in api_key:
+if api_key and "AIza" in api_key:
     try: client = genai.Client(api_key=api_key)
     except: pass
 
-# --- 情感核心 (保留不动) ---
+# --- 情感核心 ---
 EMOTION_INSTRUCTION = """
 【重要系统指令】
 你必须在每次回复的开头，明确标记你当前的心情。
@@ -73,12 +73,12 @@ EMOTION_INSTRUCTION = """
 请务必遵守格式，否则无法驱动虚拟形象。
 """
 
-CURRENT_MODEL = {"id": "default", "path": "", "persona": "", "voice": "fish_audio_default", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.5, "y": 0.5}
+CURRENT_MODEL = {"id": "default", "path": "", "persona": "", "voice": "miku_auto", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.5, "y": 0.5}
 
 def get_model_config(mid):
     p = os.path.join(MODELS_DIR, mid, "config.json")
     default_persona = f"你是{mid}。{EMOTION_INSTRUCTION}"
-    d = {"persona": default_persona, "voice":"fish_audio_default", "rate":"+0%", "pitch":"+0Hz", "scale":0.5, "x":0.5, "y":0.5}
+    d = {"persona": default_persona, "voice":"miku_auto", "rate":"+0%", "pitch":"+0Hz", "scale":0.5, "x":0.5, "y":0.5}
     if os.path.exists(p):
         try:
             with open(p, "r", encoding="utf-8") as f: 
@@ -95,22 +95,19 @@ def save_model_config(mid, data):
     with open(p, "w", encoding="utf-8") as f: json.dump(curr, f, indent=2, ensure_ascii=False)
     return curr
 
-# 模型扫描 (保留修复后的全兼容逻辑)
+# 模型扫描
 def scan_models():
     ms = []
-    print(f"🔍 扫描模型中...")
     for root, dirs, files in os.walk(MODELS_DIR):
         for file in files:
             if file.endswith(('.model3.json', '.model.json')):
                 full_path = os.path.join(root, file)
                 rel_path = os.path.relpath(full_path, BASE_DIR).replace("\\", "/")
                 if not rel_path.startswith("/"): rel_path = "/" + rel_path
-                
                 folder_name = os.path.basename(os.path.dirname(full_path))
                 model_id = folder_name
                 if any(m['id'] == model_id for m in ms):
                     model_id = f"{folder_name}_{os.path.splitext(file)[0]}"
-                
                 cfg = get_model_config(model_id)
                 ms.append({"id": model_id, "name": model_id.capitalize(), "path": rel_path, **cfg})
     return sorted(ms, key=lambda x: x['name'])
@@ -127,78 +124,110 @@ def init_model():
 init_model()
 
 # ===================================================================
-# TTS 引擎：Fish Audio 主力 + Edge 兜底
+# 核心：电子歌姬滤镜 (Vocaloid Effect)
 # ===================================================================
 
-def run_fish_tts(text, voice_id, output_path):
-    api_key = CONFIG.get("FISH_API_KEY")
-    if not api_key or "在这里" in api_key: 
-        print("❌ Fish Audio API Key 未配置")
-        return False
+def contains_japanese(text):
+    return bool(re.search(r'[\u3040-\u309F\u30A0-\u30FF]', text))
+
+def morph_voice(input_path, output_path, pitch_factor=1.2):
+    """ 
+    使用 ffmpeg 打造 '电子歌姬' 音效 
+    1. asetrate: 提高音调 (变幼)
+    2. chorus: 添加电子合唱效果 (机械感)
+    3. equalizer: 增强高频 (空气感)
+    """
+    target_rate = int(22050 * pitch_factor)
     
-    # 如果没指定 voice_id，使用配置里的默认值
-    if not voice_id or voice_id == "fish_audio_default":
-        voice_id = CONFIG.get("FISH_VOICE_ID", "7f92f8afb8ec43bf81429cc1c9199cb1")
-
-    url = "https://api.fish.audio/v1/tts"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "text": text,
-        "reference_id": voice_id,
-        "format": "mp3",
-        "mp3_bitrate": 128
-    }
-
+    # 复杂的滤镜链
+    # chorus=0.5:0.9:50|60:0.4|0.32:0.25|0.4:2|1.2 -> 模拟轻微的金属共鸣
+    # equalizer=f=3000:t=q:w=1:g=3 -> 提升3000Hz附近的高频，增加清晰度
+    filter_complex = (
+        f"asetrate={target_rate},"
+        f"aresample=22050,"
+        f"chorus=0.5:0.9:50|60:0.4|0.32:0.25|0.4:2|1.2,"
+        f"equalizer=f=3000:t=q:w=1:g=3"
+    )
+    
+    cmd = [
+        "ffmpeg", "-y", "-v", "error",
+        "-i", input_path,
+        "-filter:a", filter_complex,
+        output_path
+    ]
     try:
-        resp = requests.post(url, json=data, headers=headers, timeout=20)
-        if resp.status_code == 200:
-            with open(output_path, "wb") as f: f.write(resp.content)
-            return True
-        else:
-            print(f"❌ Fish Audio Error: {resp.status_code} - {resp.text}")
+        subprocess.run(cmd, check=True)
+        return True
     except Exception as e:
-        print(f"❌ Fish Request Error: {e}")
-    return False
+        print(f"❌ 变声失败: {e}")
+        shutil.copy(input_path, output_path)
+        return True
 
-def run_edge_tts(text, voice, rate, output_path):
+def run_piper_tts(text, model_name, output_path):
+    model_path = os.path.join(VOICES_DIR, model_name)
+    if not os.path.exists(PIPER_BIN) or not os.path.exists(model_path): return False
+    
     try:
-        # Edge 默认中文
-        if "fish" in voice: voice = "zh-CN-XiaoxiaoNeural"
-        
-        async def _run():
-            cm = edge_tts.Communicate(text, voice, rate=rate)
-            await cm.save(output_path)
-        
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(_run())
-        loop.close()
+        cmd = [PIPER_BIN, "--model", model_path, "--output_file", output_path]
+        subprocess.run(cmd, input=text.encode('utf-8'), check=True, capture_output=True)
         return True
     except: return False
 
 def bg_tts(text, voice, rate, pitch, room=None, sid=None):
     clean = re.sub(r'\[(.*?)\]', '', text).strip()
     if not clean: return
-    fname = f"{uuid.uuid4()}.mp3"
-    out_path = os.path.join(AUDIO_DIR, fname)
+    
+    raw_fname = f"raw_{uuid.uuid4()}.wav"
+    final_fname = f"{uuid.uuid4()}.wav"
+    raw_path = os.path.join(AUDIO_DIR, raw_fname)
+    final_path = os.path.join(AUDIO_DIR, final_fname)
+    
     success = False
     
-    print(f"🔊 TTS生成: {clean[:10]}... (模式: {voice})")
+    # === 智能 Miku 模式 ===
+    if voice == "miku_auto":
+        is_jp = contains_japanese(clean)
+        
+        if is_jp:
+            # 日语 -> 用 Tokin (稍微加一点点电子感)
+            print(f"🔊 Miku (日语): {clean[:10]}...")
+            if run_piper_tts(clean, "ja_JP-tokin.onnx", raw_path):
+                # 日语原声已经很好了，只加一点点音调(1.05)和特效
+                morph_voice(raw_path, final_path, pitch_factor=1.05)
+                success = True
+                try: os.remove(raw_path)
+                except: pass
+        else:
+            # 中文 -> 用 Huayan + 强力电子滤镜
+            print(f"🔊 Miku (中文): {clean[:10]}...")
+            if run_piper_tts(clean, "zh_CN-huayan.onnx", raw_path):
+                # 中文底模比较沉稳，需要拉高 1.25 倍
+                morph_voice(raw_path, final_path, pitch_factor=1.25)
+                success = True
+                try: os.remove(raw_path)
+                except: pass
 
-    # 1. 优先尝试 Fish Audio
-    if "fish" in voice or "Fish" in voice:
-        success = run_fish_tts(clean, voice, out_path)
-    
-    # 2. 如果失败，或者没选 Fish，使用 Edge-TTS
+    # === 兜底模式 (Edge-TTS) ===
     if not success:
-        if "fish" in voice: print("⚠️ Fish Audio 失败，切换回 Edge-TTS 兜底")
-        success = run_edge_tts(clean, voice, rate, out_path)
+        try:
+            print("⚠️ 切换到 Edge-TTS 兜底")
+            edge_voice = "zh-CN-XiaoxiaoNeural"
+            if contains_japanese(clean): edge_voice = "ja-JP-NanamiNeural"
+            
+            async def _run():
+                # Edge 直接生成，不做后期处理（太慢）
+                cm = edge_tts.Communicate(clean, edge_voice, rate="+10%")
+                await cm.save(final_path)
+            
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(_run())
+            loop.close()
+            success = True
+        except: pass
 
     if success:
-        url = f"/static/audio/{fname}"
+        url = f"/static/audio/{final_fname}"
         payload = {'audio': url}
         if room: socketio.emit('audio_response', payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_response', payload, to=sid, namespace='/')
@@ -224,7 +253,9 @@ def upload_model():
             for root, dirs, files in os.walk(p):
                 if any(f.endswith(('.model3.json', '.model.json')) for f in files):
                     if root != p: 
-                         for item in os.listdir(root): shutil.move(os.path.join(root, item), p)
+                         for item in os.listdir(root): 
+                             try: shutil.move(os.path.join(root, item), p)
+                             except: pass
                     break
             return jsonify({'success': True})
         except: return jsonify({'success': False})
@@ -270,17 +301,12 @@ def on_message(d):
 
 def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
 
-# 【核心修改】工作室数据 - 仅展示 Fish 和 Edge
 @socketio.on('get_studio_data')
 def on_get_data():
     voices = [
-        {"id":"fish_audio_default", "name":"🐟 Fish Audio (配置默认)"},
-        {"id":"zh-CN-XiaoxiaoNeural", "name":"☁️ 微软晓晓 (免费兜底)"},
-        {"id":"ja-JP-NanamiNeural", "name":"☁️ 微软七海 (日语)"}
+        {"id":"miku_auto", "name":"🎧 电子歌姬滤镜 (Miku Style)"},
+        {"id":"zh-CN-XiaoxiaoNeural", "name":"☁️ 微软晓晓 (原声)"}
     ]
-    # 如果用户想用不同的 Fish ID，可以手动添加更多选项，或只用默认
-    # 这里我们简化，假设用户只在 config.json 里配一个主力 ID
-    
     emit('studio_data', {'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 'voices': voices})
 
 @socketio.on('switch_model')
