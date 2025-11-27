@@ -75,8 +75,4 @@ def check_integrity():
 
 if __name__ == "__main__":
     check_integrity()
-```
 
-运行方法：
-```bash
-python3 check_integrity.py
