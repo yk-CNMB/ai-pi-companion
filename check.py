@@ -1,127 +1,76 @@
 import os
-import json
-import re
+import subprocess
 
-# 路径配置
+# 颜色定义
+GREEN = "\033[92m"
+RED = "\033[91m"
+YELLOW = "\033[93m"
+RESET = "\033[0m"
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MIKU_DIR = os.path.join(BASE_DIR, "static", "live2d", "miku")
+VOICES_DIR = os.path.join(BASE_DIR, "static", "voices")
+PIPER_BIN = os.path.join(BASE_DIR, "piper_engine", "piper")
 
-# 动作分组规则 (文件名关键词 -> 动作组名)
-# 只要文件名里有 happy，就把它塞进 Happy 组
-MOTION_RULES = [
-    (r"(happy|smile|joy|laugh|02|04|love|cute)", "Happy"),
-    (r"(angry|mad|01|10|愤怒)", "Angry"),
-    (r"(sad|cry|06|悲伤)", "Sad"),
-    (r"(shock|surprise|05|turn|吃惊)", "Shock"),
-    (r"(idle|wait|stand|sleep|09|nod|07|14)", "Idle"),
-    (r"(walk|run|08)", "Walk"),
-    (r".*", "TapBody") # 剩下的都丢进去
-]
-
-def inject():
-    print(f"💉 启动全能注入修复...")
-    print(f"📂 目标目录: {MIKU_DIR}")
-
-    if not os.path.exists(MIKU_DIR):
-        print("❌ 错误：Miku 目录不存在！")
-        return
-
-    # --- 阶段一：扫描所有文件 ---
-    found_motions = []
-    found_expressions = []
-
-    print("🔍 正在深度扫描目录...")
-    for root, dirs, files in os.walk(MIKU_DIR):
-        for f in files:
-            full_path = os.path.join(root, f)
-            # 计算出符合 Live2D 标准的相对路径
-            rel_path = os.path.relpath(full_path, MIKU_DIR).replace("\\", "/")
-            
-            if f.endswith(('.motion3.json', '.mtn')):
-                found_motions.append((f, rel_path))
-            elif f.endswith(('.exp3.json', '.exp.json')):
-                found_expressions.append((f, rel_path))
-
-    print(f"📊 扫描结果: 动作 {len(found_motions)} 个, 表情 {len(found_expressions)} 个")
-
-    if not found_motions:
-        print("❌ 未找到动作文件，请检查文件夹结构！")
-        return
-
-    # --- 阶段二：构建 JSON 数据 ---
+def test_voice(model_name, test_text, lang_desc):
+    model_path = os.path.join(VOICES_DIR, model_name)
+    print(f"\n🎧 正在测试: {YELLOW}{model_name}{RESET} ({lang_desc})")
     
-    # 1. 重组动作 (Motions)
-    new_motions = {}
-    for fname, rel_path in found_motions:
-        fname_lower = fname.lower()
-        matched_group = "TapBody"
-        
-        # 匹配分组
-        for pattern, group_name in MOTION_RULES:
-            if re.search(pattern, fname_lower):
-                matched_group = group_name
-                break
-        
-        if matched_group not in new_motions:
-            new_motions[matched_group] = []
-        
-        new_motions[matched_group].append({"File": rel_path})
+    # 1. 检查文件是否存在
+    if not os.path.exists(model_path):
+        print(f"   {RED}❌ 文件丢失！{RESET}")
+        return
 
-    # 2. 重组表情 (Expressions)
-    new_expressions = []
-    for fname, rel_path in found_expressions:
-        # 表情名通常就是文件名去掉后缀
-        name = fname.split('.')[0]
-        # 针对 Miku 的特殊文件名做优化 (可选)
-        if "01" in name or "happy" in name: name = "f01" 
-        
-        new_expressions.append({
-            "Name": name,
-            "File": rel_path
-        })
-        print(f"   😀 注册表情: [{name}] <- {rel_path}")
-
-    # --- 阶段三：写入配置文件 ---
-    target_json = None
-    # 优先找 model3
-    json_files = [f for f in os.listdir(MIKU_DIR) if f.endswith('.model3.json')]
-    if json_files:
-        target_json = os.path.join(MIKU_DIR, json_files[0])
+    # 2. 检查文件大小 (防止下载失败产生的空文件)
+    size = os.path.getsize(model_path) / (1024 * 1024) # MB
+    if size < 10:
+        print(f"   {RED}❌ 文件过小 ({size:.2f} MB)，可能是坏文件！{RESET}")
+        print("   建议重新运行 install_voices.sh")
+        return
     else:
-        # 没有 model3 就找 model.json
-        old_jsons = [f for f in os.listdir(MIKU_DIR) if f.endswith('.model.json')]
-        if old_jsons:
-            target_json = os.path.join(MIKU_DIR, old_jsons[0])
-        else:
-            print("❌ 找不到配置文件！")
-            return
+        print(f"   ✅ 文件大小正常: {size:.2f} MB")
 
+    # 3. 尝试运行 Piper 生成音频
+    print(f"   🧪 正在尝试合成文本: \"{test_text}\" ...")
+    cmd = [PIPER_BIN, "--model", model_path, "--output_file", "/dev/null"]
+    
     try:
-        with open(target_json, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
-        # 确保基本结构
-        if 'FileReferences' not in data:
-            data['FileReferences'] = {}
-            
-        # 暴力覆盖动作配置
-        data['FileReferences']['Motions'] = new_motions
-        print(f"✅ 已注入动作组: {list(new_motions.keys())}")
+        # 运行并捕获输出
+        result = subprocess.run(
+            cmd, 
+            input=test_text.encode('utf-8'), 
+            capture_output=True, 
+            check=True
+        )
+        print(f"   {GREEN}✅ 引擎运行成功！模型可用。{RESET}")
+    except subprocess.CalledProcessError as e:
+        print(f"   {RED}❌ 引擎运行失败！{RESET}")
+        print(f"   错误日志:\n{e.stderr.decode('utf-8')}")
+        if "Phonemization error" in e.stderr.decode('utf-8') or "vector" in e.stderr.decode('utf-8'):
+            print(f"   {YELLOW}💡 提示：这通常是因为输入了模型不支持的语言字符。{RESET}")
 
-        # 暴力覆盖表情配置
-        if found_expressions:
-            data['FileReferences']['Expressions'] = new_expressions
-            print(f"✅ 已注入表情: {len(new_expressions)} 个")
-        
-        # 写入硬盘
-        with open(target_json, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-            
-        print("\n🎉 修复完成！现在 Miku 拥有标准的动作组了。")
-        print("👉 请务必刷新网页，让前端加载新的配置。")
-        
-    except Exception as e:
-        print(f"❌ 写入失败: {e}")
+def main():
+    print("🤖 Pico 语音医生正在启动...")
+    
+    if not os.path.exists(PIPER_BIN):
+        print(f"{RED}❌ 致命错误：找不到 Piper 引擎！请运行 install_piper.sh{RESET}")
+        return
+
+    # 测试列表
+    # 格式: (文件名, 测试文本, 描述)
+    targets = [
+        ("ja_JP-tokin.onnx", "こんにちは", "日语模型 - 必须用日语测试"),
+        ("en_US-glados.onnx", "Hello world.", "英语模型 - 必须用英语测试"),
+        ("zh_CN-huayan.onnx", "你好，我是测试员。", "中文模型 - 本地中文"),
+    ]
+
+    for fname, text, desc in targets:
+        test_voice(fname, text, desc)
+
+    print("\n========================================")
+    print("📋 诊断总结：")
+    print("1. 如果上面显示 ✅，说明模型没问题，是你发的文字语言不对。")
+    print("2. 日语模型(Tokin) 只能读日语/罗马音。")
+    print("3. 如果想让 Miku 说中文，只能用【Edge-TTS 晓晓】或者本地的【华岩】。")
 
 if __name__ == "__main__":
-    inject()
+    main()
