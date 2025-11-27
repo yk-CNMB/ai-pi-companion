@@ -158,8 +158,10 @@
                 app_pixi.ticker.remove(lipSync); app_pixi.ticker.add(lipSync);
                 if(model.internalModel.motionManager) model.internalModel.motionManager.startRandomMotion('Idle');
                 
-                // ★ DEBUG: 打印所有可用动作组，帮您确认 Miku 到底加载了什么
-                console.log("🎬 Available Motions:", model.internalModel.motionManager.definitions || model.internalModel.motionManager.motionGroups);
+                // 打印动作组结构，用于调试
+                let mgr = model.internalModel.motionManager;
+                console.log("🎬 Available Motions Group Structure:", mgr.definitions || mgr.motionGroups);
+                
                 console.log("✅ Model Loaded Successfully");
             } catch(e) { 
                 console.error("❌ Model Load Failed:", e); 
@@ -170,15 +172,15 @@
         function initInteraction() { const s=document.getElementById('stage-container');app_pixi.stage.interactive=true;app_pixi.stage.on('pointerdown',(e)=>{if(model&&(!e.data.originalEvent.touches||e.data.originalEvent.touches.length===1)){isDragging=true;dragData=e.data;model.alpha=0.8;}});app_pixi.stage.on('pointerup',()=>{isDragging=false;if(model)model.alpha=1;}).on('pointerupoutside',()=>{isDragging=false;if(model)model.alpha=1;});app_pixi.stage.on('pointermove',()=>{if(isDragging&&model){const p=dragData.getLocalPosition(model.parent);model.x=p.x-model.width/2;model.y=p.y-model.height/2;}});s.addEventListener('wheel',(e)=>{e.preventDefault();if(model){model.scale.x*=(e.deltaY<0?1.1:0.9);model.scale.y=model.scale.x;}},{passive:false});s.addEventListener('touchstart',(e)=>{if(e.touches.length===2&&model){isDragging=false;initialDist=Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY);initialScale=model.scale.x;}});s.addEventListener('touchmove',(e)=>{if(e.touches.length===2&&model&&initialDist){e.preventDefault();model.scale.set(initialScale*(Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY)/initialDist));}}); }
         function lipSync(){if(!model||!analyser||!isTalking)return;analyser.getByteFrequencyData(dataArray);let sum=0;for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];if(model.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',Math.min(1.0,(sum/dataArray.length)/30));}
         
-        // 【核心修改】Miku 动作触发逻辑 (已适配您的特定文件名)
+        // 【核心修改：深度搜索触发器】
+        // 直接遍历所有动作文件，不再依赖组名
         function triggerMotion(emo){
-            if(!model?.internalModel?.motionManager)return;
-            try{
-                let m=model.internalModel.motionManager;
-                // 强制转大写防错
+            if(!model?.internalModel?.motionManager) return;
+            try {
+                let m = model.internalModel.motionManager;
                 emo = emo.toUpperCase();
 
-                // 映射表：包含您提供的所有特定文件名关键词
+                // 映射表：包含所有文件名关键词
                 let map = {
                     'HAPPY': ['happy_02', 'happy_04', '02', '04', '03', 'love', '11', 'cute', 'joy'],
                     'ANGRY': ['angry_01', 'angry_10', '01', '10', 'mad', '愤怒'],
@@ -186,23 +188,33 @@
                     'SHOCK': ['shock', 'turn_05', '05', 'turn', 'chijing', 'surprise'],
                     'IDLE':  ['idle', 'sleep_09', '09', 'wait', 'stand', 'nod', '07', '14']
                 };
-                
-                // 获取当前模型所有动作组
-                let groups = [];
-                if(m.definitions && m.definitions.Motions) groups=Object.keys(m.definitions.Motions);
-                else if(m.motionGroups) groups=Object.keys(m.motionGroups);
 
-                // 查找匹配的动作组
-                let k = map[emo] || [];
-                let target = groups.find(g => k.some(key => g.toLowerCase().includes(key)));
-                
-                if(target) {
-                    console.log(`🎬 触发动作 [${emo}] -> 播放文件: ${target}`);
-                    m.startRandomMotion(target);
-                } else {
-                    console.log(`⚠️ 未找到 [${emo}] 的对应动作。可用动作组:`, groups);
+                let keywords = map[emo] || [];
+                // 兼容不同版本的定义结构
+                let definitions = m.definitions?.Motions || m.motionGroups || m.definitions;
+
+                if (!definitions) return;
+
+                // 深度遍历：组 -> 动作列表 -> 文件名
+                for (const [groupName, motions] of Object.entries(definitions)) {
+                    if (!Array.isArray(motions)) continue;
+
+                    for (let i = 0; i < motions.length; i++) {
+                        // 获取文件名 (可能是 File 或 file 属性，或者直接是字符串)
+                        const motionFile = (motions[i].File || motions[i].file || "").toLowerCase();
+                        
+                        // 检查是否包含关键词
+                        if (keywords.some(k => motionFile.includes(k.toLowerCase()))) {
+                            console.log(`🎯 命中动作! 情感:[${emo}] -> 文件:[${motionFile}] (组:${groupName}, 索引:${i})`);
+                            
+                            // 强制播放 (优先级 3 = 用户触发，最高级)
+                            m.startMotion(groupName, i, 3);
+                            return; // 找到一个就播放，然后退出
+                        }
+                    }
                 }
-            }catch(e){console.error(e);}
+                console.log(`⚠️ 未找到匹配 [${emo}] 的文件`);
+            } catch(e) { console.error("Trigger Error:", e); }
         }
 
         document.getElementById('studio-btn').onclick=()=>{document.getElementById('studio-overlay').style.display='flex';socket.emit('get_studio_data');};
