@@ -1,7 +1,5 @@
 {
   "GEMINI_API_KEY": "AIzaSyDnTqJxkejtVKH7qpIcDGSqnl3sSb-gTCY"
-   "//_FISH_AUDIO设置": "请在下方填入您的 Fish Audio Key 和模型 ID",
-  "FISH_API_KEY": "abbec3f090b64151bed56b908ec21ab2",
-  "//_角色语音ID": "这是 Fish Audio 网页上对应角色的 Reference ID",
+  "FISH_API_KEY": "abbec3f090b64151bed56b908ec21ab2"
   "FISH_VOICE_ID": "14d9940607fc477b8115a40b60a29b0b"
 }
