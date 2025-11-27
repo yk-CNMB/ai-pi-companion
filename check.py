@@ -1,78 +1,68 @@
 import os
 import json
 
-# 设定项目根目录
+# 寻找模型目录
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MIKU_DIR = os.path.join(BASE_DIR, "static", "live2d", "miku")
 
-def check_integrity():
-    print(f"🕵️‍♂️ 正在检查 Miku 模型完整性: {MIKU_DIR}")
+def inspect():
+    print(f"🕵️‍♂️ 正在透视 Miku 模型: {MIKU_DIR}")
     
     if not os.path.exists(MIKU_DIR):
-        print("❌ 错误：Miku 目录不存在！")
+        print("❌ 目录不存在！")
         return
 
-    # 1. 寻找 .model3.json
-    json_files = [f for f in os.listdir(MIKU_DIR) if f.endswith('.model3.json')]
+    # 1. 寻找配置文件 (兼容 .model.json 和 .model3.json)
+    json_files = [f for f in os.listdir(MIKU_DIR) if f.endswith(('.model.json', '.model3.json'))]
     if not json_files:
-        print("❌ 错误：找不到 .model3.json 配置文件！")
+        print("❌ 找不到任何配置文件 (.model.json 或 .model3.json)")
         return
     
-    config_file = os.path.join(MIKU_DIR, json_files[0])
-    print(f"📄 读取配置文件: {json_files[0]}")
+    target_file = os.path.join(MIKU_DIR, json_files[0])
+    print(f"📄 找到配置文件: {json_files[0]}")
     
     try:
-        with open(config_file, 'r', encoding='utf-8') as f:
+        with open(target_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
     except Exception as e:
-        print(f"❌ JSON 读取失败: {e}")
+        print(f"❌ JSON 损坏: {e}")
         return
 
-    # 2. 检查动作文件引用
-    # 兼容 Live2D 不同的 JSON 结构
-    motion_groups = {}
-    if 'FileReferences' in data and 'Motions' in data['FileReferences']:
-        motion_groups = data['FileReferences']['Motions']
-    elif 'Motions' in data:
-        motion_groups = data['Motions']
+    # 2. 暴力搜索动作字段
+    print("\n🔍 JSON 结构分析:")
+    print(f"   顶级键: {list(data.keys())}")
     
-    if not motion_groups:
-        print("⚠️ 警告：JSON 中没有找到 'Motions' 定义！")
-        return
+    motions = None
+    motion_key_found = None
 
-    missing_count = 0
-    total_count = 0
-
-    print("\n🔍 开始校验动作文件路径...")
-    for group_name, motions in motion_groups.items():
-        print(f"   📂 检查动作组: [{group_name}]")
-        for motion in motions:
-            # 获取文件名
-            file_rel_path = motion.get('File') or motion.get('file')
-            if not file_rel_path:
-                continue
-            
-            total_count += 1
-            # 拼接绝对路径
-            full_path = os.path.join(MIKU_DIR, file_rel_path)
-            
-            # 检查是否存在
-            if os.path.exists(full_path):
-                print(f"      ✅ 正常: {file_rel_path}")
-            else:
-                print(f"      ❌ 丢失: {file_rel_path}")
-                print(f"         (系统试图寻找: {full_path})")
-                missing_count += 1
-
-    print("\n" + "="*30)
-    print(f"📊 检查结果: 共扫描 {total_count} 个动作。")
-    if missing_count > 0:
-        print(f"❌ 发现 {missing_count} 个文件丢失（断链）！")
-        print("💡 建议：这意味着 json 里写的文件路径和实际文件位置不符。")
-        print("   请手动打开 miku 文件夹，确认文件到底在哪，或者再次运行 fix_miku_final.py")
+    # 尝试各种可能的键名
+    if 'FileReferences' in data and 'Motions' in data['FileReferences']:
+        print("   ✅ 识别为 Cubism 3/4 结构 (FileReferences.Motions)")
+        motions = data['FileReferences']['Motions']
+    elif 'Motions' in data:
+        print("   ✅ 识别为 Cubism 3 结构 (Motions)")
+        motions = data['Motions']
+    elif 'motions' in data:
+        print("   ✅ 识别为 Cubism 2 结构 (motions - 小写)")
+        motions = data['motions']
+    
+    if motions:
+        print(f"\n🎬 发现动作组 (共 {len(motions)} 组):")
+        for group_name, motion_list in motions.items():
+            print(f"   📂 组名: [{group_name}]")
+            # 打印前3个文件作为示例
+            for i, m in enumerate(motion_list[:3]):
+                fname = m.get('file') or m.get('File') or "???"
+                print(f"      - {fname}")
+            if len(motion_list) > 3:
+                print("      ... (更多)")
+        
+        print("\n💡 诊断建议:")
+        print("   请检查上面的【组名】和【文件名】。")
+        print("   如果文件名已经是 happy_01.mtn 这种英文格式，说明修复成功。")
+        print("   如果还是中文，请重新运行 fix_miku_final.py")
     else:
-        print("✅ 所有文件引用均正常。")
+        print("❌ 严重警告：在 JSON 里没找到任何动作定义！模型可能是个只会站桩的空壳。")
 
 if __name__ == "__main__":
-    check_integrity()
-
+    inspect()
