@@ -10,6 +10,7 @@
     <script src="/static/js/index.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <style>
+        /* 样式保持不变 */
         body{font-family:"Segoe UI",sans-serif;margin:0;padding:0;height:100vh;background-color:#2d3436;display:flex;flex-direction:row;overflow:hidden;color:#333}
         #stage-container{flex:1;position:relative;background-image:radial-gradient(circle,#636e72 10%,#2d3436 90%);overflow:hidden;touch-action:none}
         #live2d-canvas{position:absolute;top:0;left:0;width:100%;height:100%}
@@ -87,6 +88,7 @@
         const socket = io({reconnection:true});
         let app_pixi, model, myUser="", currentModelId="", currentCfg={scale:0.5,x:0.5,y:0.5}, audioCtx, analyser, dataArray, isTalking=false;
         let isDragging=false, dragData, initialScale, initialDist, iAmAdmin=false;
+        window.model = null; // 暴露给调试控制台
 
         function updateVal(type, val) { document.getElementById(`${type}-val`).textContent = (val > 0 ? '+' : '') + val + (type==='rate'?'%':'Hz'); }
         function previewTransform() {
@@ -154,14 +156,19 @@
                 app_pixi.stage.removeChildren(); 
                 model = await PIXI.live2d.Live2DModel.from(path);
                 app_pixi.stage.addChild(model);
+                window.model = model; // 暴露全局
+                
                 setTimeout(() => applyConfig(cfg || currentCfg), 100);
                 app_pixi.ticker.remove(lipSync); app_pixi.ticker.add(lipSync);
-                if(model.internalModel.motionManager) model.internalModel.motionManager.startRandomMotion('Idle');
                 
-                // 打印动作组结构，用于调试
-                let mgr = model.internalModel.motionManager;
-                console.log("🎬 Available Motions Group Structure:", mgr.definitions || mgr.motionGroups);
+                // 打印调试信息
+                let im = model.internalModel;
+                console.log("🎬 Motion Groups:", im.motionManager.definitions || im.motionManager.motionGroups);
+                if (im.settings.expressions) {
+                    console.log("😀 Expressions:", im.settings.expressions.map(e => e.Name));
+                }
                 
+                if(im.motionManager) im.motionManager.startRandomMotion('Idle');
                 console.log("✅ Model Loaded Successfully");
             } catch(e) { 
                 console.error("❌ Model Load Failed:", e); 
@@ -172,48 +179,77 @@
         function initInteraction() { const s=document.getElementById('stage-container');app_pixi.stage.interactive=true;app_pixi.stage.on('pointerdown',(e)=>{if(model&&(!e.data.originalEvent.touches||e.data.originalEvent.touches.length===1)){isDragging=true;dragData=e.data;model.alpha=0.8;}});app_pixi.stage.on('pointerup',()=>{isDragging=false;if(model)model.alpha=1;}).on('pointerupoutside',()=>{isDragging=false;if(model)model.alpha=1;});app_pixi.stage.on('pointermove',()=>{if(isDragging&&model){const p=dragData.getLocalPosition(model.parent);model.x=p.x-model.width/2;model.y=p.y-model.height/2;}});s.addEventListener('wheel',(e)=>{e.preventDefault();if(model){model.scale.x*=(e.deltaY<0?1.1:0.9);model.scale.y=model.scale.x;}},{passive:false});s.addEventListener('touchstart',(e)=>{if(e.touches.length===2&&model){isDragging=false;initialDist=Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY);initialScale=model.scale.x;}});s.addEventListener('touchmove',(e)=>{if(e.touches.length===2&&model&&initialDist){e.preventDefault();model.scale.set(initialScale*(Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY)/initialDist));}}); }
         function lipSync(){if(!model||!analyser||!isTalking)return;analyser.getByteFrequencyData(dataArray);let sum=0;for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];if(model.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',Math.min(1.0,(sum/dataArray.length)/30));}
         
-        // 【核心修改：深度搜索触发器】
-        // 直接遍历所有动作文件，不再依赖组名
+        // 【核心修改：双管齐下触发器 (动作 + 表情)】
         function triggerMotion(emo){
-            if(!model?.internalModel?.motionManager) return;
+            if(!model) return;
             try {
-                let m = model.internalModel.motionManager;
+                const im = model.internalModel;
                 emo = emo.toUpperCase();
 
-                // 映射表：包含所有文件名关键词
-                let map = {
-                    'HAPPY': ['happy_02', 'happy_04', '02', '04', '03', 'love', '11', 'cute', 'joy'],
+                // 1. 尝试触发身体动作 (Motions)
+                // 映射表 (动作关键词)
+                let motionMap = {
+                    'HAPPY': ['happy_02', 'happy_04', '02', '04', 'love', 'cute', 'joy'],
                     'ANGRY': ['angry_01', 'angry_10', '01', '10', 'mad', '愤怒'],
                     'SAD':   ['sad_06', '06', 'cry', '悲伤'],
-                    'SHOCK': ['shock', 'turn_05', '05', 'turn', 'chijing', 'surprise'],
-                    'IDLE':  ['idle', 'sleep_09', '09', 'wait', 'stand', 'nod', '07', '14']
+                    'SHOCK': ['shock', 'turn_05', '05', 'turn', 'surprise'],
+                    'IDLE':  ['idle', 'sleep_09', '09', 'wait', 'nod', '07', '14']
                 };
+                
+                let motionKeywords = motionMap[emo] || [];
+                let definitions = im.motionManager.definitions?.Motions || im.motionManager.motionGroups || im.motionManager.definitions;
 
-                let keywords = map[emo] || [];
-                // 兼容不同版本的定义结构
-                let definitions = m.definitions?.Motions || m.motionGroups || m.definitions;
-
-                if (!definitions) return;
-
-                // 深度遍历：组 -> 动作列表 -> 文件名
-                for (const [groupName, motions] of Object.entries(definitions)) {
-                    if (!Array.isArray(motions)) continue;
-
-                    for (let i = 0; i < motions.length; i++) {
-                        // 获取文件名 (可能是 File 或 file 属性，或者直接是字符串)
-                        const motionFile = (motions[i].File || motions[i].file || "").toLowerCase();
-                        
-                        // 检查是否包含关键词
-                        if (keywords.some(k => motionFile.includes(k.toLowerCase()))) {
-                            console.log(`🎯 命中动作! 情感:[${emo}] -> 文件:[${motionFile}] (组:${groupName}, 索引:${i})`);
-                            
-                            // 强制播放 (优先级 3 = 用户触发，最高级)
-                            m.startMotion(groupName, i, 3);
-                            return; // 找到一个就播放，然后退出
+                if (definitions) {
+                    for (const [groupName, motions] of Object.entries(definitions)) {
+                        if (!Array.isArray(motions)) continue;
+                        for (let i = 0; i < motions.length; i++) {
+                            const f = (motions[i].File || motions[i].file || "").toLowerCase();
+                            if (motionKeywords.some(k => f.includes(k.toLowerCase()))) {
+                                console.log(`💃 触发动作: [${emo}] -> ${f}`);
+                                im.motionManager.startMotion(groupName, i, 3);
+                                break; // 找到一个动作就够了，继续去找表情
+                            }
                         }
                     }
                 }
-                console.log(`⚠️ 未找到匹配 [${emo}] 的文件`);
+
+                // 2. 尝试触发面部表情 (Expressions)
+                // 映射表 (表情关键词 - 对应 inject_all.py 扫描到的文件名)
+                let exprMap = {
+                    'HAPPY': ['f01', 'smile', 'happy', 'laugh'],
+                    'ANGRY': ['f02', 'angry', 'mad'], 
+                    'SAD':   ['f03', 'sad', 'cry'],
+                    'SHOCK': ['f04', 'shock', 'surprise']
+                };
+                // 注意：这里需要根据您实际的 .exp3 文件名来调整。
+                // 如果文件名是 f01.exp3.json，那 Name 就是 f01。
+                
+                let exprKeywords = exprMap[emo] || [];
+                
+                // 获取当前模型已加载的所有表情名称
+                // Cubism 4 SDK 中通常通过 expressionManager 或者 settings 获取
+                let availableExprs = [];
+                if (im.settings.expressions) {
+                    availableExprs = im.settings.expressions.map(e => e.Name);
+                }
+
+                // 查找匹配的表情
+                let targetExpr = availableExprs.find(name => 
+                    exprKeywords.some(k => name.toLowerCase().includes(k.toLowerCase()))
+                );
+
+                if (targetExpr) {
+                    console.log(`😀 触发表情: [${emo}] -> ${targetExpr}`);
+                    // 使用 PixiLive2D 的标准方法设置表情
+                    // 注意：这取决于具体 SDK 版本，通常是 setExpression 或者通过 manager
+                    if (im.expressionManager) {
+                        im.expressionManager.setExpression(targetExpr);
+                    } else {
+                        // 备用方案：直接调用 expression()
+                        model.expression(targetExpr);
+                    }
+                }
+
             } catch(e) { console.error("Trigger Error:", e); }
         }
 
