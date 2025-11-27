@@ -1,5 +1,5 @@
 {
-  "GEMINI_API_KEY": "AIzaSyDnTqJxkejtVKH7qpIcDGSqnl3sSb-gTCY",
+  "GEMINI_API_KEY": "AIzaSyBE5SANPvRNgavcYg3tun7IvWoow07VRq0",
   "TTS_MODE": "vits",
   "VITS_API_URL": "https://artrajz-vits-simple-api.hf.space/voice/vits?text={text}&id=165&format=wav&lang=zh"
 }
