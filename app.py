@@ -1,5 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (情感引擎修复版)
+# Pico AI Server - app.py (Fish Audio 回归 + Miku 动作修复版)
 # =======================================================================
 import os
 import json
@@ -25,7 +25,7 @@ app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = 'secret'
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
 
-# 使用 threading 模式以兼容 Python 3.13
+# 兼容 Python 3.13
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60)
 SERVER_VERSION = str(int(time.time()))
 
@@ -34,15 +34,19 @@ MEMORIES_DIR = os.path.join(BASE_DIR, "memories")
 AUDIO_DIR = os.path.join(BASE_DIR, "static", "audio")
 MODELS_DIR = os.path.join(BASE_DIR, "static", "live2d")
 VOICES_DIR = os.path.join(BASE_DIR, "static", "voices")
-PIPER_BIN = os.path.join(BASE_DIR, "piper_engine", "piper")
 
 for d in [MEMORIES_DIR, AUDIO_DIR, MODELS_DIR, VOICES_DIR]:
     if not os.path.exists(d): os.makedirs(d)
 
+# --- 加载配置 ---
 CONFIG = {}
 try:
     if os.path.exists("config.json"):
-        with open("config.json", "r") as f: CONFIG = json.load(f)
+        with open("config.json", "r") as f: 
+            # 过滤掉注释行以免报错
+            content = "\n".join([line for line in f.readlines() if not line.strip().startswith("//")])
+            try: CONFIG = json.loads(content)
+            except: CONFIG = json.load(open("config.json")) # 备用加载
 except: pass
 
 client = None
@@ -51,8 +55,7 @@ if api_key and "在这里" not in api_key:
     try: client = genai.Client(api_key=api_key)
     except: pass
 
-# --- 情感核心 ---
-# 这是强制让 Gemini 输出标签的关键指令
+# --- 情感核心 (保留不动) ---
 EMOTION_INSTRUCTION = """
 【重要系统指令】
 你必须在每次回复的开头，明确标记你当前的心情。
@@ -66,25 +69,20 @@ EMOTION_INSTRUCTION = """
 例如：
 [HAPPY] 哇！真的吗？太棒了！
 [ANGRY] 哼，我不理你了！
-[SHOCK] 诶？你在说什么呀？
 
 请务必遵守格式，否则无法驱动虚拟形象。
 """
 
-def load_user_memories(u): return []
-CURRENT_MODEL = {"id": "default", "path": "", "persona": "", "voice": "zh-CN-XiaoxiaoNeural", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.5, "y": 0.5}
+CURRENT_MODEL = {"id": "default", "path": "", "persona": "", "voice": "fish_audio_default", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.5, "y": 0.5}
 
 def get_model_config(mid):
     p = os.path.join(MODELS_DIR, mid, "config.json")
-    # 默认人设加上情感指令
     default_persona = f"你是{mid}。{EMOTION_INSTRUCTION}"
-    d = {"persona": default_persona, "voice":"zh-CN-XiaoxiaoNeural", "rate":"+0%", "pitch":"+0Hz", "scale":0.5, "x":0.5, "y":0.5}
-    
+    d = {"persona": default_persona, "voice":"fish_audio_default", "rate":"+0%", "pitch":"+0Hz", "scale":0.5, "x":0.5, "y":0.5}
     if os.path.exists(p):
         try:
             with open(p, "r", encoding="utf-8") as f: 
                 loaded = json.load(f)
-                # 如果配置文件里有人设，也要追加情感指令，防止被覆盖
                 if 'persona' in loaded and EMOTION_INSTRUCTION not in loaded['persona']:
                     loaded['persona'] += EMOTION_INSTRUCTION
                 d.update(loaded)
@@ -97,23 +95,23 @@ def save_model_config(mid, data):
     with open(p, "w", encoding="utf-8") as f: json.dump(curr, f, indent=2, ensure_ascii=False)
     return curr
 
+# 模型扫描 (保留修复后的全兼容逻辑)
 def scan_models():
     ms = []
-    print(f"🔍 开始扫描模型目录: {MODELS_DIR}")
+    print(f"🔍 扫描模型中...")
     for root, dirs, files in os.walk(MODELS_DIR):
         for file in files:
-            if file.endswith(".model3.json"):
+            if file.endswith(('.model3.json', '.model.json')):
                 full_path = os.path.join(root, file)
                 rel_path = os.path.relpath(full_path, BASE_DIR).replace("\\", "/")
                 if not rel_path.startswith("/"): rel_path = "/" + rel_path
+                
                 folder_name = os.path.basename(os.path.dirname(full_path))
                 model_id = folder_name
                 if any(m['id'] == model_id for m in ms):
                     model_id = f"{folder_name}_{os.path.splitext(file)[0]}"
                 
-                # 获取配置
-                cfg = get_model_config(model_id) # 这里会包含情感指令
-                print(f"   ✅ 发现: {model_id} -> {rel_path}")
+                cfg = get_model_config(model_id)
                 ms.append({"id": model_id, "name": model_id.capitalize(), "path": rel_path, **cfg})
     return sorted(ms, key=lambda x: x['name'])
 
@@ -125,51 +123,87 @@ def init_model():
         if "hiyori" in m['id'].lower(): t = m; break
     if t is None and len(ms) > 0: t = ms[0]
     if t: CURRENT_MODEL = t
-    print(f"🤖 当前加载模型: {CURRENT_MODEL['id']}")
 
 init_model()
 
-def run_piper_tts(text, model_file, output_path):
-    if not os.path.isabs(model_file): model_path = os.path.join(VOICES_DIR, model_file)
-    else: model_path = model_file
-    if not os.path.exists(PIPER_BIN): return False
-    if not os.path.exists(model_path): return False
+# ===================================================================
+# TTS 引擎：Fish Audio 主力 + Edge 兜底
+# ===================================================================
+
+def run_fish_tts(text, voice_id, output_path):
+    api_key = CONFIG.get("FISH_API_KEY")
+    if not api_key or "在这里" in api_key: 
+        print("❌ Fish Audio API Key 未配置")
+        return False
+    
+    # 如果没指定 voice_id，使用配置里的默认值
+    if not voice_id or voice_id == "fish_audio_default":
+        voice_id = CONFIG.get("FISH_VOICE_ID", "7f92f8afb8ec43bf81429cc1c9199cb1")
+
+    url = "https://api.fish.audio/v1/tts"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "text": text,
+        "reference_id": voice_id,
+        "format": "mp3",
+        "mp3_bitrate": 128
+    }
+
     try:
-        cmd = [PIPER_BIN, "--model", model_path, "--output_file", output_path]
-        subprocess.run(cmd, input=text.encode('utf-8'), check=True, capture_output=True)
+        resp = requests.post(url, json=data, headers=headers, timeout=20)
+        if resp.status_code == 200:
+            with open(output_path, "wb") as f: f.write(resp.content)
+            return True
+        else:
+            print(f"❌ Fish Audio Error: {resp.status_code} - {resp.text}")
+    except Exception as e:
+        print(f"❌ Fish Request Error: {e}")
+    return False
+
+def run_edge_tts(text, voice, rate, output_path):
+    try:
+        # Edge 默认中文
+        if "fish" in voice: voice = "zh-CN-XiaoxiaoNeural"
+        
+        async def _run():
+            cm = edge_tts.Communicate(text, voice, rate=rate)
+            await cm.save(output_path)
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(_run())
+        loop.close()
         return True
     except: return False
 
 def bg_tts(text, voice, rate, pitch, room=None, sid=None):
     clean = re.sub(r'\[(.*?)\]', '', text).strip()
     if not clean: return
-    fname = f"{uuid.uuid4()}"
-    success = False; url = ""
+    fname = f"{uuid.uuid4()}.mp3"
+    out_path = os.path.join(AUDIO_DIR, fname)
+    success = False
     
-    is_piper = voice.endswith(".onnx") or voice == "glados_local"
-    if is_piper:
-         model_file = voice
-         if voice == "glados_local": model_file = "en_US-glados.onnx"
-         out_path = os.path.join(AUDIO_DIR, f"{fname}.wav")
-         if run_piper_tts(clean, model_file, out_path): success=True; url=f"/static/audio/{fname}.wav"
+    print(f"🔊 TTS生成: {clean[:10]}... (模式: {voice})")
+
+    # 1. 优先尝试 Fish Audio
+    if "fish" in voice or "Fish" in voice:
+        success = run_fish_tts(clean, voice, out_path)
     
+    # 2. 如果失败，或者没选 Fish，使用 Edge-TTS
     if not success:
-        out_path = os.path.join(AUDIO_DIR, f"{fname}.mp3")
-        safe_voice = voice
-        if ".onnx" in safe_voice or "glados" in safe_voice: safe_voice = "zh-CN-XiaoxiaoNeural"
-        try:
-            async def _run():
-                cm = edge_tts.Communicate(clean, safe_voice, rate=rate, pitch=pitch)
-                await cm.save(out_path)
-            loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop); loop.run_until_complete(_run()); loop.close()
-            success=True; url=f"/static/audio/{fname}.mp3"
-        except: pass
+        if "fish" in voice: print("⚠️ Fish Audio 失败，切换回 Edge-TTS 兜底")
+        success = run_edge_tts(clean, voice, rate, out_path)
 
     if success:
+        url = f"/static/audio/{fname}"
         payload = {'audio': url}
         if room: socketio.emit('audio_response', payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_response', payload, to=sid, namespace='/')
 
+# 路由和 WebSocket 保持不变
 @app.route('/')
 def idx(): return redirect(url_for('pico_v', v=SERVER_VERSION))
 @app.route('/pico/<v>')
@@ -188,11 +222,9 @@ def upload_model():
             p = os.path.join(MODELS_DIR, n); shutil.rmtree(p, ignore_errors=True)
             with zipfile.ZipFile(f, 'r') as z: z.extractall(p)
             for root, dirs, files in os.walk(p):
-                if any(f.endswith('.model3.json') for f in files):
+                if any(f.endswith(('.model3.json', '.model.json')) for f in files):
                     if root != p: 
-                         for item in os.listdir(root): 
-                             try: shutil.move(os.path.join(root, item), p)
-                             except: pass
+                         for item in os.listdir(root): shutil.move(os.path.join(root, item), p)
                     break
             return jsonify({'success': True})
         except: return jsonify({'success': False})
@@ -200,21 +232,16 @@ def upload_model():
 
 users = {}
 chatroom_chat = None
-
 def init_chatroom():
     global chatroom_chat
     if not client: return
-    # 强制在系统指令中包含情感要求
     sys_prompt = CURRENT_MODEL.get('persona', "")
-    if EMOTION_INSTRUCTION not in sys_prompt:
-        sys_prompt += EMOTION_INSTRUCTION
-        
+    if EMOTION_INSTRUCTION not in sys_prompt: sys_prompt += EMOTION_INSTRUCTION
     try: chatroom_chat = client.chats.create(model="gemini-2.5-flash", config={"system_instruction": sys_prompt})
     except: pass
 
 @socketio.on('connect')
 def on_connect(): emit('server_ready', {'status': 'ok'})
-
 @socketio.on('login')
 def on_login(d):
     u = d.get('username','').strip() or "匿名"
@@ -229,43 +256,31 @@ def on_message(d):
     sid = request.sid
     if sid not in users: return
     msg = d['text']
-    if "/管理员" in msg and users[sid]['username'].lower()=="yk": 
-        users[sid]['is_admin']=True; emit('admin_unlocked'); return
+    if "/管理员" in msg and users[sid]['username'].lower()=="yk": users[sid]['is_admin']=True; emit('admin_unlocked'); return
     emit('chat_message', {'text': msg, 'sender': users[sid]['username']}, to='lobby')
-    
     try:
         if not chatroom_chat: init_chatroom()
         resp = chatroom_chat.send_message(f"【{users[sid]['username']}】: {msg}")
-        
-        # 严格正则匹配，抓取 [HAPPY] 等标签
-        emo='NORMAL'
-        match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
-        
-        if match:
-            emo = match.group(1) # 抓取到的情感，如 HAPPY
-            # 去掉标签后的纯文本
-            txt = resp.text.replace(match.group(0), '').strip()
-        else:
-            txt = resp.text
-            
+        emo='NORMAL'; match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
+        if match: emo=match.group(1); txt=resp.text.replace(match.group(0),'').strip()
+        else: txt=resp.text
         emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
         socketio.start_background_task(bg_tts, txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], room='lobby')
-    except Exception as e:
-        print(f"Gemini Error: {e}")
-        init_chatroom()
+    except: init_chatroom()
 
 def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
 
+# 【核心修改】工作室数据 - 仅展示 Fish 和 Edge
 @socketio.on('get_studio_data')
 def on_get_data():
-    voices = [{"id":"zh-CN-XiaoxiaoNeural","name":"☁️ 晓晓 (默认)"},{"id":"zh-CN-YunxiNeural","name":"☁️ 云希 (男)"},{"id":"en-US-AnaNeural","name":"☁️ Ana (英)"}]
-    if os.path.exists(os.path.join(VOICES_DIR, "en_US-glados.onnx")):
-        voices.append({"id": "glados_local", "name": "🤖 GlaDOS (本地 Piper)"})
-    if os.path.exists(VOICES_DIR):
-        for onnx in glob.glob(os.path.join(VOICES_DIR, "*.onnx")):
-            mid = os.path.basename(onnx)
-            if "glados" in mid: continue
-            voices.append({"id": mid, "name": f"🏠 {mid.replace('.onnx','')} (本地)"})
+    voices = [
+        {"id":"fish_audio_default", "name":"🐟 Fish Audio (配置默认)"},
+        {"id":"zh-CN-XiaoxiaoNeural", "name":"☁️ 微软晓晓 (免费兜底)"},
+        {"id":"ja-JP-NanamiNeural", "name":"☁️ 微软七海 (日语)"}
+    ]
+    # 如果用户想用不同的 Fish ID，可以手动添加更多选项，或只用默认
+    # 这里我们简化，假设用户只在 config.json 里配一个主力 ID
+    
     emit('studio_data', {'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 'voices': voices})
 
 @socketio.on('switch_model')
@@ -273,7 +288,6 @@ def on_switch(d):
     global CURRENT_MODEL
     t = next((m for m in scan_models() if m['id'] == d['id']), None)
     if t: CURRENT_MODEL = t; init_chatroom(); emit('model_switched', CURRENT_MODEL, to='lobby')
-
 @socketio.on('save_settings')
 def on_save_settings(d):
     global CURRENT_MODEL
@@ -283,19 +297,16 @@ def on_save_settings(d):
     updated = save_model_config(d['id'], d)
     if CURRENT_MODEL['id'] == d['id']: CURRENT_MODEL.update(updated); init_chatroom(); emit('model_switched', CURRENT_MODEL, to='lobby')
     emit('toast', {'text': '✅ 保存成功'})
-
 @socketio.on('delete_model')
 def on_del(d):
     if not is_admin(request.sid): return
     if d['id']==CURRENT_MODEL['id']: return
     try: shutil.rmtree(os.path.join(MODELS_DIR, d['id'])); emit('toast',{'text':'🗑️ 已删除'}); on_get_data()
     except: pass
-
 @socketio.on('download_model')
 def on_dl(d):
     if not is_admin(request.sid): return
     name=d.get('name'); emit('toast',{'text':f'🚀 下载 {name}...','type':'info'}); socketio.start_background_task(bg_dl_task, name)
-
 def bg_dl_task(name):
     u={"Mao":".../Mao","Natori":".../Natori"}.get(name,"https://github.com/Live2D/CubismWebSamples/trunk/Samples/Resources/"+name)
     t=os.path.join(MODELS_DIR,name.lower()); shutil.rmtree(t, ignore_errors=True); os.makedirs(t,exist_ok=True)
