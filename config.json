@@ -1,5 +1,11 @@
 {
   "GEMINI_API_KEY": "AIzaSyDnTqJxkejtVKH7qpIcDGSqnl3sSb-gTCY",
-  "FISH_API_KEY": "abbec3f090b64151bed56b908ec21ab2",
-  "FISH_VOICE_ID": "14d9940607fc477b8115a40b60a29b0b"
+    
+  "//_TTS设置": "选择 tts_mode: edge (微软免费) 或 vits (二次元API)",
+  "TTS_MODE": "vits",
+
+  "//_VITS_API设置": "这是一个免费的 Miku VITS 接口",
+  "VITS_API_URL": "https://artrajz-vits-simple-api.hf.space/voice/vits?text={text}&id=165&format=wav&lang=zh",
+  
+  "//_说明": "上面的 id=165 是初音未来(中日双语)，如果想换人可以改ID"
 }
