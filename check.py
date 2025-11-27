@@ -1,78 +1,80 @@
 import os
-import json
 import requests
-from google import genai
+import sys
 
-# 颜色
-GREEN = "\033[92m"
-RED = "\033[91m"
-RESET = "\033[0m"
+# 目标目录
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+VOICE_DIR = os.path.join(BASE_DIR, "static", "voices")
 
-def check():
-    print("🚑 Pico 全身检查启动...\n")
-    
-    # 1. 检查配置文件
-    if not os.path.exists("config.json"):
-        print(f"{RED}❌ 错误：找不到 config.json 文件！{RESET}")
-        return
-    
+if not os.path.exists(VOICE_DIR):
+    os.makedirs(VOICE_DIR)
+
+# 100% 可用的官方模型列表
+MODELS = {
+    "1": {
+        "name": "Ami (强烈推荐 🔥) - 标准二次元少女音",
+        "file": "ja_JP-ami-medium",
+        "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/ja/ja_JP/ami/medium/ja_JP-ami-medium.onnx"
+    },
+    "2": {
+        "name": "Hina (温柔版) - 比较软萌",
+        "file": "ja_JP-hina-medium",
+        "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/ja/ja_JP/hina/medium/ja_JP-hina-medium.onnx"
+    },
+    "3": {
+        "name": "Maki (成熟版) - 稍微御姐一点",
+        "file": "ja_JP-maki-medium",
+        "url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/ja/ja_JP/maki/medium/ja_JP-maki-medium.onnx"
+    }
+}
+
+def download(url, filename):
+    filepath = os.path.join(VOICE_DIR, filename)
+    print(f"   ⬇️  正在下载: {filename}...")
     try:
-        # 能够处理带注释的 JSON
-        with open("config.json", "r") as f:
-            lines = [line for line in f.readlines() if not line.strip().startswith("//")]
-            config = json.loads("\n".join(lines))
+        response = requests.get(url, stream=True, timeout=15)
+        response.raise_for_status() # 确保链接有效 (404会报错)
+        total = int(response.headers.get('content-length', 0))
+        with open(filepath, 'wb') as f:
+            if total == 0:
+                f.write(response.content)
+            else:
+                downloaded = 0
+                for data in response.iter_content(chunk_size=4096):
+                    downloaded += len(data)
+                    f.write(data)
+                    done = int(20 * downloaded / total)
+                    sys.stdout.write(f"\r   [{'#' * done}{' ' * (20-done)}] {downloaded//1024}KB")
+                    sys.stdout.flush()
+        print(f"\n   ✅ 完成")
+        return True
     except Exception as e:
-        print(f"{RED}❌ 错误：config.json 格式不对！请检查逗号或引号。{RESET}")
-        print(f"   详情: {e}")
+        print(f"\n   ❌ 下载失败 ({e})")
+        # 失败则删除空文件
+        if os.path.exists(filepath): os.remove(filepath)
+        return False
+
+def main():
+    print("=== 🎌 Piper 日语模型修复版 ===")
+    for k, v in MODELS.items():
+        print(f"{k}. {v['name']}")
+    
+    choice = input("\n请选择 (输入 1-3): ").strip()
+    target = MODELS.get(choice)
+    
+    if not target:
+        print("❌ 选择无效")
         return
 
-    gemini_key = config.get("GEMINI_API_KEY", "")
-    fish_key = config.get("FISH_API_KEY", "")
-    fish_id = config.get("FISH_VOICE_ID", "")
-
-    # 2. 测试 Gemini (大脑)
-    print("🧠 [1/2] 正在测试 Gemini API...")
-    if "..." in gemini_key or len(gemini_key) < 20:
-        print(f"{RED}❌ 失败：Gemini Key 看起来是无效的占位符。请填入真实的 Key！{RESET}")
-    else:
-        try:
-            client = genai.Client(api_key=gemini_key)
-            resp = client.models.generate_content(
-                model="gemini-2.5-flash", 
-                contents="你好，测试一下。"
-            )
-            print(f"{GREEN}✅ 成功：Gemini 回复了 -> {resp.text}{RESET}")
-        except Exception as e:
-            print(f"{RED}❌ 失败：Gemini 报错。可能 Key 不对或网络不通。{RESET}")
-            print(f"   错误信息: {e}")
-
-    print("-" * 30)
-
-    # 3. 测试 Fish Audio (嘴巴)
-    print("👄 [2/2] 正在测试 Fish Audio API...")
-    if "..." in fish_key or len(fish_key) < 10:
-        print(f"{RED}❌ 失败：Fish Audio Key 看起来是无效的占位符。{RESET}")
-    else:
-        url = "https://api.fish.audio/v1/tts"
-        headers = {
-            "Authorization": f"Bearer {fish_key}",
-            "Content-Type": "application/json"
-        }
-        data = {
-            "text": "测试语音合成。",
-            "reference_id": fish_id,
-            "format": "mp3"
-        }
-        try:
-            resp = requests.post(url, json=data, headers=headers, timeout=10)
-            if resp.status_code == 200:
-                print(f"{GREEN}✅ 成功：Fish Audio 生成了音频 ({len(resp.content)} bytes){RESET}")
-            else:
-                print(f"{RED}❌ 失败：Fish Audio 返回错误代码 {resp.status_code}{RESET}")
-                print(f"   服务器回应: {resp.text}")
-        except Exception as e:
-            print(f"{RED}❌ 失败：无法连接 Fish Audio 服务器。{RESET}")
-            print(f"   错误信息: {e}")
+    print(f"\n🚀 正在下载: {target['name']}")
+    
+    # 下载 .onnx
+    if download(target['url'], target['file'] + ".onnx"):
+        # 只有主文件成功了才下配置文件
+        json_url = target['url'] + ".json"
+        download(json_url, target['file'] + ".onnx.json")
+        print("\n✨ 搞定！请刷新网页的“工作室”查看。")
+        print("💡 记得把“语速”调快一点 (+10%) 会更像 Miku！")
 
 if __name__ == "__main__":
-    check()
+    main()
