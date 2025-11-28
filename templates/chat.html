@@ -140,8 +140,29 @@
             document.getElementById('room-title').textContent=`🤖 ${d.current_model.name}`;
             currentCfg = d.current_model;
             if(d.current_model.path) loadModel(d.current_model.path, d.current_model);
-            loadHistory();
+            
+            // 登录成功后，不再在这里调 loadHistory，而是等待 history_sync 事件
+            // loadHistory(); 
         });
+        
+        // ★★★ 新增：全服历史同步 ★★★
+        socket.on('history_sync', (d) => {
+            if(d.history && Array.isArray(d.history)){
+                console.log("📜 收到全服历史:", d.history.length, "条");
+                const win = document.getElementById('chat-window');
+                win.innerHTML = ""; // 先清空，防止重复
+                d.history.forEach(item => {
+                    // 兼容旧的格式
+                    let type = item.type === 'response' ? 'pico' : (item.sender === myUser ? 'self' : 'other');
+                    // 如果是系统消息
+                    if (item.type === 'system') type = 'system';
+                    
+                    addMsg(item.text, item.sender, type, item.emotion);
+                });
+                win.scrollTop = win.scrollHeight; // 滚到底部
+            }
+        });
+
         socket.on('login_failed',(d)=>{alert(d.error);loginBtn.disabled=false;loginBtn.textContent="重试";});
 
         async function loadModel(path, cfg) {
@@ -160,14 +181,7 @@
                 setTimeout(() => applyConfig(cfg || currentCfg), 100);
                 app_pixi.ticker.remove(lipSync); app_pixi.ticker.add(lipSync);
                 
-                // 打印调试信息
-                let im = model.internalModel;
-                console.log("🎬 Motion Groups:", im.motionManager.definitions || im.motionManager.motionGroups);
-                if (im.settings.expressions) {
-                    console.log("😀 Expressions:", im.settings.expressions.map(e => e.Name));
-                }
-                
-                if(im.motionManager) im.motionManager.startRandomMotion('Idle');
+                if(model.internalModel.motionManager) model.internalModel.motionManager.startRandomMotion('Idle');
                 console.log("✅ Model Loaded Successfully");
             } catch(e) { 
                 console.error("❌ Model Load Failed:", e); 
@@ -286,17 +300,19 @@
         window.delModel=(id,e)=>{e.stopPropagation();if(confirm('删除？'))socket.emit('delete_model',{id});};window.dlModel=(n)=>socket.emit('download_model',{name:n});window.uploadFile=(f)=>{let fd=new FormData();fd.append('file',f);showToast("📤 上传中...");fetch('/upload_model',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{if(d.success){showToast("✅ 成功");socket.emit('get_studio_data');}else showToast("❌ "+d.msg,"error")});}
         socket.on('admin_unlocked', () => { iAmAdmin = true; showToast("👑 管理员权限已解锁！"); document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'block'); if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data'); });
         
-        const HISTORY_KEY='pico_chat_history';const MEMORY_KEY='pico_user_memories';const HISTORY_LIMIT=200;
-        function saveHistory(type,data){let h=JSON.parse(localStorage.getItem(HISTORY_KEY))||[];h.push({type,data,ts:Date.now()});if(h.length>HISTORY_LIMIT)h=h.slice(-HISTORY_LIMIT);localStorage.setItem(HISTORY_KEY,JSON.stringify(h));}
-        function loadHistory(){const h=JSON.parse(localStorage.getItem(HISTORY_KEY))||[];document.getElementById('chat-window').innerHTML="";h.forEach(i=>{if(i.type==='chat_message')addMsg(i.data.text,i.data.sender,i.data.sender===myUser?'self':'other');else if(i.type==='response')addMsg(i.data.text,'Pico','pico',i.data.emotion);else if(i.type==='system_message')addMsg(i.data.text,'系统','system');});document.getElementById('chat-window').scrollTop=99999;}
-        window.clearLocalHistory=()=>{if(confirm('确定清除聊天记录？')){localStorage.removeItem(HISTORY_KEY);document.getElementById('chat-window').innerHTML="";showToast('🧹 已清除');}}
+        // 历史与记忆逻辑
+        const MEMORY_KEY='pico_user_memories';
+        window.clearLocalHistory=()=>{if(confirm('确定清除聊天记录？')){
+            document.getElementById('chat-window').innerHTML="";
+            showToast('🧹 已清除');
+        }}
         window.clearLocalMemories=()=>{if(confirm('确定清除专属记忆？')){localStorage.removeItem(MEMORY_KEY);showToast('🧠 已清除');}}
         function getLocalMemories(){return JSON.parse(localStorage.getItem(MEMORY_KEY))||[];}
         function saveLocalMemory(f){let m=getLocalMemories();if(f&&!m.includes(f)){m.push(f);if(m.length>50)m=m.slice(-50);localStorage.setItem(MEMORY_KEY,JSON.stringify(m));return true;}return false;}
         
-        socket.on('chat_message',(d)=>{addMsg(d.text,d.sender,d.sender===myUser?'self':'other'); saveHistory('chat_message',d);});
-        socket.on('system_message',(d)=>{addMsg(d.text,'系统','system'); saveHistory('system_message',d);});
-        socket.on('response',(d)=>{addMsg(d.text,'Pico','pico',d.emotion);triggerMotion(d.emotion||'NORMAL'); saveHistory('response',d);});
+        socket.on('chat_message',(d)=>{addMsg(d.text,d.sender,d.sender===myUser?'self':'other');});
+        socket.on('system_message',(d)=>{addMsg(d.text,'系统','system');});
+        socket.on('response',(d)=>{addMsg(d.text,'Pico','pico',d.emotion);triggerMotion(d.emotion||'NORMAL');});
         
         let lastPico=null;
         socket.on('audio_response',(d)=>{if(d.audio&&lastPico){let a=new Audio();a.crossOrigin="anonymous";a.src=d.audio;let ui=document.createElement('audio');ui.className='audio-player';ui.controls=true;ui.src=d.audio;lastPico.appendChild(ui);if(audioCtx){if(audioCtx.state==='suspended')audioCtx.resume();try{let s=audioCtx.createMediaElementSource(a);s.connect(analyser);analyser.connect(audioCtx.destination);a.onplay=()=>{isTalking=true};a.onpause=a.onended=()=>{isTalking=false;if(model?.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',0)};}catch(e){}}a.play().catch(()=>{});}});
