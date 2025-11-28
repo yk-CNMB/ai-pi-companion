@@ -1,5 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (记忆增强版 + Miku修复 + VITS)
+# Pico AI Server - app.py (背景功能增强版)
 # =======================================================================
 import os
 import json
@@ -31,9 +31,10 @@ SERVER_VERSION = str(int(time.time()))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 AUDIO_DIR = os.path.join(BASE_DIR, "static", "audio")
 MODELS_DIR = os.path.join(BASE_DIR, "static", "live2d")
-STATE_FILE = os.path.join(BASE_DIR, "server_state.json") # 状态存储文件
+BG_DIR = os.path.join(BASE_DIR, "static", "backgrounds") # 背景目录
+STATE_FILE = os.path.join(BASE_DIR, "server_state.json")
 
-for d in [AUDIO_DIR, MODELS_DIR]:
+for d in [AUDIO_DIR, MODELS_DIR, BG_DIR]:
     if not os.path.exists(d): os.makedirs(d)
 
 # --- 配置加载 ---
@@ -73,32 +74,28 @@ EMOTION_INSTRUCTION = """
 """
 
 # --- 全局状态 ---
-# 默认状态
 GLOBAL_STATE = {
     "current_model_id": "default",
-    "chat_history": [] # 存储格式: {"type": "chat/response", "sender": "xx", "text": "xx", "emotion": "xx"}
+    "current_background": "", # 当前背景文件名
+    "chat_history": [] 
 }
 
 def load_state():
-    """ 从硬盘读取状态 (恢复记忆) """
     global GLOBAL_STATE
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, 'r', encoding='utf-8') as f:
                 saved = json.load(f)
                 GLOBAL_STATE.update(saved)
-                # 限制历史记录长度 (最近50条)
                 GLOBAL_STATE["chat_history"] = GLOBAL_STATE["chat_history"][-50:]
         except: pass
 
 def save_state():
-    """ 保存状态到硬盘 """
     try:
         with open(STATE_FILE, 'w', encoding='utf-8') as f:
             json.dump(GLOBAL_STATE, f, ensure_ascii=False, indent=2)
     except: pass
 
-# 初始化时加载
 load_state()
 
 CURRENT_MODEL = {"id": "default", "path": "", "persona": "", "voice": "api_miku", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.5, "y": 0.5}
@@ -133,39 +130,39 @@ def scan_models():
                 if not rel_path.startswith("/"): rel_path = "/" + rel_path
                 folder_name = os.path.basename(os.path.dirname(full_path))
                 model_id = f"{folder_name}_{os.path.splitext(file)[0]}"
-                # 优先使用文件夹名作为ID
                 if not any(m['id'] == folder_name for m in ms):
                     model_id = folder_name
-                
                 cfg = get_model_config(model_id)
                 ms.append({"id": model_id, "name": model_id.capitalize(), "path": rel_path, **cfg})
     return sorted(ms, key=lambda x: x['name'])
 
+def scan_backgrounds():
+    """ 扫描背景图片 """
+    bgs = []
+    # 支持常见图片格式
+    for ext in ['*.jpg', '*.jpeg', '*.png', '*.webp', '*.gif']:
+        for f in glob.glob(os.path.join(BG_DIR, ext)):
+            bgs.append(os.path.basename(f))
+    return sorted(bgs)
+
 def init_model():
     global CURRENT_MODEL
     ms = scan_models()
-    
-    # 1. 尝试恢复上次保存的模型
     last_id = GLOBAL_STATE.get("current_model_id")
     target = next((m for m in ms if m['id'] == last_id), None)
-    
-    # 2. 如果没找到，尝试找 Hiyori
     if not target:
         target = next((m for m in ms if "hiyori" in m['id'].lower()), None)
-    
-    # 3. 还是没有，就取第一个
     if not target and len(ms) > 0:
         target = ms[0]
         
     if target: 
         CURRENT_MODEL = target
-        # 更新状态
         GLOBAL_STATE["current_model_id"] = target['id']
         save_state()
 
 init_model()
 
-# --- TTS 逻辑 ---
+# --- TTS ---
 def run_vits_api(text, output_path):
     api_url = CONFIG.get("VITS_API_URL")
     if not api_url: return False
@@ -213,6 +210,7 @@ def pico_v(v):
     r = make_response(render_template('chat.html'))
     r.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     return r
+
 @app.route('/upload_model', methods=['POST'])
 def upload_model():
     if 'file' not in request.files: return jsonify({'success': False})
@@ -230,6 +228,23 @@ def upload_model():
             return jsonify({'success': True})
         except: return jsonify({'success': False})
     return jsonify({'success': False})
+
+# 新增：上传背景路由
+@app.route('/upload_bg', methods=['POST'])
+def upload_bg():
+    if 'file' not in request.files: return jsonify({'success': False, 'msg': '无文件'})
+    f = request.files['file']
+    if f.filename == '': return jsonify({'success': False, 'msg': '文件名为空'})
+    
+    if f and '.' in f.filename and f.filename.rsplit('.', 1)[1].lower() in {'png', 'jpg', 'jpeg', 'gif', 'webp'}:
+        filename = secure_filename(f.filename)
+        # 防止重名覆盖，加个时间戳
+        name_part, ext_part = os.path.splitext(filename)
+        final_name = f"{name_part}_{int(time.time())}{ext_part}"
+        
+        f.save(os.path.join(BG_DIR, final_name))
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'msg': '格式不支持'})
 
 # --- 聊天交互 ---
 users = {}
@@ -252,13 +267,12 @@ def on_login(d):
     join_room('lobby')
     if not chatroom_chat: init_chatroom()
     
-    # 1. 登录成功
-    emit('login_success', {'username': u, 'current_model': CURRENT_MODEL})
-    
-    # 2. 发送全服历史记录 (新功能)
+    emit('login_success', {
+        'username': u, 
+        'current_model': CURRENT_MODEL,
+        'current_background': GLOBAL_STATE.get('current_background', '') # 发送当前背景
+    })
     emit('history_sync', {'history': GLOBAL_STATE['chat_history']})
-    
-    # 3. 欢迎语 (不存入历史，只读)
     socketio.start_background_task(bg_tts, f"Hi {u}", "api_miku", "", "", sid=request.sid)
 
 @socketio.on('message')
@@ -271,10 +285,9 @@ def on_message(d):
     if "/管理员" in msg and sender.lower()=="yk": 
         users[sid]['is_admin']=True; emit('admin_unlocked'); return
     
-    # 1. 记录用户消息到全局历史
     user_msg_obj = {'type': 'chat', 'sender': sender, 'text': msg}
     GLOBAL_STATE['chat_history'].append(user_msg_obj)
-    save_state() # 立即保存
+    save_state()
     
     emit('chat_message', {'text': msg, 'sender': sender}, to='lobby')
     
@@ -287,10 +300,9 @@ def on_message(d):
         if match: emo=match.group(1); txt=resp.text.replace(match.group(0),'').strip()
         else: txt=resp.text
         
-        # 2. 记录 AI 回复到全局历史
         ai_msg_obj = {'type': 'response', 'sender': 'Pico', 'text': txt, 'emotion': emo}
         GLOBAL_STATE['chat_history'].append(ai_msg_obj)
-        save_state() # 立即保存
+        save_state()
         
         emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
         socketio.start_background_task(bg_tts, txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], room='lobby')
@@ -304,7 +316,14 @@ def on_get_data():
         {"id":"api_miku", "name":"🎵 Miku VITS (HuggingFace API)"},
         {"id":"edge_backup", "name":"☁️ 微软 Edge (兜底)"}
     ]
-    emit('studio_data', {'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 'voices': voices})
+    # 发送模型列表和背景列表
+    emit('studio_data', {
+        'models': scan_models(), 
+        'current_id': CURRENT_MODEL['id'], 
+        'voices': voices,
+        'backgrounds': scan_backgrounds(),
+        'current_bg': GLOBAL_STATE.get('current_background', '')
+    })
 
 @socketio.on('switch_model')
 def on_switch(d):
@@ -312,12 +331,19 @@ def on_switch(d):
     t = next((m for m in scan_models() if m['id'] == d['id']), None)
     if t: 
         CURRENT_MODEL = t
-        # 记录模型选择到硬盘
         GLOBAL_STATE["current_model_id"] = t['id']
         save_state()
-        
         init_chatroom()
         emit('model_switched', CURRENT_MODEL, to='lobby')
+
+# 新增：切换背景
+@socketio.on('switch_background')
+def on_switch_background(d):
+    bg_name = d.get('name')
+    GLOBAL_STATE['current_background'] = bg_name
+    save_state()
+    # 广播给所有人
+    emit('background_update', {'url': f"/static/backgrounds/{bg_name}" if bg_name else ""}, to='lobby')
 
 @socketio.on('save_settings')
 def on_save_settings(d):
