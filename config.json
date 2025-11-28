@@ -1,0 +1,12 @@
+{
+  "GEMINI_API_KEY": "AIzaSyAYDYSWn25os2tN4LhEPl8x5xqBjsqaf9Y",
+  
+  "//_TTS设置": "由于 VITS 免费服务器经常 503 崩溃，这里暂时切回 edge",
+  "TTS_MODE": "vits",
+
+  "//_备用API列表": "如果以后想试 VITS，可以把上面的 TTS_MODE 改回 vits，然后尝试下面不同的 URL",
+  "//_备用1": "https://artrajz-vits-simple-api.hf.space/voice/vits?text={text}&id=165&format=wav&lang=zh",
+  "//_备用2": "https://rogueworm-vits-simple-api.hf.space/voice/vits?text={text}&id=165&format=wav&lang=zh",
+  
+  "VITS_API_URL": "https://rogueworm-vits-simple-api.hf.space/voice/vits?text={text}&id=165&format=wav&lang=zh"
+}
