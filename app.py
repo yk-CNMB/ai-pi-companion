@@ -1,5 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (背景功能增强版)
+# Pico AI Server - app.py (VITS 高耐心版)
 # =======================================================================
 import os
 import json
@@ -31,7 +31,7 @@ SERVER_VERSION = str(int(time.time()))
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 AUDIO_DIR = os.path.join(BASE_DIR, "static", "audio")
 MODELS_DIR = os.path.join(BASE_DIR, "static", "live2d")
-BG_DIR = os.path.join(BASE_DIR, "static", "backgrounds") # 背景目录
+BG_DIR = os.path.join(BASE_DIR, "static", "backgrounds")
 STATE_FILE = os.path.join(BASE_DIR, "server_state.json")
 
 for d in [AUDIO_DIR, MODELS_DIR, BG_DIR]:
@@ -76,7 +76,7 @@ EMOTION_INSTRUCTION = """
 # --- 全局状态 ---
 GLOBAL_STATE = {
     "current_model_id": "default",
-    "current_background": "", # 当前背景文件名
+    "current_background": "", 
     "chat_history": [] 
 }
 
@@ -137,9 +137,7 @@ def scan_models():
     return sorted(ms, key=lambda x: x['name'])
 
 def scan_backgrounds():
-    """ 扫描背景图片 """
     bgs = []
-    # 支持常见图片格式
     for ext in ['*.jpg', '*.jpeg', '*.png', '*.webp', '*.gif']:
         for f in glob.glob(os.path.join(BG_DIR, ext)):
             bgs.append(os.path.basename(f))
@@ -162,22 +160,37 @@ def init_model():
 
 init_model()
 
-# --- TTS ---
+# ===================================================================
+# TTS 逻辑 (VITS 高耐心版)
+# ===================================================================
+
 def run_vits_api(text, output_path):
     api_url = CONFIG.get("VITS_API_URL")
     if not api_url: return False
+    
     target_url = api_url.replace("{text}", urllib.parse.quote(text)).replace("{lang}", "zh")
+    print(f"🔄 [VITS] 正在请求 API (耐心等待60秒)...")
+    
     try:
-        resp = requests.get(target_url, timeout=15)
+        # ★★★ 关键修改：超时时间延长到 60 秒 ★★★
+        # HuggingFace 免费空间唤醒可能需要很久
+        resp = requests.get(target_url, timeout=60)
+        
         if resp.status_code == 200 and len(resp.content) > 1000:
             with open(output_path, "wb") as f: f.write(resp.content)
+            print(f"✅ [VITS] 生成成功！大小: {len(resp.content)} bytes")
             return True
-    except: pass
+        else:
+            print(f"❌ [VITS] API 错误: 状态码 {resp.status_code}, 内容: {resp.text[:100]}")
+    except Exception as e:
+        print(f"❌ [VITS] 连接超时或失败: {e}")
     return False
 
 def run_edge_tts(text, voice, output_path):
     try:
+        print(f"⚠️ [Edge] 正在使用备用方案生成...")
         async def _run():
+            # Miku 变声参数 (音调高，语速快)
             comm = edge_tts.Communicate(text, "zh-CN-XiaoxiaoNeural", rate="+15%", pitch="+25Hz")
             await comm.save(output_path)
         loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop); loop.run_until_complete(_run()); loop.close()
@@ -191,8 +204,11 @@ def bg_tts(text, voice, rate, pitch, room=None, sid=None):
     out_path = os.path.join(AUDIO_DIR, fname)
     success = False
     
+    # 1. 尝试 VITS API (首选)
     if "api" in voice or CONFIG.get("TTS_MODE") == "vits":
         success = run_vits_api(clean, out_path)
+    
+    # 2. 失败则使用 Edge-TTS (兜底)
     if not success:
         success = run_edge_tts(clean, "edge", out_path)
 
@@ -229,19 +245,15 @@ def upload_model():
         except: return jsonify({'success': False})
     return jsonify({'success': False})
 
-# 新增：上传背景路由
 @app.route('/upload_bg', methods=['POST'])
 def upload_bg():
     if 'file' not in request.files: return jsonify({'success': False, 'msg': '无文件'})
     f = request.files['file']
     if f.filename == '': return jsonify({'success': False, 'msg': '文件名为空'})
-    
     if f and '.' in f.filename and f.filename.rsplit('.', 1)[1].lower() in {'png', 'jpg', 'jpeg', 'gif', 'webp'}:
         filename = secure_filename(f.filename)
-        # 防止重名覆盖，加个时间戳
         name_part, ext_part = os.path.splitext(filename)
         final_name = f"{name_part}_{int(time.time())}{ext_part}"
-        
         f.save(os.path.join(BG_DIR, final_name))
         return jsonify({'success': True})
     return jsonify({'success': False, 'msg': '格式不支持'})
@@ -266,11 +278,10 @@ def on_login(d):
     users[request.sid] = {"username": u, "is_admin": False}
     join_room('lobby')
     if not chatroom_chat: init_chatroom()
-    
     emit('login_success', {
         'username': u, 
         'current_model': CURRENT_MODEL,
-        'current_background': GLOBAL_STATE.get('current_background', '') # 发送当前背景
+        'current_background': GLOBAL_STATE.get('current_background', '')
     })
     emit('history_sync', {'history': GLOBAL_STATE['chat_history']})
     socketio.start_background_task(bg_tts, f"Hi {u}", "api_miku", "", "", sid=request.sid)
@@ -281,22 +292,18 @@ def on_message(d):
     if sid not in users: return
     msg = d['text']
     sender = users[sid]['username']
-    
     if "/管理员" in msg and sender.lower()=="yk": 
         users[sid]['is_admin']=True; emit('admin_unlocked'); return
     
     user_msg_obj = {'type': 'chat', 'sender': sender, 'text': msg}
     GLOBAL_STATE['chat_history'].append(user_msg_obj)
     save_state()
-    
     emit('chat_message', {'text': msg, 'sender': sender}, to='lobby')
     
     try:
         if not chatroom_chat: init_chatroom()
         resp = chatroom_chat.send_message(f"【{sender}】: {msg}")
-        
-        emo='NORMAL'
-        match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
+        emo='NORMAL'; match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
         if match: emo=match.group(1); txt=resp.text.replace(match.group(0),'').strip()
         else: txt=resp.text
         
@@ -316,7 +323,6 @@ def on_get_data():
         {"id":"api_miku", "name":"🎵 Miku VITS (HuggingFace API)"},
         {"id":"edge_backup", "name":"☁️ 微软 Edge (兜底)"}
     ]
-    # 发送模型列表和背景列表
     emit('studio_data', {
         'models': scan_models(), 
         'current_id': CURRENT_MODEL['id'], 
@@ -336,13 +342,11 @@ def on_switch(d):
         init_chatroom()
         emit('model_switched', CURRENT_MODEL, to='lobby')
 
-# 新增：切换背景
 @socketio.on('switch_background')
 def on_switch_background(d):
     bg_name = d.get('name')
     GLOBAL_STATE['current_background'] = bg_name
     save_state()
-    # 广播给所有人
     emit('background_update', {'url': f"/static/backgrounds/{bg_name}" if bg_name else ""}, to='lobby')
 
 @socketio.on('save_settings')
