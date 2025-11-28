@@ -1,7 +1,0 @@
-{
-  "GEMINI_API_KEY": "AIzaSyAYDYSWn25os2tN4LhEPl8x5xqBjsqaf9Y",
-  "TTS_MODE": "vits",
-  
-  "//_说明": "下面填入您自己创建的 Hugging Face Space 地址",
-  "VITS_API_URL": "https://ykout-vits-simple-api.hf.space/voice/vits?text={text}&id=165&format=wav&lang=zh"
-}
