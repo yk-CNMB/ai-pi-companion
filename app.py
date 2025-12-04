@@ -1,5 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (VITS 高耐心版)
+# Pico AI Server - app.py (支持在线更新 API Key)
 # =======================================================================
 import os
 import json
@@ -161,36 +161,30 @@ def init_model():
 init_model()
 
 # ===================================================================
-# TTS 逻辑 (VITS 高耐心版)
+# TTS 逻辑
 # ===================================================================
 
 def run_vits_api(text, output_path):
     api_url = CONFIG.get("VITS_API_URL")
     if not api_url: return False
-    
     target_url = api_url.replace("{text}", urllib.parse.quote(text)).replace("{lang}", "zh")
     print(f"🔄 [VITS] 正在请求 API (耐心等待60秒)...")
-    
     try:
-        # ★★★ 关键修改：超时时间延长到 60 秒 ★★★
-        # HuggingFace 免费空间唤醒可能需要很久
         resp = requests.get(target_url, timeout=60)
-        
         if resp.status_code == 200 and len(resp.content) > 1000:
             with open(output_path, "wb") as f: f.write(resp.content)
-            print(f"✅ [VITS] 生成成功！大小: {len(resp.content)} bytes")
+            print(f"✅ [VITS] 生成成功！")
             return True
         else:
-            print(f"❌ [VITS] API 错误: 状态码 {resp.status_code}, 内容: {resp.text[:100]}")
+            print(f"❌ [VITS] API 错误: {resp.status_code}")
     except Exception as e:
-        print(f"❌ [VITS] 连接超时或失败: {e}")
+        print(f"❌ [VITS] 连接失败: {e}")
     return False
 
 def run_edge_tts(text, voice, output_path):
     try:
-        print(f"⚠️ [Edge] 正在使用备用方案生成...")
+        print(f"⚠️ [Edge] 正在使用备用方案...")
         async def _run():
-            # Miku 变声参数 (音调高，语速快)
             comm = edge_tts.Communicate(text, "zh-CN-XiaoxiaoNeural", rate="+15%", pitch="+25Hz")
             await comm.save(output_path)
         loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop); loop.run_until_complete(_run()); loop.close()
@@ -204,11 +198,8 @@ def bg_tts(text, voice, rate, pitch, room=None, sid=None):
     out_path = os.path.join(AUDIO_DIR, fname)
     success = False
     
-    # 1. 尝试 VITS API (首选)
     if "api" in voice or CONFIG.get("TTS_MODE") == "vits":
         success = run_vits_api(clean, out_path)
-    
-    # 2. 失败则使用 Edge-TTS (兜底)
     if not success:
         success = run_edge_tts(clean, "edge", out_path)
 
@@ -258,6 +249,49 @@ def upload_bg():
         return jsonify({'success': True})
     return jsonify({'success': False, 'msg': '格式不支持'})
 
+# ★★★ 新增：更新 API Key 接口 ★★★
+@app.route('/update_key', methods=['POST'])
+def update_key():
+    data = request.json
+    new_key = data.get('key', '').strip()
+    
+    if not new_key or not new_key.startswith("AIza"):
+        return jsonify({'success': False, 'msg': '无效的 API Key (必须以 AIza 开头)'})
+    
+    global client, CONFIG
+    
+    # 1. 更新内存配置
+    CONFIG['GEMINI_API_KEY'] = new_key
+    
+    # 2. 尝试刷新客户端
+    try:
+        client = genai.Client(api_key=new_key)
+        # 测试一下是否有效
+        # client.models.generate_content(model="gemini-2.5-flash", contents="Hi") 
+        # (可选：为了速度暂时不测，由用户自己对话验证)
+    except Exception as e:
+        return jsonify({'success': False, 'msg': f"Key 格式错误: {e}"})
+
+    # 3. 写入 config.json
+    try:
+        # 读取旧配置以保留其他字段
+        current_conf = {}
+        if os.path.exists("config.json"):
+            with open("config.json", "r") as f:
+                # 过滤注释行
+                lines = [line for line in f.readlines() if not line.strip().startswith("//")]
+                if lines: current_conf = json.loads("\n".join(lines))
+        
+        # 更新
+        current_conf['GEMINI_API_KEY'] = new_key
+        
+        with open("config.json", "w", encoding='utf-8') as f:
+            json.dump(current_conf, f, indent=2, ensure_ascii=False)
+            
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'msg': f"写入失败: {e}"})
+
 # --- 聊天交互 ---
 users = {}
 chatroom_chat = None
@@ -302,6 +336,11 @@ def on_message(d):
     
     try:
         if not chatroom_chat: init_chatroom()
+        # 再次检查 client 是否存在，如果用户没填 Key 就提示
+        if not client:
+            emit('system_message', {'text': '⚠️ 错误：未配置 API Key！请在工作室设置中填入 Gemini Key。'}, to=sid)
+            return
+
         resp = chatroom_chat.send_message(f"【{sender}】: {msg}")
         emo='NORMAL'; match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
         if match: emo=match.group(1); txt=resp.text.replace(match.group(0),'').strip()
@@ -313,7 +352,11 @@ def on_message(d):
         
         emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
         socketio.start_background_task(bg_tts, txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], room='lobby')
-    except: init_chatroom()
+    except Exception as e:
+        print(f"Gemini Error: {e}")
+        # 如果是 400/403 错误，提示用户 Key 可能挂了
+        emit('system_message', {'text': '⚠️ AI 无响应，可能是 Key 失效或网络问题。请在工作室检查 Key。'}, to=sid)
+        init_chatroom() # 尝试重连
 
 def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
 
