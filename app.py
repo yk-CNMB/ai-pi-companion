@@ -1,5 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (支持在线更新 API Key)
+# Pico AI Server - app.py (视觉 + 直播增强版)
 # =======================================================================
 import os
 import json
@@ -14,11 +14,15 @@ import subprocess
 import threading
 import requests
 import urllib.parse
+import base64
+from io import BytesIO
+from PIL import Image
 
 import edge_tts
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from google import genai
+from google.genai import types
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__, static_folder='static')
@@ -160,10 +164,7 @@ def init_model():
 
 init_model()
 
-# ===================================================================
-# TTS 逻辑
-# ===================================================================
-
+# --- TTS ---
 def run_vits_api(text, output_path):
     api_url = CONFIG.get("VITS_API_URL")
     if not api_url: return False
@@ -175,10 +176,7 @@ def run_vits_api(text, output_path):
             with open(output_path, "wb") as f: f.write(resp.content)
             print(f"✅ [VITS] 生成成功！")
             return True
-        else:
-            print(f"❌ [VITS] API 错误: {resp.status_code}")
-    except Exception as e:
-        print(f"❌ [VITS] 连接失败: {e}")
+    except: pass
     return False
 
 def run_edge_tts(text, voice, output_path):
@@ -249,45 +247,27 @@ def upload_bg():
         return jsonify({'success': True})
     return jsonify({'success': False, 'msg': '格式不支持'})
 
-# ★★★ 新增：更新 API Key 接口 ★★★
 @app.route('/update_key', methods=['POST'])
 def update_key():
     data = request.json
     new_key = data.get('key', '').strip()
-    
     if not new_key or not new_key.startswith("AIza"):
-        return jsonify({'success': False, 'msg': '无效的 API Key (必须以 AIza 开头)'})
-    
+        return jsonify({'success': False, 'msg': '无效的 API Key'})
     global client, CONFIG
-    
-    # 1. 更新内存配置
     CONFIG['GEMINI_API_KEY'] = new_key
-    
-    # 2. 尝试刷新客户端
     try:
         client = genai.Client(api_key=new_key)
-        # 测试一下是否有效
-        # client.models.generate_content(model="gemini-2.5-flash", contents="Hi") 
-        # (可选：为了速度暂时不测，由用户自己对话验证)
     except Exception as e:
         return jsonify({'success': False, 'msg': f"Key 格式错误: {e}"})
-
-    # 3. 写入 config.json
     try:
-        # 读取旧配置以保留其他字段
         current_conf = {}
         if os.path.exists("config.json"):
             with open("config.json", "r") as f:
-                # 过滤注释行
                 lines = [line for line in f.readlines() if not line.strip().startswith("//")]
                 if lines: current_conf = json.loads("\n".join(lines))
-        
-        # 更新
         current_conf['GEMINI_API_KEY'] = new_key
-        
         with open("config.json", "w", encoding='utf-8') as f:
             json.dump(current_conf, f, indent=2, ensure_ascii=False)
-            
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'msg': f"写入失败: {e}"})
@@ -324,39 +304,60 @@ def on_login(d):
 def on_message(d):
     sid = request.sid
     if sid not in users: return
-    msg = d['text']
+    
+    msg = d.get('text', '')
+    img_data = d.get('image', None) # 接收图片 Base64
     sender = users[sid]['username']
+    
     if "/管理员" in msg and sender.lower()=="yk": 
         users[sid]['is_admin']=True; emit('admin_unlocked'); return
     
+    # 记录历史
     user_msg_obj = {'type': 'chat', 'sender': sender, 'text': msg}
+    if img_data: user_msg_obj['image'] = True # 标记有图
     GLOBAL_STATE['chat_history'].append(user_msg_obj)
     save_state()
-    emit('chat_message', {'text': msg, 'sender': sender}, to='lobby')
+    
+    emit('chat_message', {'text': msg, 'sender': sender, 'image': img_data}, to='lobby')
     
     try:
         if not chatroom_chat: init_chatroom()
-        # 再次检查 client 是否存在，如果用户没填 Key 就提示
-        if not client:
-            emit('system_message', {'text': '⚠️ 错误：未配置 API Key！请在工作室设置中填入 Gemini Key。'}, to=sid)
-            return
+        if not client: return
 
-        resp = chatroom_chat.send_message(f"【{sender}】: {msg}")
-        emo='NORMAL'; match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
-        if match: emo=match.group(1); txt=resp.text.replace(match.group(0),'').strip()
-        else: txt=resp.text
+        # 构建发送给 Gemini 的内容
+        content_parts = []
+        if msg: content_parts.append(msg)
         
-        ai_msg_obj = {'type': 'response', 'sender': 'Pico', 'text': txt, 'emotion': emo}
-        GLOBAL_STATE['chat_history'].append(ai_msg_obj)
-        save_state()
-        
-        emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
-        socketio.start_background_task(bg_tts, txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], room='lobby')
+        # 处理图片
+        if img_data:
+            # data:image/jpeg;base64,......
+            header, encoded = img_data.split(",", 1)
+            mime_type = header.split(":")[1].split(";")[0]
+            image_bytes = base64.b64decode(encoded)
+            # 转换为 Gemini Part 对象
+            image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+            content_parts.append(image_part)
+            print(f"🖼️ 收到图片: {mime_type}, {len(image_bytes)} bytes")
+
+        if content_parts:
+            # 格式：[text, image]
+            resp = chatroom_chat.send_message(content_parts)
+            
+            emo='NORMAL'
+            match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
+            if match: emo=match.group(1); txt=resp.text.replace(match.group(0),'').strip()
+            else: txt=resp.text
+            
+            ai_msg_obj = {'type': 'response', 'sender': 'Pico', 'text': txt, 'emotion': emo}
+            GLOBAL_STATE['chat_history'].append(ai_msg_obj)
+            save_state()
+            
+            emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
+            socketio.start_background_task(bg_tts, txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], room='lobby')
     except Exception as e:
         print(f"Gemini Error: {e}")
-        # 如果是 400/403 错误，提示用户 Key 可能挂了
-        emit('system_message', {'text': '⚠️ AI 无响应，可能是 Key 失效或网络问题。请在工作室检查 Key。'}, to=sid)
-        init_chatroom() # 尝试重连
+        emit('system_message', {'text': f'⚠️ AI 错误: {str(e)}'}, to=sid)
+        init_chatroom()
 
 def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
 
