@@ -21,15 +21,24 @@
         .message-container{display:flex;margin-bottom:15px;flex-direction:column}
         .message-info{font-size:12px;color:#999;margin-bottom:4px;padding:0 5px}
         .message-bubble{padding:10px 14px;border-radius:16px;max-width:85%;word-wrap:break-word;box-shadow:0 1px 2px rgba(0,0,0,0.1)}
+        /* 图片气泡样式 */
+        .message-img {max-width: 100%; border-radius: 10px; margin-top: 5px; display: block; cursor: pointer;}
+        
         .self{align-items:flex-end} .self .message-bubble{background:#6c5ce7;color:white;border-bottom-right-radius:4px}
         .other{align-items:flex-start} .other .message-bubble{background:white;color:#333;border-bottom-left-radius:4px}
         .pico{align-items:flex-start} .pico .message-info{color:#e84393;font-weight:bold} .pico .message-bubble{background:#fff0f6;color:#333;border:2px solid #f8a5c2;border-bottom-left-radius:4px}
         .emotion-tag{display:inline-block;font-size:0.8em;padding:1px 4px;border-radius:4px;background:rgba(232,67,147,0.1);color:#e84393;margin-left:5px}
         .system{align-items:center;margin:10px 0} .system .message-bubble{background:#eee;color:#666;font-size:12px;padding:4px 12px;border-radius:12px;box-shadow:none}
         .audio-player{margin-top:8px;height:32px;width:100%;opacity:0.8;border-radius:16px;display:block}
-        #input-area{display:flex;padding:10px;background:white;border-top:1px solid #eee;flex-shrink:0}
+        #input-area{display:flex;padding:10px;background:white;border-top:1px solid #eee;flex-shrink:0; align-items: center;}
         #user-input{flex:1;padding:12px;border:1px solid #ddd;border-radius:25px;font-size:16px;outline:none}
-        #send-btn{background:#6c5ce7;color:white;border:none;padding:0 20px;margin-left:10px;border-radius:25px;font-weight:bold}
+        #send-btn{background:#6c5ce7;color:white;border:none;padding:0 20px;margin-left:10px;border-radius:25px;font-weight:bold; height: 45px;}
+        
+        /* 图片预览区 */
+        #preview-area {position: absolute; bottom: 70px; left: 10px; right: 10px; background: rgba(255,255,255,0.9); border-radius: 10px; padding: 10px; display: none; box-shadow: 0 -2px 10px rgba(0,0,0,0.1);}
+        #preview-img {max-height: 100px; max-width: 100%; border-radius: 5px;}
+        #close-preview {position: absolute; top: 5px; right: 5px; cursor: pointer; font-size: 20px; color: #666;}
+
         .overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(5px)}
         .modal-box{background:white;padding:25px;border-radius:20px;width:90%;max-width:450px;max-height:80vh;overflow-y:auto}
         #login-overlay{z-index:10000} #studio-overlay{display:none;z-index:9000}
@@ -52,6 +61,11 @@
         .toast{display:inline-block;background:rgba(0,0,0,0.8);color:white;padding:8px 20px;border-radius:20px;margin-top:10px;animation:fadeOut 3s forwards 2s}
         @keyframes fadeOut{to{opacity:0;visibility:hidden}}
         #debug-pos { position: absolute; top: 10px; left: 10px; color: #0f0; background: rgba(0,0,0,0.5); padding: 5px; font-size: 10px; pointer-events: none; z-index: 100; }
+
+        /* 直播模式样式 */
+        body.live-mode #chat-container { display: none !important; }
+        body.live-mode #stage-container { flex: 1; width: 100vw; height: 100vh; }
+        body.live-mode #debug-pos { display: none; }
     </style>
 </head>
 <body>
@@ -62,60 +76,56 @@
         <div class="modal-box">
             <div style="display:flex;justify-content:space-between;align-items:center"><h3>🛠️ 工作室</h3><div onclick="document.getElementById('studio-overlay').style.display='none'" style="font-size:24px;padding:0 10px;cursor:pointer">×</div></div>
             <div id="model-list" class="model-list">加载中...</div>
-            
             <hr>
             <h4>🖼️ 舞台背景</h4>
             <div class="upload-box" onclick="document.getElementById('bg-input').click()">点击上传图片 (JPG/PNG)<input type="file" id="bg-input" accept="image/*" style="display:none" onchange="uploadBackground(this.files[0])"></div>
             <div id="bg-list" style="margin-top:10px; max-height:100px; overflow-y:auto"></div>
             <div style="margin-top:5px"><span class="bg-chip" onclick="changeBackground('')">🚫 默认灰色</span></div>
-
             <div class="admin-only">
-                <hr>
-                <!-- ★★★ 新增：API 设置区域 ★★★ -->
-                <h4>🔑 API 设置</h4>
-                <div style="display:flex; gap:5px;">
-                    <input id="api-key-input" placeholder="输入 Gemini API Key (AIza...)" style="flex:1; padding:8px; border:1px solid #ddd; border-radius:8px;">
-                    <button onclick="saveGeminiKey()" style="background:#6c5ce7; color:white; border:none; padding:8px 15px; border-radius:8px; cursor:pointer;">保存</button>
-                </div>
-                <div style="font-size:10px; color:#999; margin-top:5px;">保存后无需重启，立即生效。</div>
-
-                <hr>
-                <h4>⚙️ 调音 & 位置</h4>
-                <div>当前模型: <span id="persona-model-name" style="font-weight:bold">--</span></div>
-                <label style="font-size:12px;color:#666">人设提示词:</label>
-                <textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea>
-                <label style="font-size:12px;color:#666">声线选择:</label>
-                <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd"></select>
-                <div class="slider-container"><div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div><input type="range" id="rate-range" min="-50" max="50" oninput="updateVal('rate', this.value)"></div>
-                <div class="slider-container"><div class="slider-label"><span>音调</span><span id="pitch-val">0Hz</span></div><input type="range" id="pitch-range" min="-50" max="50" oninput="updateVal('pitch', this.value)"></div>
-                <div class="slider-container"><div class="slider-label"><span>位置 X</span><span id="x-val">0.5</span></div><input type="range" id="model-x" min="0" max="1" step="0.01" oninput="previewTransform()"></div>
-                <div class="slider-container"><div class="slider-label"><span>位置 Y</span><span id="y-val">0.5</span></div><input type="range" id="model-y" min="0" max="2" step="0.01" oninput="previewTransform()"></div>
-                <div class="slider-container"><div class="slider-label"><span>缩放</span><span id="scale-val">0.5</span></div><input type="range" id="model-scale" min="0.1" max="2.0" step="0.05" oninput="previewTransform()"></div>
-                <button id="save-settings-btn" style="width:100%;padding:10px;margin-top:10px;background:#6c5ce7;color:white;border:none;border-radius:10px">保存所有配置</button>
-                <hr><h4>☁️ 上传模型</h4><div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 .zip<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div><div style="margin-top:10px"><span class="chip" onclick="dlModel('Mao')">Mao</span><span class="chip" onclick="dlModel('Natori')">Natori</span></div>
+                <hr><h4>🔑 API 设置</h4><div style="display:flex; gap:5px;"><input id="api-key-input" placeholder="输入 Gemini API Key (AIza...)" style="flex:1; padding:8px; border:1px solid #ddd; border-radius:8px;"><button onclick="saveGeminiKey()" style="background:#6c5ce7; color:white; border:none; padding:8px 15px; border-radius:8px; cursor:pointer;">保存</button></div><div style="font-size:10px; color:#999; margin-top:5px;">保存后无需重启，立即生效。</div>
+                <hr><h4>⚙️ 调音 & 位置</h4><div>当前模型: <span id="persona-model-name" style="font-weight:bold">--</span></div><label style="font-size:12px;color:#666">人设提示词:</label><textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea><label style="font-size:12px;color:#666">声线选择:</label><select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd"></select><div class="slider-container"><div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div><input type="range" id="rate-range" min="-50" max="50" oninput="updateVal('rate', this.value)"></div><div class="slider-container"><div class="slider-label"><span>音调</span><span id="pitch-val">0Hz</span></div><input type="range" id="pitch-range" min="-50" max="50" oninput="updateVal('pitch', this.value)"></div><div class="slider-container"><div class="slider-label"><span>位置 X</span><span id="x-val">0.5</span></div><input type="range" id="model-x" min="0" max="1" step="0.01" oninput="previewTransform()"></div><div class="slider-container"><div class="slider-label"><span>位置 Y</span><span id="y-val">0.5</span></div><input type="range" id="model-y" min="0" max="2" step="0.01" oninput="previewTransform()"></div><div class="slider-container"><div class="slider-label"><span>缩放</span><span id="scale-val">0.5</span></div><input type="range" id="model-scale" min="0.1" max="2.0" step="0.05" oninput="previewTransform()"></div><button id="save-settings-btn" style="width:100%;padding:10px;margin-top:10px;background:#6c5ce7;color:white;border:none;border-radius:10px">保存所有配置</button><hr><h4>☁️ 上传模型</h4><div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 .zip<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div><div style="margin-top:10px"><span class="chip" onclick="dlModel('Mao')">Mao</span><span class="chip" onclick="dlModel('Natori')">Natori</span></div>
             </div>
             <hr><h4>🧹 缓存</h4><div><span class="chip" onclick="clearLocalHistory()">清除历史</span><span class="chip" onclick="clearLocalMemories()">清除记忆</span></div>
         </div>
     </div>
 
     <div id="stage-container"><canvas id="live2d-canvas"></canvas><div id="debug-pos"></div></div>
-    <div id="chat-container"><div id="header"><span id="room-title">🤖 互动区</span><div style="display:flex;gap:10px"><div class="icon-btn" id="reset-btn" title="归位">🎯</div><div class="icon-btn" id="studio-btn" title="设置">🛠️</div></div></div><div id="chat-window"></div><div id="input-area"><input id="user-input" placeholder="发送弹幕..."><button id="send-btn">发送</button></div></div>
+    <div id="chat-container">
+        <div id="header">
+            <span id="room-title">🤖 互动区</span>
+            <div style="display:flex;gap:10px">
+                <div class="icon-btn" id="live-btn" title="直播模式" onclick="toggleLiveMode()">📺</div>
+                <div class="icon-btn" id="reset-btn" title="归位">🎯</div>
+                <div class="icon-btn" id="studio-btn" title="设置">🛠️</div>
+            </div>
+        </div>
+        <div id="chat-window"></div>
+        
+        <div id="preview-area">
+            <img id="preview-img">
+            <div id="close-preview" onclick="clearPreview()">×</div>
+        </div>
+
+        <div id="input-area">
+            <div class="icon-btn" onclick="document.getElementById('img-input').click()" style="margin-right:5px">📷</div>
+            <input type="file" id="img-input" accept="image/*" style="display:none" onchange="handleImgSelect(this.files[0])">
+            <input id="user-input" placeholder="发送弹幕...">
+            <button id="send-btn">发送</button>
+        </div>
+    </div>
 
     <script>
         const socket = io({reconnection:true});
         let app_pixi, model, myUser="", currentModelId="", currentCfg={scale:0.5,x:0.5,y:0.5}, audioCtx, analyser, dataArray, isTalking=false;
         let isDragging=false, dragData, initialScale, initialDist, iAmAdmin=false;
         window.model = null;
+        let currentImgBase64 = null; // 暂存图片
 
         function updateVal(type, val) { document.getElementById(`${type}-val`).textContent = (val > 0 ? '+' : '') + val + (type==='rate'?'%':'Hz'); }
         function previewTransform() {
             if(!model) return;
-            const s = parseFloat(document.getElementById('model-scale').value);
-            const x = parseFloat(document.getElementById('model-x').value);
-            const y = parseFloat(document.getElementById('model-y').value);
-            document.getElementById('scale-val').textContent = s.toFixed(2);
-            document.getElementById('x-val').textContent = x.toFixed(2);
-            document.getElementById('y-val').textContent = y.toFixed(2);
+            const s = parseFloat(document.getElementById('model-scale').value), x = parseFloat(document.getElementById('model-x').value), y = parseFloat(document.getElementById('model-y').value);
+            document.getElementById('scale-val').textContent = s.toFixed(2); document.getElementById('x-val').textContent = x.toFixed(2); document.getElementById('y-val').textContent = y.toFixed(2);
             applyToModel(s, x, y);
         }
         function applyToModel(s, x, y) {
@@ -131,13 +141,9 @@
         function applyConfig(cfg) {
             if(!model || !app_pixi) return;
             const target = cfg || currentCfg || {scale:0.5, x:0.5, y:0.5};
-            const s = (target.scale !== undefined) ? target.scale : 0.5;
-            const x = (target.x !== undefined) ? target.x : 0.5;
-            const y = (target.y !== undefined) ? target.y : 0.5;
+            const s = (target.scale !== undefined) ? target.scale : 0.5, x = (target.x !== undefined) ? target.x : 0.5, y = (target.y !== undefined) ? target.y : 0.5;
             if(document.getElementById('model-scale')) {
-                document.getElementById('model-scale').value = s;
-                document.getElementById('model-x').value = x;
-                document.getElementById('model-y').value = y;
+                document.getElementById('model-scale').value = s; document.getElementById('model-x').value = x; document.getElementById('model-y').value = y;
                 updateValLabels(s, x, y);
             }
             applyToModel(s, x, y);
@@ -147,6 +153,37 @@
         document.getElementById('reset-btn').onclick = () => { applyConfig(currentCfg); showToast("🎯 已恢复", "info"); };
         window.addEventListener('resize', () => setTimeout(() => applyConfig(currentCfg), 100));
 
+        // ★ 直播模式切换
+        window.toggleLiveMode = () => {
+            document.body.classList.toggle('live-mode');
+            showToast("📺 直播模式 (双击退出)");
+            setTimeout(() => applyConfig(currentCfg), 100); // 重新计算位置
+        };
+        document.body.addEventListener('dblclick', (e) => {
+            if(document.body.classList.contains('live-mode')) {
+                document.body.classList.remove('live-mode');
+                showToast("已退出直播模式");
+                setTimeout(() => applyConfig(currentCfg), 100);
+            }
+        });
+
+        // ★ 图片处理逻辑
+        window.handleImgSelect = (f) => {
+            if(!f) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                currentImgBase64 = e.target.result;
+                document.getElementById('preview-img').src = currentImgBase64;
+                document.getElementById('preview-area').style.display = 'block';
+            };
+            reader.readAsDataURL(f);
+        };
+        window.clearPreview = () => {
+            currentImgBase64 = null;
+            document.getElementById('preview-area').style.display = 'none';
+            document.getElementById('img-input').value = "";
+        };
+
         const loginBtn = document.getElementById('login-btn');
         socket.on('connect', ()=>{});
         socket.on('server_ready', ()=>{loginBtn.textContent="进入直播间";loginBtn.disabled=false;});
@@ -154,9 +191,7 @@
         loginBtn.onclick=()=>{let n=document.getElementById('username-input').value.trim();if(n){myUser=n;loginBtn.disabled=true;loginBtn.textContent="登录中...";socket.emit('login',{username:n});initAudio();}};
 
         socket.on('login_success',(d)=>{
-            document.getElementById('login-overlay').style.display='none';
-            document.getElementById('room-title').textContent=`🤖 ${d.current_model.name}`;
-            currentCfg = d.current_model;
+            document.getElementById('login-overlay').style.display='none'; document.getElementById('room-title').textContent=`🤖 ${d.current_model.name}`; currentCfg = d.current_model;
             if(d.current_model.path) loadModel(d.current_model.path, d.current_model);
             if(d.current_background) changeBackgroundUI(d.current_background);
         });
@@ -168,7 +203,7 @@
                 d.history.forEach(item => {
                     let type = item.type === 'response' ? 'pico' : (item.sender === myUser ? 'self' : 'other');
                     if (item.type === 'system') type = 'system';
-                    addMsg(item.text, item.sender, type, item.emotion);
+                    addMsg(item.text, item.sender, type, item.emotion, item.image);
                 });
                 win.scrollTop = win.scrollHeight;
             }
@@ -176,25 +211,12 @@
 
         socket.on('login_failed',(d)=>{alert(d.error);loginBtn.disabled=false;loginBtn.textContent="重试";});
 
-        // ★★★ 新增：Key 保存逻辑 ★★★
         window.saveGeminiKey = () => {
             const key = document.getElementById('api-key-input').value.trim();
             if(!key) { showToast("Key 不能为空", "error"); return; }
-            if(!key.startsWith("AIza")) { showToast("Key 格式错误 (应为 AIza 开头)", "error"); return; }
-            
+            if(!key.startsWith("AIza")) { showToast("Key 格式错误", "error"); return; }
             showToast("正在更新 Key...");
-            fetch('/update_key', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({key: key})
-            }).then(r=>r.json()).then(d=>{
-                if(d.success){
-                    showToast("✅ Key 已更新并生效！");
-                    document.getElementById('api-key-input').value = ""; // 清空防止泄露
-                } else {
-                    showToast("❌ " + d.msg, "error");
-                }
-            });
+            fetch('/update_key', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: key})}).then(r=>r.json()).then(d=>{if(d.success){showToast("✅ Key 已更新并生效！"); document.getElementById('api-key-input').value = "";} else {showToast("❌ " + d.msg, "error");}});
         };
 
         async function loadModel(path, cfg) {
@@ -208,15 +230,12 @@
                 app_pixi.stage.removeChildren(); 
                 model = await PIXI.live2d.Live2DModel.from(path);
                 app_pixi.stage.addChild(model);
-                window.model = model; 
+                window.model = model;
                 setTimeout(() => applyConfig(cfg || currentCfg), 100);
                 app_pixi.ticker.remove(lipSync); app_pixi.ticker.add(lipSync);
                 if(model.internalModel.motionManager) model.internalModel.motionManager.startRandomMotion('Idle');
                 console.log("✅ Model Loaded Successfully");
-            } catch(e) { 
-                console.error("❌ Model Load Failed:", e); 
-                showToast("❌ 模型加载失败", "error"); 
-            }
+            } catch(e) { console.error("❌ Model Load Failed:", e); showToast("❌ 模型加载失败", "error"); }
         }
 
         function initInteraction() { const s=document.getElementById('stage-container');app_pixi.stage.interactive=true;app_pixi.stage.on('pointerdown',(e)=>{if(model&&(!e.data.originalEvent.touches||e.data.originalEvent.touches.length===1)){isDragging=true;dragData=e.data;model.alpha=0.8;}});app_pixi.stage.on('pointerup',()=>{isDragging=false;if(model)model.alpha=1;}).on('pointerupoutside',()=>{isDragging=false;if(model)model.alpha=1;});app_pixi.stage.on('pointermove',()=>{if(isDragging&&model){const p=dragData.getLocalPosition(model.parent);model.x=p.x-model.width/2;model.y=p.y-model.height/2;}});s.addEventListener('wheel',(e)=>{e.preventDefault();if(model){model.scale.x*=(e.deltaY<0?1.1:0.9);model.scale.y=model.scale.x;}},{passive:false});s.addEventListener('touchstart',(e)=>{if(e.touches.length===2&&model){isDragging=false;initialDist=Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY);initialScale=model.scale.x;}});s.addEventListener('touchmove',(e)=>{if(e.touches.length===2&&model&&initialDist){e.preventDefault();model.scale.set(initialScale*(Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY)/initialDist));}}); }
@@ -227,47 +246,31 @@
             try {
                 const im = model.internalModel;
                 emo = emo.toUpperCase();
-
                 if (im.settings.expressions && im.settings.expressions.length > 0) {
                     let exprMap = {'HAPPY': ['happy', 'smile', 'joy', 'f01'], 'ANGRY': ['angry', 'mad', 'f02'], 'SAD': ['sad', 'cry', 'f03'], 'SHOCK': ['shock', 'surprise', 'f04']};
                     let exprKeywords = exprMap[emo] || [];
                     let targetExpr = im.settings.expressions.find(e => exprKeywords.some(k => e.Name.toLowerCase().includes(k.toLowerCase())))?.Name;
-                    if (targetExpr) {
-                        if (im.expressionManager) im.expressionManager.setExpression(targetExpr);
-                        else model.expression(targetExpr);
-                    }
+                    if (targetExpr) { if (im.expressionManager) im.expressionManager.setExpression(targetExpr); else model.expression(targetExpr); }
                 }
-
                 const definitions = im.motionManager.definitions?.Motions || im.motionManager.motionGroups || im.motionManager.definitions;
                 if (!definitions) return;
-
                 const groupAliases = {'HAPPY': ['Happy', 'Joy', 'Smile'], 'ANGRY': ['Angry', 'Mad'], 'SAD': ['Sad', 'Cry'], 'SHOCK': ['Shock', 'Surprise'], 'IDLE': ['Idle', 'Wait'], 'NORMAL': ['TapBody']};
                 const fileKeywords = {'HAPPY': ['happy', '02', '04'], 'ANGRY': ['angry', '01', '10'], 'SAD': ['sad', '06'], 'SHOCK': ['shock', '05']};
-
                 let targetGroups = groupAliases[emo] || [];
-                for (let g of targetGroups) {
-                    if (definitions[g]) { im.motionManager.startRandomMotion(g, 3); return; }
-                }
-
+                for (let g of targetGroups) { if (definitions[g]) { im.motionManager.startRandomMotion(g, 3); return; } }
                 let keywords = fileKeywords[emo] || [];
                 for (const [groupName, motions] of Object.entries(definitions)) {
                     if (!Array.isArray(motions)) continue;
                     for (let i = 0; i < motions.length; i++) {
                         const f = (motions[i].File || motions[i].file || "").toLowerCase();
-                        if (keywords.some(k => f.includes(k.toLowerCase()))) {
-                            im.motionManager.startMotion(groupName, i, 3);
-                            return;
-                        }
+                        if (keywords.some(k => f.includes(k.toLowerCase()))) { im.motionManager.startMotion(groupName, i, 3); return; }
                     }
                 }
-
                 if (emo !== 'IDLE' && definitions['TapBody']) { im.motionManager.startRandomMotion('TapBody', 3); }
-
             } catch(e) { console.error("Trigger Error:", e); }
         }
 
         document.getElementById('studio-btn').onclick=()=>{document.getElementById('studio-overlay').style.display='flex';socket.emit('get_studio_data');};
-        
         socket.on('studio_data',(d)=>{
             const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id;
             if(!d.models||d.models.length===0){list.innerHTML="<div style='grid-column:1/-1;text-align:center;color:red'>❌ 未找到模型</div>";}
@@ -286,16 +289,10 @@
                     }
                 });
             }
-            
-            const bgList = document.getElementById('bg-list');
-            bgList.innerHTML = "";
+            const bgList = document.getElementById('bg-list'); bgList.innerHTML = "";
             if(d.backgrounds) {
                 d.backgrounds.forEach(bg => {
-                    let chip = document.createElement('span');
-                    chip.className = `bg-chip ${bg===d.current_bg ? 'active' : ''}`;
-                    chip.textContent = bg;
-                    chip.onclick = () => changeBackground(bg);
-                    bgList.appendChild(chip);
+                    let chip = document.createElement('span'); chip.className = `bg-chip ${bg===d.current_bg ? 'active' : ''}`; chip.textContent = bg; chip.onclick = () => changeBackground(bg); bgList.appendChild(chip);
                 });
             }
         });
@@ -304,27 +301,13 @@
             if(!f) return;
             let fd = new FormData(); fd.append('file', f);
             showToast("🖼️ 上传背景...");
-            fetch('/upload_bg', {method:'POST', body:fd}).then(r=>r.json()).then(d=>{
-                if(d.success){ showToast("✅ 上传成功"); socket.emit('get_studio_data'); }
-                else showToast("❌ " + d.msg, "error");
-            });
+            fetch('/upload_bg', {method:'POST', body:fd}).then(r=>r.json()).then(d=>{if(d.success){ showToast("✅ 上传成功"); socket.emit('get_studio_data'); } else showToast("❌ " + d.msg, "error");});
         };
-        
-        window.changeBackground = (name) => {
-            socket.emit('switch_background', {name: name});
-        };
-        
-        socket.on('background_update', (d) => {
-            changeBackgroundUI(d.url ? d.url.split('/').pop() : '');
-        });
-        
+        window.changeBackground = (name) => { socket.emit('switch_background', {name: name}); };
+        socket.on('background_update', (d) => { changeBackgroundUI(d.url ? d.url.split('/').pop() : ''); });
         function changeBackgroundUI(filename) {
             const el = document.getElementById('stage-container');
-            if (filename) {
-                el.style.backgroundImage = `url('/static/backgrounds/${filename}')`;
-            } else {
-                el.style.backgroundImage = 'radial-gradient(circle,#636e72 10%,#2d3436 90%)';
-            }
+            if (filename) { el.style.backgroundImage = `url('/static/backgrounds/${filename}')`; } else { el.style.backgroundImage = 'radial-gradient(circle,#636e72 10%,#2d3436 90%)'; }
         }
 
         socket.on('model_switched',(m)=>{currentCfg=m;loadModel(m.path,m);document.getElementById('room-title').textContent=`🤖 ${m.name}`;if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');showToast(`✨ 已切换为 ${m.name}`);});
@@ -338,7 +321,7 @@
         function getLocalMemories(){return JSON.parse(localStorage.getItem(MEMORY_KEY))||[];}
         function saveLocalMemory(f){let m=getLocalMemories();if(f&&!m.includes(f)){m.push(f);if(m.length>50)m=m.slice(-50);localStorage.setItem(MEMORY_KEY,JSON.stringify(m));return true;}return false;}
         
-        socket.on('chat_message',(d)=>{addMsg(d.text,d.sender,d.sender===myUser?'self':'other');});
+        socket.on('chat_message',(d)=>{addMsg(d.text,d.sender,d.sender===myUser?'self':'other', null, d.image);});
         socket.on('system_message',(d)=>{addMsg(d.text,'系统','system');});
         socket.on('response',(d)=>{addMsg(d.text,'Pico','pico',d.emotion);triggerMotion(d.emotion||'NORMAL');});
         
@@ -346,11 +329,37 @@
         socket.on('audio_response',(d)=>{if(d.audio&&lastPico){let a=new Audio();a.crossOrigin="anonymous";a.src=d.audio;let ui=document.createElement('audio');ui.className='audio-player';ui.controls=true;ui.src=d.audio;lastPico.appendChild(ui);if(audioCtx){if(audioCtx.state==='suspended')audioCtx.resume();try{let s=audioCtx.createMediaElementSource(a);s.connect(analyser);analyser.connect(audioCtx.destination);a.onplay=()=>{isTalking=true};a.onpause=a.onended=()=>{isTalking=false;if(model?.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',0)};}catch(e){}}a.play().catch(()=>{});}});
         socket.on('toast',(d)=>showToast(d.text,d.type));
         function initAudio(){if(!audioCtx)try{audioCtx=new(window.AudioContext||window.webkitAudioContext)();analyser=audioCtx.createAnalyser();analyser.fftSize=512;dataArray=new Uint8Array(analyser.frequencyBinCount);}catch(e){}}
-        function addMsg(t,u,y,e){let d=document.createElement('div');d.className=`message-container ${y}`;if(y!=='system')d.innerHTML=`<div class="message-info">${u} ${e?`<span class="emotion-tag">${e}</span>`:''}</div>`;d.innerHTML+=`<div class="message-bubble">${t}</div>`;document.getElementById('chat-window').appendChild(d);document.getElementById('chat-window').scrollTop=99999;if(y==='pico')lastPico=d;}
+        function addMsg(t,u,y,e,img){
+            let d=document.createElement('div');d.className=`message-container ${y}`;
+            if(y!=='system')d.innerHTML=`<div class="message-info">${u} ${e?`<span class="emotion-tag">${e}</span>`:''}</div>`;
+            
+            let contentHtml = `<div class="message-bubble">`;
+            if(img) contentHtml += `<img src="${img}" class="message-img" onclick="window.open(this.src)">`;
+            if(t) contentHtml += `<div>${t}</div>`;
+            contentHtml += `</div>`;
+            
+            d.innerHTML+=contentHtml;
+            document.getElementById('chat-window').appendChild(d);
+            document.getElementById('chat-window').scrollTop=99999;
+            if(y==='pico')lastPico=d;
+        }
         function showToast(m,t='success'){let d=document.createElement('div');d.className='toast';d.textContent=m;if(t==='error'||t==='info')d.style.backgroundColor=t==='error'?'#d63031':(t==='info'?'#0984e3':'#00b894');document.getElementById('toast-container').appendChild(d);setTimeout(()=>d.remove(),3500);}
-        const send=()=>{let i=document.getElementById('user-input');let t=i.value.trim();if(!t)return;
-            if(t.startsWith('/')){if(t.startsWith('/记 ')){let f=t.substring(3).trim();if(f&&saveLocalMemory(f)){addMsg(`(本地) 记住了: ${f}`,'我','self');showToast('🧠 记忆已保存');}}else if(t==='/清除记忆'){clearLocalMemories();}else if(t.toLowerCase()==='/管理员'){socket.emit('message',{text:t,memories:getLocalMemories()});}else{showToast('未知指令','error');}}else{socket.emit('message',{text:t,memories:getLocalMemories()});}
+        const send=()=>{
+            let i=document.getElementById('user-input');let t=i.value.trim();
+            if(!t && !currentImgBase64) return;
+            
+            if(t.startsWith('/')){
+                // 指令处理逻辑
+                if(t.startsWith('/记 ')){let f=t.substring(3).trim();if(f&&saveLocalMemory(f)){addMsg(`(本地) 记住了: ${f}`,'我','self');showToast('🧠 记忆已保存');}}
+                else if(t==='/清除记忆'){clearLocalMemories();}
+                else if(t.toLowerCase()==='/管理员'){socket.emit('message',{text:t,memories:getLocalMemories()});}
+                else{showToast('未知指令','error');}
+            } else {
+                // 发送消息 (文字 + 图片)
+                socket.emit('message', {text:t, image: currentImgBase64, memories:getLocalMemories()});
+            }
             i.value='';
+            clearPreview(); // 清除图片缓存
         };
         document.getElementById('send-btn').onclick=send; document.getElementById('user-input').onkeypress=(e)=>{if(e.key==='Enter')send();};
     </script>
