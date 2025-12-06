@@ -3,4 +3,5 @@
 flask
 flask-socketio
 google-genai
+Pillow
 python-dotenv
