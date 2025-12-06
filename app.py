@@ -1,5 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (视觉 + 直播增强版)
+# Pico AI Server - app.py (直播增强 + 弹幕接口版)
 # =======================================================================
 import os
 import json
@@ -16,7 +16,10 @@ import requests
 import urllib.parse
 import base64
 from io import BytesIO
-from PIL import Image
+try:
+    from PIL import Image
+except ImportError:
+    print("⚠️ 警告: 未安装 Pillow，图片识别功能将不可用。请运行 pip install Pillow")
 
 import edge_tts
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
@@ -29,7 +32,8 @@ app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = 'secret'
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60)
+# ★★★ 关键修改：max_http_buffer_size 调大到 10MB，防止发图卡死 ★★★
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60, max_http_buffer_size=10*1024*1024)
 SERVER_VERSION = str(int(time.time()))
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -272,6 +276,56 @@ def update_key():
     except Exception as e:
         return jsonify({'success': False, 'msg': f"写入失败: {e}"})
 
+# ★★★ 新增：弹幕接收接口 ★★★
+# 外部爬虫可以 POST JSON 到 http://ip:5000/api/danmaku
+# 数据格式: {"username": "B站用户", "text": "主播好可爱"}
+@app.route('/api/danmaku', methods=['POST'])
+def api_danmaku():
+    data = request.json
+    if not data or 'text' not in data: return jsonify({'success': False})
+    
+    user = data.get('username', '弹幕')
+    msg = data.get('text', '')
+    
+    # 模拟用户发送消息，复用 on_message 逻辑
+    # 既然是弹幕，不需要 request.sid，我们在后台广播
+    print(f"📨 收到弹幕: [{user}] {msg}")
+    
+    # 手动触发处理流程 (这里简化处理，直接调用逻辑)
+    # 1. 存历史
+    user_msg_obj = {'type': 'chat', 'sender': user, 'text': msg}
+    GLOBAL_STATE['chat_history'].append(user_msg_obj)
+    save_state()
+    # 2. 广播给前端显示
+    socketio.emit('chat_message', {'text': msg, 'sender': user}, to='lobby')
+    
+    # 3. 让 AI 回复
+    socketio.start_background_task(process_ai_response, user, msg)
+    
+    return jsonify({'success': True})
+
+def process_ai_response(sender, msg):
+    """ 独立的 AI 处理函数，供 Socket 和 API 共用 """
+    try:
+        if not chatroom_chat: init_chatroom()
+        if not client: return
+
+        # 简单处理，如果是弹幕，不发图片给 AI
+        resp = chatroom_chat.send_message(f"【{sender}】: {msg}")
+        
+        emo='NORMAL'; match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
+        if match: emo=match.group(1); txt=resp.text.replace(match.group(0),'').strip()
+        else: txt=resp.text
+        
+        ai_msg_obj = {'type': 'response', 'sender': 'Pico', 'text': txt, 'emotion': emo}
+        GLOBAL_STATE['chat_history'].append(ai_msg_obj)
+        save_state()
+        
+        socketio.emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
+        bg_tts(txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], room='lobby')
+    except Exception as e:
+        print(f"AI Error: {e}")
+
 # --- 聊天交互 ---
 users = {}
 chatroom_chat = None
@@ -306,41 +360,47 @@ def on_message(d):
     if sid not in users: return
     
     msg = d.get('text', '')
-    img_data = d.get('image', None) # 接收图片 Base64
+    img_data = d.get('image', None) 
     sender = users[sid]['username']
     
     if "/管理员" in msg and sender.lower()=="yk": 
         users[sid]['is_admin']=True; emit('admin_unlocked'); return
     
-    # 记录历史
+    # 1. 存历史
     user_msg_obj = {'type': 'chat', 'sender': sender, 'text': msg}
-    if img_data: user_msg_obj['image'] = True # 标记有图
+    if img_data: user_msg_obj['image'] = True 
     GLOBAL_STATE['chat_history'].append(user_msg_obj)
     save_state()
     
+    # 2. 发送给前端
     emit('chat_message', {'text': msg, 'sender': sender, 'image': img_data}, to='lobby')
     
+    # 3. AI 处理 (包含图片逻辑)
     try:
         if not chatroom_chat: init_chatroom()
         if not client: return
 
-        # 构建发送给 Gemini 的内容
         content_parts = []
         if msg: content_parts.append(msg)
         
-        # 处理图片
         if img_data:
-            # data:image/jpeg;base64,......
-            header, encoded = img_data.split(",", 1)
-            mime_type = header.split(":")[1].split(";")[0]
-            image_bytes = base64.b64decode(encoded)
-            # 转换为 Gemini Part 对象
-            image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
-            content_parts.append(image_part)
-            print(f"🖼️ 收到图片: {mime_type}, {len(image_bytes)} bytes")
+            try:
+                # 去掉头部 data:image/jpeg;base64,
+                if "," in img_data:
+                    header, encoded = img_data.split(",", 1)
+                    mime_type = header.split(":")[1].split(";")[0]
+                else:
+                    encoded = img_data
+                    mime_type = "image/jpeg" # 默认
+                
+                image_bytes = base64.b64decode(encoded)
+                image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+                content_parts.append(image_part)
+                print(f"🖼️ 处理图片: {len(image_bytes)} bytes")
+            except Exception as e:
+                print(f"图片解析失败: {e}")
 
         if content_parts:
-            # 格式：[text, image]
             resp = chatroom_chat.send_message(content_parts)
             
             emo='NORMAL'
