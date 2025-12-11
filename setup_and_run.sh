@@ -13,21 +13,21 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}🤖 Pico AI (离线 TTS 模式) 启动中...${NC}"
+echo -e "${GREEN}🤖 Pico AI (离线 TTS 最终模式) 启动中...${NC}"
 
 # --- 1. 虚拟环境 ---
 if [ ! -d "$VENV_DIR" ]; then python3 -m venv "$VENV_DIR"; fi
 source "$VENV_DIR/bin/activate"
 
 # --- 2. 强制安装系统依赖 (TTS 核心) ---
-echo -e "${YELLOW}⚙️ 正在安装系统级 TTS 语音引擎 (eSpeak/eSpeak-NG)...${NC}"
-# 安装 eSpeak 及其中文语言包
+echo -e "${YELLOW}⚙️ 正在安装系统级 TTS 引擎和音频库 (eSpeak, libasound, portaudio)...${NC}"
+# 安装 eSpeak (TTS 引擎) 和 libasound2-dev, portaudio19-dev (Pyaudio依赖)
 sudo apt update -qq
-sudo apt install espeak -y -qq
-echo -e "${GREEN}✅ 系统语音引擎安装完成。${NC}"
+sudo apt install espeak libasound2-dev portaudio19-dev -y -qq
+echo -e "${GREEN}✅ 系统依赖安装完成。${NC}"
 
-# --- 3. 强制安装 Python 依赖 (pyttsx3) ---
-echo "📦 正在使用清华源强制安装依赖 (pyttsx3)..."
+# --- 3. 强制安装 Python 依赖 (pyttsx3, pyaudio) ---
+echo "📦 正在使用清华源强制安装 Python 依赖..."
 PIP_CMD="pip install -i https://pypi.tuna.tsinghua.edu.cn/simple"
 
 $PIP_CMD --upgrade pip -q
