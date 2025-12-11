@@ -13,7 +13,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}🤖 Pico AI (重装甲修复版) 启动中...${NC}"
+echo -e "${GREEN}🤖 Pico AI (Ultimate Full Version) 启动中...${NC}"
 
 # --- 1. 代码同步 ---
 echo -e "🔄 从 GitHub 拉取最新代码..."
