@@ -1,7 +1,6 @@
 # =======================================================================
-# Pico AI Server - FINAL STABILIZATION EDITION (TTS ARG CLEANUP)
-# 修复：unrecognized arguments: --proxy-user-agent (移除不受支持的参数)
-# 保留：Gemini 429 错误自动处理、TTS 参数强制合规、前端回退机制
+# Pico AI Server - pyttsx3 离线本地 TTS 集成版
+# 彻底放弃网络依赖，使用系统内置语音引擎，解决一切 TTS 故障。
 # =======================================================================
 import os
 import json
@@ -15,24 +14,23 @@ import threading
 import requests
 import urllib.parse
 import base64
-import asyncio
 import logging
 import subprocess
 import sys
 import traceback
-
-# 尝试导入 edge_tts
-try:
-    import edge_tts
-    print("✅ Python 内部库 edge_tts 已加载")
-except ImportError:
-    print("⚠️ Python 内部库 edge_tts 未找到，将完全依赖命令行模式")
 
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from google import genai
 from google.genai import types
 from werkzeug.utils import secure_filename
+
+# ★★★ 导入 pyttsx3 库 ★★★
+try:
+    import pyttsx3
+    print("✅ Python 内部库 pyttsx3 已加载")
+except ImportError:
+    print("⚠️ Python 内部库 pyttsx3 未找到，请检查 requirements.txt 安装")
 
 # 日志配置
 logging.basicConfig(
@@ -41,7 +39,7 @@ logging.basicConfig(
 )
 
 app = Flask(__name__, static_folder='static')
-app.config['SECRET_KEY'] = 'pico_safeguard_key'
+app.config['SECRET_KEY'] = 'pico_local_tts_key'
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
 
 # SocketIO 配置
@@ -73,9 +71,7 @@ for d in [AUDIO_DIR, MODELS_DIR, BG_DIR]:
 
 # --- 配置加载 ---
 CONFIG = {
-    "GEMINI_API_KEY": "",
-    "TTS_VOICE": "zh-CN-XiaoxiaoNeural",
-    "TTS_PROXY": ""
+    "GEMINI_API_KEY": ""
 }
 
 try:
@@ -87,14 +83,15 @@ except Exception as e:
     logging.error(f"加载配置文件出错: {e}")
 
 # Gemini 初始化
-client = None
-api_key = CONFIG.get("GEMINI_API_KEY")
-if api_key and "AIza" in api_key:
+gemini_client = None
+gemini_api_key = CONFIG.get("GEMINI_API_KEY")
+if gemini_api_key and "AIza" in gemini_api_key:
     try:
-        client = genai.Client(api_key=api_key)
+        gemini_client = genai.Client(api_key=gemini_api_key)
         logging.info("Gemini 客户端就绪")
     except Exception as e:
         logging.error(f"Gemini 初始化失败: {e}")
+
 
 # --- 状态管理 ---
 GLOBAL_STATE = { 
@@ -125,7 +122,7 @@ load_state()
 
 # 当前模型缓存
 CURRENT_MODEL = {
-    "id": "default", "path": "", "persona": "", "voice": "zh-CN-XiaoxiaoNeural", 
+    "id": "default", "path": "", "persona": "", "voice": "zh", # 默认使用中文
     "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.5, "y": 0.5
 }
 DEFAULT_INSTRUCTION = "\n【指令】回复开头标记心情：[HAPPY], [ANGRY], [SAD], [SHOCK], [NORMAL]。"
@@ -134,7 +131,7 @@ def get_model_config(mid):
     p = os.path.join(MODELS_DIR, mid, "config.json")
     d = {
         "persona": f"你是{mid}。{DEFAULT_INSTRUCTION}", 
-        "voice": "zh-CN-XiaoxiaoNeural", 
+        "voice": "zh", 
         "rate": "+0%", "pitch": "+0Hz", 
         "scale": 0.5, "x": 0.5, "y": 0.5
     }
@@ -190,114 +187,103 @@ def init_model():
 
 init_model()
 
-# ================= TTS 核心 (稳定参数 + 代理) =================
+# ================= TTS 核心 (pyttsx3 实现) =================
 
-def clean_tts_param(val, unit):
-    """
-    强制清洗 TTS 参数，确保格式为 [+-]xxUNIT。
-    """
-    s = str(val).strip()
-    nums = re.sub(r'[^\d\+\-]', '', s)
-    
-    if not nums or nums in ['+', '-']:
-        n = 0
-    else:
-        try:
-            n = int(nums)
-        except ValueError:
-            n = 0
-            
-    return f"{n:+}{unit}"
+# 缓存 pyttsx3 引擎实例，避免重复初始化
+tts_engine = None
+TTS_INIT_LOCK = threading.Lock()
 
+def get_tts_engine():
+    global tts_engine
+    with TTS_INIT_LOCK:
+        if tts_engine is None:
+            try:
+                tts_engine = pyttsx3.init()
+                logging.info("pyttsx3 引擎初始化成功")
+            except Exception as e:
+                logging.error(f"pyttsx3 引擎初始化失败: {e}")
+                tts_engine = False # 标记为失败，不再尝试初始化
+        return tts_engine
 
-def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
+def run_local_tts(text, output_path, voice, rate_str, pitch_str):
     """
-    执行 TTS 命令。使用清洗后的参数。
+    使用 pyttsx3 生成 MP3/WAV 文件
     """
+    engine = get_tts_engine()
+    if not engine:
+        return False, "pyttsx3 引擎未初始化，请检查 espeak 等系统依赖。"
+
     try:
-        # ★★★ 强制合规参数 ★★★
-        safe_rate = clean_tts_param(rate, "%")
-        safe_pitch = clean_tts_param(pitch, "Hz")
+        # --- 1. 速度调节 ---
+        # pyttsx3 默认速度约 200 wpm (Words Per Minute)
+        rate_change = int(re.sub(r'[^\d\+\-]', '', rate_str))
+        current_rate = engine.getProperty('rate')
+        # 根据百分比调整速度，例如 +10% 提速 10%
+        new_rate = int(current_rate * (1 + rate_change / 100.0))
+        engine.setProperty('rate', max(80, min(500, new_rate)))
         
-        logging.info(f"TTS 最终参数: Voice={voice}, Rate={safe_rate}, Pitch={safe_pitch}")
+        # --- 2. 语音选择 (Espeak/eSpeak-NG) ---
+        voices = engine.getProperty('voices')
+        
+        # 优先选择中文语音 (zh)
+        target_voice = next((v for v in voices if 'zh' in v.id.lower() or 'mandarin' in v.name.lower()), None)
 
-        cmd = [
-            sys.executable, "-m", "edge_tts",
-            "--text", text,
-            "--write-media", output_path,
-            "--voice", voice,
-            "--rate", safe_rate,
-            "--pitch", safe_pitch
-            # ★★★ 移除 --proxy-user-agent，因为您的版本不支持 ★★★
-        ]
+        if target_voice:
+             engine.setProperty('voice', target_voice.id)
+        else:
+             # 如果找不到中文，使用第一个语音并给出警告
+             logging.warning("未找到中文语音包，使用默认系统语音。")
+
+        # --- 3. 语音合成 ---
+        # pyttsx3 导出为 MP3 需要额外依赖（如 FFmpeg），导出 WAV 更稳定
+        engine.save_to_file(text, output_path)
+        engine.runAndWait() 
         
-        # 注入代理配置 (标准环境变量方式)
-        my_env = os.environ.copy()
-        proxy_url = CONFIG.get("TTS_PROXY", "").strip()
-        if proxy_url:
-            my_env["http_proxy"] = proxy_url
-            my_env["https_proxy"] = proxy_url
-            # 如果 edge-tts 支持 --proxy，也可以加进去，但环境变量更通用
-            # cmd.extend(["--proxy", proxy_url]) 
-        
-        logging.info(f"执行 TTS 命令: {' '.join(cmd[:3])} ...") 
-        
-        result = subprocess.run(
-            cmd, 
-            check=True, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE,
-            timeout=60,
-            env=my_env
-        )
+        # NOTE: pyttsx3 默认输出格式依赖系统，通常是 WAV。前端需要兼容。
+
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            return True, ""
+        else:
+            return False, "本地 TTS 引擎执行失败，未生成文件。"
             
-        return True, ""
     except Exception as e:
         err_msg = str(e)
-        if hasattr(e, 'stderr') and e.stderr: 
-            err_msg = e.stderr.decode('utf-8', errors='ignore')
-        
-        if "No audio was received" in err_msg:
-             return False, "TTS Server timeout or refused voice name."
-
-        logging.error(f"TTS 失败: {err_msg}")
+        logging.error(f"本地 TTS 失败: {err_msg}")
         return False, err_msg
+
 
 def bg_tts_task(text, voice, rate, pitch, room=None, sid=None):
     """后台任务：生成并推送，或者触发前端降级"""
     clean_text = re.sub(r'\[(.*?)\]', '', text).strip()
-    if not clean_text: return
+    if not clean_text: 
+        return
 
-    fname = f"{uuid.uuid4()}.mp3"
+    # pyttsx3 通常输出 WAV 格式
+    fname = f"local_{uuid.uuid4()}.wav" 
     out_path = os.path.join(AUDIO_DIR, fname)
     
-    # 尝试服务器生成 (第一次)
-    success, err_reason = run_edge_tts_cmd(clean_text, out_path, voice, rate, pitch)
-    
-    # 失败后如果使用的是默认语音，尝试备用稳定语音 (第二次)
-    if not success and voice == "zh-CN-XiaoxiaoNeural":
-        logging.warning("TTS 失败，尝试切换到备用语音 zh-CN-YunxiNeural")
-        success, err_reason = run_edge_tts_cmd(clean_text, out_path, "zh-CN-YunxiNeural", rate, pitch)
+    # ★★★ 尝试服务器本地 TTS 生成 ★★★
+    success, err_reason = run_local_tts(clean_text, out_path, voice, rate, pitch)
 
     if success and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
         url = f"/static/audio/{fname}"
         payload = {'audio': url}
-        logging.info(f"✅ 语音生成成功: {url}")
+        logging.info(f"✅ 语音生成成功 (pyttsx3): {url}")
         
         if room: socketio.emit('audio_response', payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_response', payload, to=sid, namespace='/')
     else:
         # 生成失败，把文本发给前端，让浏览器读
-        logging.error(f"❌ 语音生成最终失败，切换前端合成: {err_reason}")
+        logging.error(f"❌ 本地 TTS 失败，切换前端合成: {err_reason}")
         err_payload = {
-            'msg': f'TTS网络不稳定，切换本地语音', 
+            'msg': f'本地TTS失败，切换浏览器语音', 
             'text': clean_text,
-            'type': 'warning' 
+            'type': 'error' 
         }
         if room: socketio.emit('audio_failed', err_payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_failed', err_payload, to=sid, namespace='/')
 
-# ================= Flask 路由 =================
+# ================= Flask 路由 (保持不变) =================
 @app.route('/')
 def idx(): return redirect(url_for('pico_v', v=SERVER_VERSION))
 
@@ -311,13 +297,18 @@ def pico_v(v):
 def update_key():
     data = request.json
     new_key = data.get('key', '').strip()
-    if not new_key.startswith("AIza"): return jsonify({'success': False, 'msg': 'Key格式错误'})
-    global client, CONFIG; CONFIG['GEMINI_API_KEY'] = new_key
-    try: 
-        client = genai.Client(api_key=new_key)
-        with open(CONFIG_FILE, "w", encoding='utf-8') as f: json.dump(CONFIG, f, indent=2)
-        return jsonify({'success': True})
-    except Exception as e: return jsonify({'success': False, 'msg': str(e)})
+    key_type = data.get('type') # 'gemini' 
+    
+    if key_type == 'gemini':
+        if not new_key.startswith("AIza"): return jsonify({'success': False, 'msg': 'Gemini Key 格式错误'})
+        global gemini_client, CONFIG; CONFIG['GEMINI_API_KEY'] = new_key
+        try: 
+            gemini_client = genai.Client(api_key=new_key)
+            with open(CONFIG_FILE, "w", encoding='utf-8') as f: json.dump(CONFIG, f, indent=2)
+            return jsonify({'success': True, 'msg': 'Gemini Key 已更新'})
+        except Exception as e: return jsonify({'success': False, 'msg': str(e)})
+
+    return jsonify({'success': False, 'msg': '未知 Key 类型'})
 
 @app.route('/upload_bg', methods=['POST'])
 def upload_bg():
@@ -361,24 +352,24 @@ def api_danmaku():
     socketio.start_background_task(process_ai_response, user, msg)
     return jsonify({'success': True})
 
-# ================= AI 逻辑 (带 429 保护) =================
+# ================= AI 逻辑 (使用 Gemini 客户端) =================
 users = {}
 chatroom_chat = None
 
 def init_chatroom():
     global chatroom_chat
-    if not client: return
+    if not gemini_client: return
     sys_prompt = CURRENT_MODEL.get('persona', "")
     if not sys_prompt: sys_prompt = DEFAULT_INSTRUCTION
-    try: chatroom_chat = client.chats.create(model="gemini-2.5-flash", config={"system_instruction": sys_prompt})
+    try: chatroom_chat = gemini_client.chats.create(model="gemini-2.5-flash", config={"system_instruction": sys_prompt})
     except: pass
 
 def process_ai_response(sender, msg, img_data=None, sid=None):
     try:
         if not chatroom_chat: init_chatroom()
         
-        if not client: 
-            if sid: socketio.emit('system_message', {'text': '请设置 API Key'}, to=sid)
+        if not gemini_client: 
+            if sid: socketio.emit('system_message', {'text': '请设置 Gemini API Key'}, to=sid)
             return
         
         content = []
@@ -432,7 +423,7 @@ def on_login(d):
     if not chatroom_chat: init_chatroom()
     emit('login_success', {'username': u, 'current_model': CURRENT_MODEL, 'current_background': GLOBAL_STATE.get('current_background', '')})
     emit('history_sync', {'history': GLOBAL_STATE['chat_history']})
-    socketio.start_background_task(bg_tts_task, f"欢迎 {u}", CURRENT_MODEL['voice'], "+0%", "+0%", sid=request.sid)
+    bg_tts_task(f"欢迎 {u}", CURRENT_MODEL['voice'], "+0%", "+0%", sid=request.sid)
 
 @socketio.on('message')
 def on_msg(d):
@@ -456,23 +447,18 @@ def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
 
 @socketio.on('get_studio_data')
 def on_get_data():
+    # 本地 TTS 语音列表 (仅作演示，实际依赖系统安装的 Espeak 语言包)
     voices = [
-        {"id":"zh-CN-XiaoxiaoNeural", "name":"🇨🇳 晓晓 (女声)"},
-        {"id":"zh-CN-YunxiNeural", "name":"🇨🇳 云希 (少年)"},
-        {"id":"zh-CN-YunjianNeural", "name":"🇨🇳 云健 (新闻)"},
-        {"id":"zh-CN-XiaoyiNeural", "name":"🇨🇳 晓伊 (可爱)"},
-        {"id":"zh-TW-HsiaoChenNeural", "name":"🇹🇼 晓臻 (台湾)"},
-        {"id":"zh-HK-HiuMaanNeural", "name":"🇭🇰 晓曼 (粤语)"},
-        {"id":"en-US-AnaNeural", "name":"🇺🇸 Ana (英文)"},
-        {"id":"en-US-GuyNeural", "name":"🇺🇸 Guy (英文男)"},
-        {"id":"ja-JP-NanamiNeural", "name":"🇯🇵 七海 (日语)"}
+        {"id":"zh", "name":"🎙️ 默认中文 (Espeak)"},
+        {"id":"en", "name":"🎙️ 默认英文 (Espeak)"},
     ]
     emit('studio_data', {
         'models': scan_models(), 
         'current_id': CURRENT_MODEL['id'], 
         'voices': voices, 
         'backgrounds': scan_backgrounds(), 
-        'current_bg': GLOBAL_STATE.get('current_background', '')
+        'current_bg': GLOBAL_STATE.get('current_background', ''),
+        'gemini_key_status': 'OK' if gemini_client else 'MISSING',
     })
 
 @socketio.on('switch_model')
