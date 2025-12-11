@@ -1,6 +1,6 @@
 # =======================================================================
-# Pico AI Server - AUDIO FIXED EDITION
-# 修复：TTS 命令找不到、生成失败无反馈、超时问题
+# Pico AI Server - FULL UNCOMPRESSED VERSION
+# 修复：TTS 超时延长、详细错误日志、完整功能保留
 # =======================================================================
 import os
 import json
@@ -20,12 +20,12 @@ import subprocess
 import sys
 import traceback
 
-# 尝试导入 edge_tts，如果没有也没关系，我们会用命令行调用
+# 尝试导入 edge_tts，用于检测环境
 try:
     import edge_tts
     print("✅ Python 内部库 edge_tts 已加载")
 except ImportError:
-    print("⚠️ Python 内部库 edge_tts 未找到，将完全依赖命令行模式")
+    print("⚠️ Python 内部库 edge_tts 未找到，依赖将不可用！")
 
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
@@ -33,17 +33,17 @@ from google import genai
 from google.genai import types
 from werkzeug.utils import secure_filename
 
-# 日志配置
+# 日志配置 - 详细模式
 logging.basicConfig(
     level=logging.INFO, 
     format='[%(asctime)s] %(levelname)s: %(message)s'
 )
 
 app = Flask(__name__, static_folder='static')
-app.config['SECRET_KEY'] = 'pico_audio_fixed_key'
-app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
+app.config['SECRET_KEY'] = 'pico_final_secret_key'
+app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB 上传限制
 
-# SocketIO 配置
+# SocketIO 配置 - 增加 buffer 防止大图断连
 socketio = SocketIO(app, 
     cors_allowed_origins="*", 
     async_mode='threading', 
@@ -62,6 +62,7 @@ BG_DIR = os.path.join(BASE_DIR, "static", "backgrounds")
 STATE_FILE = os.path.join(BASE_DIR, "server_state.json")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 
+# 确保目录存在
 for d in [AUDIO_DIR, MODELS_DIR, BG_DIR]:
     if not os.path.exists(d):
         try:
@@ -115,6 +116,7 @@ def load_state():
             with open(STATE_FILE, 'r', encoding='utf-8') as f:
                 saved = json.load(f)
                 if saved: GLOBAL_STATE.update(saved)
+                # 限制历史记录条数
                 if len(GLOBAL_STATE["chat_history"]) > 100:
                     GLOBAL_STATE["chat_history"] = GLOBAL_STATE["chat_history"][-100:]
         except: pass
@@ -188,12 +190,12 @@ def init_model():
 
 init_model()
 
-# ================= TTS 核心 (绝对路径修正版) =================
+# ================= TTS 核心 (超时修正版) =================
 
 def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
     """
     使用 sys.executable 调用模块，确保环境一致性。
-    这是最稳的方法。
+    超时时间从 30s 延长到 60s。
     """
     try:
         # 构造命令：python -m edge_tts ...
@@ -207,20 +209,22 @@ def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
         ]
         logging.info(f"执行 TTS: {text[:10]}... | Voice: {voice}")
         
-        # 30秒超时，防止树莓派卡顿
+        # ★★★ 关键修改：超时时间 60秒 ★★★
         result = subprocess.run(
             cmd, 
             check=True, 
             stdout=subprocess.PIPE, 
             stderr=subprocess.PIPE,
-            timeout=30
+            timeout=60
         )
         return True
     except subprocess.CalledProcessError as e:
-        logging.error(f"TTS 命令报错 (Code {e.returncode}): {e.stderr.decode('utf-8')}")
+        # 捕获并打印详细错误
+        err_msg = e.stderr.decode('utf-8') if e.stderr else "Unknown Error"
+        logging.error(f"TTS 命令报错 (Code {e.returncode}): {err_msg}")
         return False
     except subprocess.TimeoutExpired:
-        logging.error("TTS 生成超时 (30s)")
+        logging.error("TTS 生成超时 (60s) - 网络连接过慢")
         return False
     except Exception as e:
         logging.error(f"TTS 未知异常: {e}")
@@ -245,7 +249,7 @@ def bg_tts_task(text, voice, rate, pitch, room=None, sid=None):
         if room: socketio.emit('audio_response', payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_response', payload, to=sid, namespace='/')
     else:
-        # ★★★ 关键：如果失败，通知前端报错 ★★★
+        # 发送失败通知给前端
         logging.error("❌ 音频生成失败，发送错误通知")
         err_payload = {'msg': '语音生成失败 (超时或库缺失)'}
         if room: socketio.emit('audio_failed', err_payload, to=room, namespace='/')
