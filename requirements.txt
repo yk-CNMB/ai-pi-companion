@@ -3,5 +3,7 @@
 flask
 flask-socketio
 google-genai
-Pillow
+gunicorn
 python-dotenv
+pyttsx3
+pyaudio
