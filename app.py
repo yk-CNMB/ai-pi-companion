@@ -1,5 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (直播增强 + 弹幕接口版)
+# Pico AI Server - app.py (TTS 修复 + 弹幕 + 视觉)
 # =======================================================================
 import os
 import json
@@ -16,11 +16,8 @@ import requests
 import urllib.parse
 import base64
 from io import BytesIO
-try:
-    from PIL import Image
-except ImportError:
-    print("⚠️ 警告: 未安装 Pillow，图片识别功能将不可用。请运行 pip install Pillow")
 
+# 移除不必要的 soundfile 依赖，防止崩溃
 import edge_tts
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
@@ -30,9 +27,9 @@ from werkzeug.utils import secure_filename
 
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = 'secret'
+# 允许最大 10MB 的图片上传
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
 
-# ★★★ 关键修改：max_http_buffer_size 调大到 10MB，防止发图卡死 ★★★
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60, max_http_buffer_size=10*1024*1024)
 SERVER_VERSION = str(int(time.time()))
 
@@ -47,7 +44,7 @@ for d in [AUDIO_DIR, MODELS_DIR, BG_DIR]:
 
 # --- 配置加载 ---
 CONFIG = {
-    "TTS_MODE": "vits", 
+    "TTS_MODE": "edge",  # 默认改回 edge，保证有声音
     "VITS_API_URL": "https://artrajz-vits-simple-api.hf.space/voice/vits?text={text}&id=165&format=wav&lang=zh"
 }
 try:
@@ -63,30 +60,22 @@ if api_key and "AIza" in api_key:
     try: client = genai.Client(api_key=api_key)
     except: pass
 
-# --- 情感指令 ---
 EMOTION_INSTRUCTION = """
 【重要系统指令】
 你必须在每次回复的开头，明确标记你当前的心情。
 请严格从以下标签中选择一个，放在句首：
-[HAPPY] - 开心、兴奋、害羞、爱意 (对应高兴、大笑、害羞等)
-[ANGRY] - 生气、愤怒、烦躁 (对应愤怒、不满)
-[SAD] - 悲伤、哭泣、失望 (对应大哭、沮丧)
-[SHOCK] - 惊讶、震惊、困惑 (对应吃惊、转头)
-[NORMAL] - 平静、普通、思考 (对应点头、发呆)
+[HAPPY] - 开心、兴奋
+[ANGRY] - 生气、愤怒
+[SAD] - 悲伤、哭泣
+[SHOCK] - 惊讶、震惊
+[NORMAL] - 平静、普通
 
 例如：
-[HAPPY] 哇！真的吗？太棒了！
-[ANGRY] 哼，我不理你了！
-
-请务必遵守格式，否则无法驱动虚拟形象。
+[HAPPY] 哇！真的吗？
+[ANGRY] 哼，不理你了！
 """
 
-# --- 全局状态 ---
-GLOBAL_STATE = {
-    "current_model_id": "default",
-    "current_background": "", 
-    "chat_history": [] 
-}
+GLOBAL_STATE = { "current_model_id": "default", "current_background": "", "chat_history": [] }
 
 def load_state():
     global GLOBAL_STATE
@@ -99,9 +88,7 @@ def load_state():
         except: pass
 
 def save_state():
-    try:
-        with open(STATE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(GLOBAL_STATE, f, ensure_ascii=False, indent=2)
+    try: with open(STATE_FILE, 'w', encoding='utf-8') as f: json.dump(GLOBAL_STATE, f, ensure_ascii=False, indent=2)
     except: pass
 
 load_state()
@@ -138,8 +125,7 @@ def scan_models():
                 if not rel_path.startswith("/"): rel_path = "/" + rel_path
                 folder_name = os.path.basename(os.path.dirname(full_path))
                 model_id = f"{folder_name}_{os.path.splitext(file)[0]}"
-                if not any(m['id'] == folder_name for m in ms):
-                    model_id = folder_name
+                if not any(m['id'] == folder_name for m in ms): model_id = folder_name
                 cfg = get_model_config(model_id)
                 ms.append({"id": model_id, "name": model_id.capitalize(), "path": rel_path, **cfg})
     return sorted(ms, key=lambda x: x['name'])
@@ -147,8 +133,7 @@ def scan_models():
 def scan_backgrounds():
     bgs = []
     for ext in ['*.jpg', '*.jpeg', '*.png', '*.webp', '*.gif']:
-        for f in glob.glob(os.path.join(BG_DIR, ext)):
-            bgs.append(os.path.basename(f))
+        for f in glob.glob(os.path.join(BG_DIR, ext)): bgs.append(os.path.basename(f))
     return sorted(bgs)
 
 def init_model():
@@ -156,11 +141,8 @@ def init_model():
     ms = scan_models()
     last_id = GLOBAL_STATE.get("current_model_id")
     target = next((m for m in ms if m['id'] == last_id), None)
-    if not target:
-        target = next((m for m in ms if "hiyori" in m['id'].lower()), None)
-    if not target and len(ms) > 0:
-        target = ms[0]
-        
+    if not target: target = next((m for m in ms if "hiyori" in m['id'].lower()), None)
+    if not target and len(ms) > 0: target = ms[0]
     if target: 
         CURRENT_MODEL = target
         GLOBAL_STATE["current_model_id"] = target['id']
@@ -168,30 +150,43 @@ def init_model():
 
 init_model()
 
-# --- TTS ---
+# ================= TTS 核心逻辑 (修复版) =================
 def run_vits_api(text, output_path):
     api_url = CONFIG.get("VITS_API_URL")
     if not api_url: return False
     target_url = api_url.replace("{text}", urllib.parse.quote(text)).replace("{lang}", "zh")
-    print(f"🔄 [VITS] 正在请求 API (耐心等待60秒)...")
+    print(f"🔄 [VITS] 请求中: {text[:10]}...")
     try:
-        resp = requests.get(target_url, timeout=60)
+        # 缩短超时时间到 10秒，防止卡死
+        resp = requests.get(target_url, timeout=10)
         if resp.status_code == 200 and len(resp.content) > 1000:
             with open(output_path, "wb") as f: f.write(resp.content)
-            print(f"✅ [VITS] 生成成功！")
+            print(f"✅ [VITS] 成功")
             return True
-    except: pass
+        else:
+            print(f"❌ [VITS] 失败: {resp.status_code}")
+    except Exception as e:
+        print(f"❌ [VITS] 错误: {e}")
     return False
 
 def run_edge_tts(text, voice, output_path):
     try:
-        print(f"⚠️ [Edge] 正在使用备用方案...")
+        print(f"🔄 [Edge] 兜底合成中...")
         async def _run():
-            comm = edge_tts.Communicate(text, "zh-CN-XiaoxiaoNeural", rate="+15%", pitch="+25Hz")
+            # 使用更可爱的晓晓音色
+            comm = edge_tts.Communicate(text, "zh-CN-XiaoxiaoNeural", rate="+10%", pitch="+15Hz")
             await comm.save(output_path)
-        loop = asyncio.new_event_loop(); asyncio.set_event_loop(loop); loop.run_until_complete(_run()); loop.close()
+        
+        # 修复 asyncio 在线程中的 Loop 问题
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(_run())
+        loop.close()
+        print(f"✅ [Edge] 成功")
         return True
-    except: return False
+    except Exception as e: 
+        print(f"❌ [Edge] 失败: {e}")
+        return False
 
 def bg_tts(text, voice, rate, pitch, room=None, sid=None):
     clean = re.sub(r'\[(.*?)\]', '', text).strip()
@@ -200,18 +195,24 @@ def bg_tts(text, voice, rate, pitch, room=None, sid=None):
     out_path = os.path.join(AUDIO_DIR, fname)
     success = False
     
+    # 优先尝试 VITS (如果配置了)
     if "api" in voice or CONFIG.get("TTS_MODE") == "vits":
         success = run_vits_api(clean, out_path)
+    
+    # 如果 VITS 失败，强制切换到 Edge (绝不让 Pico 变成哑巴)
     if not success:
         success = run_edge_tts(clean, "edge", out_path)
 
     if success:
         url = f"/static/audio/{fname}"
         payload = {'audio': url}
+        print(f"🔊 推送音频: {url}")
         if room: socketio.emit('audio_response', payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_response', payload, to=sid, namespace='/')
+    else:
+        print("❌ 所有 TTS 方案均失败，无声音")
 
-# --- 路由 ---
+# ================= 路由与 API =================
 @app.route('/')
 def idx(): return redirect(url_for('pico_v', v=SERVER_VERSION))
 @app.route('/pico/<v>')
@@ -259,10 +260,8 @@ def update_key():
         return jsonify({'success': False, 'msg': '无效的 API Key'})
     global client, CONFIG
     CONFIG['GEMINI_API_KEY'] = new_key
-    try:
-        client = genai.Client(api_key=new_key)
-    except Exception as e:
-        return jsonify({'success': False, 'msg': f"Key 格式错误: {e}"})
+    try: client = genai.Client(api_key=new_key)
+    except Exception as e: return jsonify({'success': False, 'msg': f"Key 格式错误: {e}"})
     try:
         current_conf = {}
         if os.path.exists("config.json"):
@@ -273,62 +272,36 @@ def update_key():
         with open("config.json", "w", encoding='utf-8') as f:
             json.dump(current_conf, f, indent=2, ensure_ascii=False)
         return jsonify({'success': True})
-    except Exception as e:
-        return jsonify({'success': False, 'msg': f"写入失败: {e}"})
+    except Exception as e: return jsonify({'success': False, 'msg': f"写入失败: {e}"})
 
-# ★★★ 新增：弹幕接收接口 ★★★
-# 外部爬虫可以 POST JSON 到 http://ip:5000/api/danmaku
-# 数据格式: {"username": "B站用户", "text": "主播好可爱"}
 @app.route('/api/danmaku', methods=['POST'])
 def api_danmaku():
     data = request.json
     if not data or 'text' not in data: return jsonify({'success': False})
-    
-    user = data.get('username', '弹幕')
-    msg = data.get('text', '')
-    
-    # 模拟用户发送消息，复用 on_message 逻辑
-    # 既然是弹幕，不需要 request.sid，我们在后台广播
-    print(f"📨 收到弹幕: [{user}] {msg}")
-    
-    # 手动触发处理流程 (这里简化处理，直接调用逻辑)
-    # 1. 存历史
+    user = data.get('username', '弹幕'); msg = data.get('text', '')
     user_msg_obj = {'type': 'chat', 'sender': user, 'text': msg}
     GLOBAL_STATE['chat_history'].append(user_msg_obj)
     save_state()
-    # 2. 广播给前端显示
     socketio.emit('chat_message', {'text': msg, 'sender': user}, to='lobby')
-    
-    # 3. 让 AI 回复
     socketio.start_background_task(process_ai_response, user, msg)
-    
     return jsonify({'success': True})
 
 def process_ai_response(sender, msg):
-    """ 独立的 AI 处理函数，供 Socket 和 API 共用 """
     try:
         if not chatroom_chat: init_chatroom()
         if not client: return
-
-        # 简单处理，如果是弹幕，不发图片给 AI
         resp = chatroom_chat.send_message(f"【{sender}】: {msg}")
-        
         emo='NORMAL'; match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
         if match: emo=match.group(1); txt=resp.text.replace(match.group(0),'').strip()
         else: txt=resp.text
-        
         ai_msg_obj = {'type': 'response', 'sender': 'Pico', 'text': txt, 'emotion': emo}
         GLOBAL_STATE['chat_history'].append(ai_msg_obj)
         save_state()
-        
         socketio.emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
         bg_tts(txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], room='lobby')
-    except Exception as e:
-        print(f"AI Error: {e}")
+    except Exception as e: print(f"AI Error: {e}")
 
-# --- 聊天交互 ---
-users = {}
-chatroom_chat = None
+users = {}; chatroom_chat = None
 def init_chatroom():
     global chatroom_chat
     if not client: return
@@ -346,115 +319,74 @@ def on_login(d):
     users[request.sid] = {"username": u, "is_admin": False}
     join_room('lobby')
     if not chatroom_chat: init_chatroom()
-    emit('login_success', {
-        'username': u, 
-        'current_model': CURRENT_MODEL,
-        'current_background': GLOBAL_STATE.get('current_background', '')
-    })
+    emit('login_success', {'username': u, 'current_model': CURRENT_MODEL, 'current_background': GLOBAL_STATE.get('current_background', '')})
     emit('history_sync', {'history': GLOBAL_STATE['chat_history']})
     socketio.start_background_task(bg_tts, f"Hi {u}", "api_miku", "", "", sid=request.sid)
 
 @socketio.on('message')
 def on_message(d):
-    sid = request.sid
+    sid = request.sid; 
     if sid not in users: return
+    msg = d.get('text', ''); img_data = d.get('image', None); sender = users[sid]['username']
+    if "/管理员" in msg and sender.lower()=="yk": users[sid]['is_admin']=True; emit('admin_unlocked'); return
     
-    msg = d.get('text', '')
-    img_data = d.get('image', None) 
-    sender = users[sid]['username']
-    
-    if "/管理员" in msg and sender.lower()=="yk": 
-        users[sid]['is_admin']=True; emit('admin_unlocked'); return
-    
-    # 1. 存历史
     user_msg_obj = {'type': 'chat', 'sender': sender, 'text': msg}
     if img_data: user_msg_obj['image'] = True 
     GLOBAL_STATE['chat_history'].append(user_msg_obj)
     save_state()
-    
-    # 2. 发送给前端
     emit('chat_message', {'text': msg, 'sender': sender, 'image': img_data}, to='lobby')
     
-    # 3. AI 处理 (包含图片逻辑)
+    socketio.start_background_task(process_socket_ai, sid, msg, img_data)
+
+def process_socket_ai(sid, msg, img_data):
     try:
         if not chatroom_chat: init_chatroom()
         if not client: return
-
         content_parts = []
         if msg: content_parts.append(msg)
-        
         if img_data:
             try:
-                # 去掉头部 data:image/jpeg;base64,
-                if "," in img_data:
-                    header, encoded = img_data.split(",", 1)
-                    mime_type = header.split(":")[1].split(";")[0]
-                else:
-                    encoded = img_data
-                    mime_type = "image/jpeg" # 默认
-                
+                if "," in img_data: header, encoded = img_data.split(",", 1); mime_type = header.split(":")[1].split(";")[0]
+                else: encoded = img_data; mime_type = "image/jpeg"
                 image_bytes = base64.b64decode(encoded)
-                image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
-                content_parts.append(image_part)
-                print(f"🖼️ 处理图片: {len(image_bytes)} bytes")
-            except Exception as e:
-                print(f"图片解析失败: {e}")
-
+                content_parts.append(types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
+            except: pass
         if content_parts:
             resp = chatroom_chat.send_message(content_parts)
-            
-            emo='NORMAL'
-            match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
+            emo='NORMAL'; match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
             if match: emo=match.group(1); txt=resp.text.replace(match.group(0),'').strip()
             else: txt=resp.text
-            
             ai_msg_obj = {'type': 'response', 'sender': 'Pico', 'text': txt, 'emotion': emo}
             GLOBAL_STATE['chat_history'].append(ai_msg_obj)
             save_state()
-            
-            emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
-            socketio.start_background_task(bg_tts, txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], room='lobby')
+            socketio.emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
+            bg_tts(txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], room='lobby')
     except Exception as e:
-        print(f"Gemini Error: {e}")
-        emit('system_message', {'text': f'⚠️ AI 错误: {str(e)}'}, to=sid)
-        init_chatroom()
+        print(f"Socket AI Err: {e}")
+        socketio.emit('system_message', {'text': f'AI 错误: {e}'}, to=sid)
 
 def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
 
 @socketio.on('get_studio_data')
 def on_get_data():
-    voices = [
-        {"id":"api_miku", "name":"🎵 Miku VITS (HuggingFace API)"},
-        {"id":"edge_backup", "name":"☁️ 微软 Edge (兜底)"}
-    ]
-    emit('studio_data', {
-        'models': scan_models(), 
-        'current_id': CURRENT_MODEL['id'], 
-        'voices': voices,
-        'backgrounds': scan_backgrounds(),
-        'current_bg': GLOBAL_STATE.get('current_background', '')
-    })
+    voices = [{"id":"api_miku", "name":"🎵 Miku VITS"}, {"id":"edge_backup", "name":"☁️ Edge 晓晓"}]
+    emit('studio_data', {'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 'voices': voices, 'backgrounds': scan_backgrounds(), 'current_bg': GLOBAL_STATE.get('current_background', '')})
 
 @socketio.on('switch_model')
 def on_switch(d):
     global CURRENT_MODEL
     t = next((m for m in scan_models() if m['id'] == d['id']), None)
-    if t: 
-        CURRENT_MODEL = t
-        GLOBAL_STATE["current_model_id"] = t['id']
-        save_state()
-        init_chatroom()
-        emit('model_switched', CURRENT_MODEL, to='lobby')
+    if t: CURRENT_MODEL = t; GLOBAL_STATE["current_model_id"] = t['id']; save_state(); init_chatroom(); emit('model_switched', CURRENT_MODEL, to='lobby')
 
 @socketio.on('switch_background')
-def on_switch_background(d):
+def on_switch_bg(d):
     bg_name = d.get('name')
     GLOBAL_STATE['current_background'] = bg_name
     save_state()
     emit('background_update', {'url': f"/static/backgrounds/{bg_name}" if bg_name else ""}, to='lobby')
 
 @socketio.on('save_settings')
-def on_save_settings(d):
+def on_save(d):
     global CURRENT_MODEL
     if not is_admin(request.sid): return
     try: d['scale']=float(d['scale']); d['x']=float(d['x']); d['y']=float(d['y'])
@@ -462,24 +394,6 @@ def on_save_settings(d):
     updated = save_model_config(d['id'], d)
     if CURRENT_MODEL['id'] == d['id']: CURRENT_MODEL.update(updated); init_chatroom(); emit('model_switched', CURRENT_MODEL, to='lobby')
     emit('toast', {'text': '✅ 保存成功'})
-
-@socketio.on('delete_model')
-def on_del(d):
-    if not is_admin(request.sid): return
-    if d['id']==CURRENT_MODEL['id']: return
-    try: shutil.rmtree(os.path.join(MODELS_DIR, d['id'])); emit('toast',{'text':'🗑️ 已删除'}); on_get_data()
-    except: pass
-
-@socketio.on('download_model')
-def on_dl(d):
-    if not is_admin(request.sid): return
-    name=d.get('name'); emit('toast',{'text':f'🚀 下载 {name}...','type':'info'}); socketio.start_background_task(bg_dl_task, name)
-
-def bg_dl_task(name):
-    u={"Mao":".../Mao","Natori":".../Natori"}.get(name,"https://github.com/Live2D/CubismWebSamples/trunk/Samples/Resources/"+name)
-    t=os.path.join(MODELS_DIR,name.lower()); shutil.rmtree(t, ignore_errors=True); os.makedirs(t,exist_ok=True)
-    try: os.system(f"svn export --force -q {u} {t}"); socketio.emit('toast',{'text':f'✅ {name} 完成!'},namespace='/')
-    except: pass
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000)
