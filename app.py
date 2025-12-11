@@ -1,6 +1,7 @@
 # =======================================================================
-# Pico AI Server - ULTIMATE FALLBACK EDITION
-# 包含：完整逻辑、代理支持、前端浏览器朗读触发机制
+# Pico AI Server - PARAM FIX EDITION
+# 修复：ValueError: Invalid pitch '+0%'.
+# 功能：自动清洗 TTS 参数，兼容旧版数据，增加代理支持
 # =======================================================================
 import os
 import json
@@ -43,7 +44,7 @@ app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = 'pico_ultimate_secret_key'
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB 上传限制
 
-# SocketIO 配置 - 增加 buffer 防止大图断连
+# SocketIO 配置
 socketio = SocketIO(app, 
     cors_allowed_origins="*", 
     async_mode='threading', 
@@ -117,7 +118,6 @@ def load_state():
             with open(STATE_FILE, 'r', encoding='utf-8') as f:
                 saved = json.load(f)
                 if saved: GLOBAL_STATE.update(saved)
-                # 限制历史记录条数
                 if len(GLOBAL_STATE["chat_history"]) > 100:
                     GLOBAL_STATE["chat_history"] = GLOBAL_STATE["chat_history"][-100:]
         except: pass
@@ -191,20 +191,50 @@ def init_model():
 
 init_model()
 
-# ================= TTS 核心 (带代理和失败检测) =================
+# ================= TTS 核心 (带参数清洗) =================
+
+def sanitize_tts_param(val, unit):
+    """
+    强制清洗 TTS 参数。
+    val: 输入值 (如 +0%, 50, -10Hz)
+    unit: 期望单位 ('Hz' 或 '%')
+    返回: 严格符合 ^[+-]\d+UNIT$ 格式的字符串 (如 +0Hz)
+    """
+    try:
+        # 转字符串并移除首尾空格
+        s = str(val).strip()
+        # 提取其中的数字和符号 (+, -)
+        nums = "".join(filter(lambda x: x.isdigit() or x in ['+', '-'], s))
+        
+        # 如果没提取到数字，默认为 0
+        if not nums or nums in ['+', '-']:
+            n = 0
+        else:
+            n = int(nums)
+            
+        # 强制格式化：带符号整数 + 单位
+        return f"{n:+}{unit}"
+    except:
+        return f"+0{unit}"
 
 def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
     """
-    执行 TTS 命令，返回 (success, error_message)
+    执行 TTS 命令。执行前先清洗参数。
     """
     try:
+        # ★★★ 关键修复：清洗参数 ★★★
+        safe_rate = sanitize_tts_param(rate, "%")
+        safe_pitch = sanitize_tts_param(pitch, "Hz")
+        
+        logging.info(f"TTS 参数清洗: Rate={rate}->{safe_rate}, Pitch={pitch}->{safe_pitch}")
+
         cmd = [
             sys.executable, "-m", "edge_tts",
             "--text", text,
             "--write-media", output_path,
             "--voice", voice,
-            "--rate", rate,
-            "--pitch", pitch
+            "--rate", safe_rate,
+            "--pitch", safe_pitch
         ]
         
         # 注入代理配置
@@ -252,7 +282,7 @@ def bg_tts_task(text, voice, rate, pitch, room=None, sid=None):
         if room: socketio.emit('audio_response', payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_response', payload, to=sid, namespace='/')
     else:
-        # ★★★ 绝杀：生成失败，把文本发给前端，让浏览器读 ★★★
+        # 生成失败，把文本发给前端，让浏览器读
         logging.error(f"❌ 语音生成失败，切换前端合成: {err_reason}")
         err_payload = {
             'msg': f'TTS失败，已切换本地语音', 
