@@ -10,16 +10,18 @@
     <script src="/static/js/index.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     <style>
-        /* 核心修复：使用 dvh (Dynamic Viewport Height) 解决移动端地址栏遮挡问题 */
+        /* =========================================
+           1. PC 端基础样式 (保持原样，绝对不动)
+           ========================================= */
         body {
             font-family: "Segoe UI", sans-serif;
             margin: 0;
             padding: 0;
-            height: 100dvh; /* 关键修改 */
+            height: 100dvh;
             width: 100vw;
             background-color: #2d3436;
             display: flex;
-            flex-direction: row;
+            flex-direction: row; /* PC 默认左右布局 */
             overflow: hidden;
             color: #333;
         }
@@ -33,6 +35,7 @@
             background-size: cover;
             background-position: center;
             transition: background-image 0.5s ease;
+            z-index: 0;
         }
 
         #live2d-canvas {
@@ -51,164 +54,114 @@
             z-index: 10;
             box-shadow: -5px 0 15px rgba(0, 0, 0, 0.2);
             transition: all 0.3s ease;
-            height: 100%; /* 确保填满高度 */
+            height: 100%;
         }
 
-        /* iPad & 移动端适配 (断点提升至 1024px) */
+        /* =========================================
+           2. 移动端/iPad 专属样式 (只改这里！)
+           目标：沉浸式透明叠加布局
+           ========================================= */
         @media (max-width: 1024px) {
             body {
                 flex-direction: column;
+                display: block; /* 改为块级，方便绝对定位叠加 */
             }
+
+            /* 模型区域：强制全屏铺满底层 */
             #stage-container {
-                flex: 4; /* 模型区域占比 */
-                min-height: 35vh;
-            }
-            #chat-container {
+                position: fixed; /* 固定在屏幕上 */
+                top: 0;
+                left: 0;
                 width: 100%;
-                flex: 6; /* 聊天区域占比 */
-                min-height: 0; /* 允许 flex 子项滚动 */
+                height: 100%;
+                z-index: 0; /* 在最底层 */
+                flex: none; /* 取消 flex 限制 */
+            }
+
+            /* 聊天容器：覆盖在模型上方，背景变透明 */
+            #chat-container {
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: transparent; /* 关键：背景透明 */
+                box-shadow: none;
+                z-index: 10;
+                pointer-events: none; /* 关键：让点击穿透空白处，摸到后面的模型 */
+                justify-content: flex-end; /* 内容沉底 */
+            }
+
+            /* header 变为透明悬浮 */
+            #header {
+                background: transparent !important;
+                pointer-events: auto; /* 按钮可点 */
+                padding-top: max(12px, env(safe-area-inset-top)); /* 避开刘海 */
+                text-shadow: 0 1px 2px rgba(0,0,0,0.8); /* 防止文字看不清 */
+            }
+            .icon-btn {
+                background: rgba(0,0,0,0.4) !important; /* 按钮加深底色 */
+                color: white !important;
+                backdrop-filter: blur(4px);
+            }
+
+            /* 聊天列表：半透明渐变，只占下半屏 */
+            #chat-window {
+                flex: 0 1 50%; /* 只占屏幕高度的 50% */
+                background: linear-gradient(to top, rgba(0,0,0,0.2) 0%, transparent 100%) !important;
+                mask-image: linear-gradient(to bottom, transparent, black 20%);
+                -webkit-mask-image: linear-gradient(to bottom, transparent, black 20%);
+                pointer-events: auto; /* 消息可滚动 */
+                padding-bottom: 0;
+            }
+
+            /* 消息气泡：加磨砂玻璃效果 */
+            .message-bubble {
+                background: rgba(255, 255, 255, 0.85) !important;
+                backdrop-filter: blur(5px);
+                border: 1px solid rgba(255,255,255,0.4);
+            }
+
+            /* 输入框：底部悬浮岛风格 */
+            #input-area {
+                pointer-events: auto; /* 输入框可点 */
+                background: rgba(255, 255, 255, 0.85) !important;
+                backdrop-filter: blur(10px);
+                border-top: 1px solid rgba(255,255,255,0.3);
+                border-radius: 20px 20px 0 0;
+                margin: 0 10px;
+                margin-bottom: max(10px, env(safe-area-inset-bottom));
             }
         }
 
-        /* 强制竖屏提示层 */
-        #orientation-lock {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: #2d3436;
-            z-index: 99999;
-            color: white;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-        }
-        /* 仅在移动端横屏时触发 */
-        @media screen and (max-width: 1024px) and (orientation: landscape) {
-            #orientation-lock {
-                display: flex !important;
-            }
-        }
+        /* =========================================
+           3. 通用组件样式 (保持原样)
+           ========================================= */
+        #orientation-lock { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #2d3436; z-index: 99999; color: white; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+        @media screen and (max-width: 1024px) and (orientation: landscape) { #orientation-lock { display: flex !important; } }
 
-        #header {
-            background: #6c5ce7;
-            color: white;
-            padding: 12px 15px;
-            text-align: center;
-            font-weight: bold;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-shrink: 0;
-        }
+        #header { background: #6c5ce7; color: white; padding: 12px 15px; text-align: center; font-weight: bold; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+        .icon-btn { cursor: pointer; padding: 6px 10px; background: rgba(0, 0, 0, 0.15); border-radius: 6px; user-select: none; }
+        
+        #chat-window { flex: 1; overflow-y: auto; padding: 15px; background: #f5f7fa; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+        
+        .message-container { display: flex; margin-bottom: 15px; flex-direction: column; }
+        .message-info { font-size: 12px; color: #999; margin-bottom: 4px; padding: 0 5px; }
+        .message-bubble { padding: 10px 14px; border-radius: 16px; max-width: 85%; word-wrap: break-word; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); }
+        .message-img { max-width: 100%; border-radius: 10px; margin-top: 5px; display: block; cursor: pointer; }
 
-        .icon-btn {
-            cursor: pointer;
-            padding: 6px 10px;
-            background: rgba(0, 0, 0, 0.15);
-            border-radius: 6px;
-            user-select: none;
-        }
-
-        #chat-window {
-            flex: 1;
-            overflow-y: auto;
-            padding: 15px;
-            background: #f5f7fa;
-            overscroll-behavior: contain;
-            -webkit-overflow-scrolling: touch; /* iOS 滚动优化 */
-        }
-
-        .message-container {
-            display: flex;
-            margin-bottom: 15px;
-            flex-direction: column;
-        }
-
-        .message-info {
-            font-size: 12px;
-            color: #999;
-            margin-bottom: 4px;
-            padding: 0 5px;
-        }
-
-        .message-bubble {
-            padding: 10px 14px;
-            border-radius: 16px;
-            max-width: 85%;
-            word-wrap: break-word;
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-        }
-
-        .message-img {
-            max-width: 100%;
-            border-radius: 10px;
-            margin-top: 5px;
-            display: block;
-            cursor: pointer;
-        }
-
-        .self { align-items: flex-end; }
-        .self .message-bubble { background: #6c5ce7; color: white; border-bottom-right-radius: 4px; }
-        .other { align-items: flex-start; }
-        .other .message-bubble { background: white; color: #333; border-bottom-left-radius: 4px; }
-        .pico { align-items: flex-start; }
-        .pico .message-info { color: #e84393; font-weight: bold; }
-        .pico .message-bubble { background: #fff0f6; color: #333; border: 2px solid #f8a5c2; border-bottom-left-radius: 4px; }
+        .self { align-items: flex-end; } .self .message-bubble { background: #6c5ce7; color: white; border-bottom-right-radius: 4px; }
+        .other { align-items: flex-start; } .other .message-bubble { background: white; color: #333; border-bottom-left-radius: 4px; }
+        .pico { align-items: flex-start; } .pico .message-info { color: #e84393; font-weight: bold; } .pico .message-bubble { background: #fff0f6; color: #333; border: 2px solid #f8a5c2; border-bottom-left-radius: 4px; }
         .emotion-tag { display: inline-block; font-size: 0.8em; padding: 1px 4px; border-radius: 4px; background: rgba(232, 67, 147, 0.1); color: #e84393; margin-left: 5px; }
-        .system { align-items: center; margin: 10px 0; }
-        .system .message-bubble { background: #eee; color: #666; font-size: 12px; padding: 4px 12px; border-radius: 12px; box-shadow: none; }
+        .system { align-items: center; margin: 10px 0; } .system .message-bubble { background: #eee; color: #666; font-size: 12px; padding: 4px 12px; border-radius: 12px; box-shadow: none; }
         .audio-player { margin-top: 8px; height: 32px; width: 100%; opacity: 0.8; border-radius: 16px; display: block; }
 
-        #input-area {
-            display: flex;
-            padding: 10px;
-            background: white;
-            border-top: 1px solid #eee;
-            flex-shrink: 0;
-            align-items: center;
-            /* iOS 底部安全区域适配 */
-            padding-bottom: calc(10px + env(safe-area-inset-bottom));
-        }
+        #input-area { display: flex; padding: 10px; background: white; border-top: 1px solid #eee; flex-shrink: 0; align-items: center; padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+        #user-input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 25px; font-size: 16px; outline: none; }
+        #send-btn { background: #6c5ce7; color: white; border: none; padding: 0 20px; margin-left: 10px; border-radius: 25px; font-weight: bold; height: 45px; flex-shrink: 0; }
 
-        #user-input {
-            flex: 1;
-            padding: 12px;
-            border: 1px solid #ddd;
-            border-radius: 25px;
-            font-size: 16px;
-            outline: none;
-            /* 防止 iOS 缩放输入框 */
-            font-size: 16px; 
-        }
-
-        #send-btn {
-            background: #6c5ce7;
-            color: white;
-            border: none;
-            padding: 0 20px;
-            margin-left: 10px;
-            border-radius: 25px;
-            font-weight: bold;
-            height: 45px;
-            flex-shrink: 0;
-        }
-
-        #preview-area {
-            position: absolute;
-            bottom: 80px; /* 抬高一点，避开输入框 */
-            left: 10px;
-            right: 10px;
-            background: rgba(255, 255, 255, 0.9);
-            border-radius: 10px;
-            padding: 10px;
-            display: none;
-            box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
-            z-index: 20;
-        }
+        #preview-area { position: absolute; bottom: 80px; left: 10px; right: 10px; background: rgba(255, 255, 255, 0.9); border-radius: 10px; padding: 10px; display: none; box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1); z-index: 20; }
         #preview-img { max-height: 100px; max-width: 100%; border-radius: 5px; }
         #close-preview { position: absolute; top: 5px; right: 5px; cursor: pointer; font-size: 20px; color: #666; }
 
@@ -237,7 +190,7 @@
         @keyframes fadeOut { to { opacity: 0; visibility: hidden; } }
         #debug-pos { position: absolute; top: 10px; left: 10px; color: #0f0; background: rgba(0, 0, 0, 0.5); padding: 5px; font-size: 10px; pointer-events: none; z-index: 100; }
 
-        /* 直播模式 CSS */
+        /* 直播模式 CSS (PC 端用，保留) */
         body.live-mode #header, body.live-mode #input-area, body.live-mode #debug-pos { display: none !important; }
         body.live-mode #chat-container { position: absolute; right: 0; top: 0; bottom: 0; width: 350px; background: rgba(255, 255, 255, 0.4); box-shadow: none; z-index: 100; pointer-events: none; }
         body.live-mode #chat-window { background: transparent; text-shadow: 0 0 2px white; pointer-events: auto; }
@@ -245,12 +198,7 @@
     </style>
 </head>
 <body>
-    <!-- 强制竖屏遮罩 -->
-    <div id="orientation-lock">
-        <div style="font-size: 40px; margin-bottom: 20px;">📱</div>
-        <h2>为了最佳体验，请竖屏使用</h2>
-        <p>检测到屏幕翻转，这会导致模型比例变形。</p>
-    </div>
+    <div id="orientation-lock"><div style="font-size: 40px; margin-bottom: 20px;">📱</div><h2>为了最佳体验，请竖屏使用</h2><p>检测到屏幕翻转，这会导致模型比例变形。</p></div>
 
     <div id="toast-container"></div>
     <div id="login-overlay" class="overlay"><div class="modal-box" style="text-align:center"><h2>Pico 直播间</h2><input id="username-input" placeholder="请输入昵称" maxlength="12" autocomplete="off"><br><button id="login-btn" disabled>连接中...</button></div></div>
@@ -300,8 +248,7 @@
         const socket = io({reconnection:true});
         let app_pixi, model, myUser="", currentModelId="", currentCfg={scale:0.5,x:0.5,y:0.5}, audioCtx, analyser, dataArray, isTalking=false;
         let isDragging=false, dragData, initialScale, initialDist, iAmAdmin=false;
-        window.model = null;
-        let currentImgBase64 = null; 
+        window.model = null; let currentImgBase64 = null; 
 
         function updateVal(type, val) { document.getElementById(`${type}-val`).textContent = (val > 0 ? '+' : '') + val + (type==='rate'?'%':'Hz'); }
         function previewTransform() {
@@ -314,8 +261,6 @@
             if(!model || !app_pixi) return;
             const st = document.getElementById('stage-container');
             if(!model.width) return;
-            
-            // 修复：确保模型按比例缩放，不被拉伸
             const absScale = (st.clientHeight / model.height) * s;
             model.scale.set(absScale);
             model.x = (st.clientWidth * x) - (model.width / 2);
@@ -335,43 +280,19 @@
         function updateValLabels(s,x,y) { document.getElementById('scale-val').textContent=s.toFixed(2); document.getElementById('x-val').textContent=x.toFixed(2); document.getElementById('y-val').textContent=y.toFixed(2); }
 
         document.getElementById('reset-btn').onclick = () => { applyConfig(currentCfg); showToast("🎯 已恢复", "info"); };
+        window.addEventListener('resize', () => { if(app_pixi) app_pixi.renderer.resize(document.getElementById('stage-container').clientWidth, document.getElementById('stage-container').clientHeight); setTimeout(() => applyConfig(currentCfg), 100); });
         
-        // 修复：屏幕旋转或调整大小时重置 PIXI 渲染器尺寸
-        window.addEventListener('resize', () => {
-            if(app_pixi) app_pixi.renderer.resize(document.getElementById('stage-container').clientWidth, document.getElementById('stage-container').clientHeight);
-            setTimeout(() => applyConfig(currentCfg), 100);
-        });
-
-        // 直播模式切换
-        window.toggleLiveMode = () => {
-            document.body.classList.toggle('live-mode');
-            showToast("📺 直播模式 (双击退出)");
-            window.dispatchEvent(new Event('resize'));
-        };
-        document.body.addEventListener('dblclick', (e) => {
-            if(document.body.classList.contains('live-mode')) {
-                document.body.classList.remove('live-mode');
-                showToast("已退出直播模式");
-                window.dispatchEvent(new Event('resize'));
-            }
-        });
+        window.toggleLiveMode = () => { document.body.classList.toggle('live-mode'); showToast("📺 直播模式 (双击退出)"); window.dispatchEvent(new Event('resize')); };
+        document.body.addEventListener('dblclick', (e) => { if(document.body.classList.contains('live-mode')) { document.body.classList.remove('live-mode'); showToast("已退出直播模式"); window.dispatchEvent(new Event('resize')); } });
 
         window.handleImgSelect = (f) => {
             if(!f) return;
             if (f.size > 5 * 1024 * 1024) { showToast("❌ 图片太大了 (限5MB)", "error"); return; }
             const reader = new FileReader();
-            reader.onload = (e) => {
-                currentImgBase64 = e.target.result;
-                document.getElementById('preview-img').src = currentImgBase64;
-                document.getElementById('preview-area').style.display = 'block';
-            };
+            reader.onload = (e) => { currentImgBase64 = e.target.result; document.getElementById('preview-img').src = currentImgBase64; document.getElementById('preview-area').style.display = 'block'; };
             reader.readAsDataURL(f);
         };
-        window.clearPreview = () => {
-            currentImgBase64 = null;
-            document.getElementById('preview-area').style.display = 'none';
-            document.getElementById('img-input').value = "";
-        };
+        window.clearPreview = () => { currentImgBase64 = null; document.getElementById('preview-area').style.display = 'none'; document.getElementById('img-input').value = ""; };
 
         const loginBtn = document.getElementById('login-btn');
         socket.on('connect', ()=>{});
@@ -379,133 +300,28 @@
         socket.on('disconnect', ()=>{loginBtn.textContent="已断开...";loginBtn.disabled=true;});
         loginBtn.onclick=()=>{let n=document.getElementById('username-input').value.trim();if(n){myUser=n;loginBtn.disabled=true;loginBtn.textContent="登录中...";socket.emit('login',{username:n});initAudio();}};
 
-        socket.on('login_success',(d)=>{
-            document.getElementById('login-overlay').style.display='none'; document.getElementById('room-title').textContent=`🤖 ${d.current_model.name}`; currentCfg = d.current_model;
-            if(d.current_model.path) loadModel(d.current_model.path, d.current_model);
-            if(d.current_background) changeBackgroundUI(d.current_background);
-        });
-        
-        socket.on('history_sync', (d) => {
-            if(d.history && Array.isArray(d.history)){
-                const win = document.getElementById('chat-window');
-                win.innerHTML = ""; 
-                d.history.forEach(item => {
-                    let type = item.type === 'response' ? 'pico' : (item.sender === myUser ? 'self' : 'other');
-                    if (item.type === 'system') type = 'system';
-                    addMsg(item.text, item.sender, type, item.emotion, item.image);
-                });
-                win.scrollTop = win.scrollHeight;
-            }
-        });
-
+        socket.on('login_success',(d)=>{ document.getElementById('login-overlay').style.display='none'; document.getElementById('room-title').textContent=`🤖 ${d.current_model.name}`; currentCfg = d.current_model; if(d.current_model.path) loadModel(d.current_model.path, d.current_model); if(d.current_background) changeBackgroundUI(d.current_background); });
+        socket.on('history_sync', (d) => { if(d.history && Array.isArray(d.history)){ const win = document.getElementById('chat-window'); win.innerHTML = ""; d.history.forEach(item => { let type = item.type === 'response' ? 'pico' : (item.sender === myUser ? 'self' : 'other'); if (item.type === 'system') type = 'system'; addMsg(item.text, item.sender, type, item.emotion, item.image); }); win.scrollTop = win.scrollHeight; } });
         socket.on('login_failed',(d)=>{alert(d.error);loginBtn.disabled=false;loginBtn.textContent="重试";});
 
-        window.saveGeminiKey = () => {
-            const key = document.getElementById('api-key-input').value.trim();
-            if(!key) { showToast("Key 不能为空", "error"); return; }
-            if(!key.startsWith("AIza")) { showToast("Key 格式错误", "error"); return; }
-            showToast("正在更新 Key...");
-            fetch('/update_key', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: key})}).then(r=>r.json()).then(d=>{if(d.success){showToast("✅ Key 已更新并生效！"); document.getElementById('api-key-input').value = "";} else {showToast("❌ " + d.msg, "error");}});
-        };
+        window.saveGeminiKey = () => { const key = document.getElementById('api-key-input').value.trim(); if(!key) { showToast("Key 不能为空", "error"); return; } if(!key.startsWith("AIza")) { showToast("Key 格式错误", "error"); return; } showToast("正在更新 Key..."); fetch('/update_key', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: key})}).then(r=>r.json()).then(d=>{if(d.success){showToast("✅ Key 已更新并生效！"); document.getElementById('api-key-input').value = "";} else {showToast("❌ " + d.msg, "error");}}); };
 
         async function loadModel(path, cfg) {
             console.log("📥 Loading Model:", path);
-            if(!app_pixi) {
-                app_pixi = new PIXI.Application({ view:document.getElementById('live2d-canvas'), autoStart:true, resizeTo:document.getElementById('stage-container'), transparent:true });
-                initInteraction();
-            }
-            try {
-                if(model) { app_pixi.stage.removeChild(model); model.destroy(); model=null; }
-                app_pixi.stage.removeChildren(); 
-                model = await PIXI.live2d.Live2DModel.from(path);
-                app_pixi.stage.addChild(model);
-                window.model = model; 
-                setTimeout(() => applyConfig(cfg || currentCfg), 100);
-                app_pixi.ticker.remove(lipSync); app_pixi.ticker.add(lipSync);
-                if(model.internalModel.motionManager) model.internalModel.motionManager.startRandomMotion('Idle');
-                console.log("✅ Model Loaded Successfully");
-            } catch(e) { console.error("❌ Model Load Failed:", e); showToast("❌ 模型加载失败", "error"); }
+            if(!app_pixi) { app_pixi = new PIXI.Application({ view:document.getElementById('live2d-canvas'), autoStart:true, resizeTo:document.getElementById('stage-container'), transparent:true }); initInteraction(); }
+            try { if(model) { app_pixi.stage.removeChild(model); model.destroy(); model=null; } app_pixi.stage.removeChildren(); model = await PIXI.live2d.Live2DModel.from(path); app_pixi.stage.addChild(model); window.model = model; setTimeout(() => applyConfig(cfg || currentCfg), 100); app_pixi.ticker.remove(lipSync); app_pixi.ticker.add(lipSync); if(model.internalModel.motionManager) model.internalModel.motionManager.startRandomMotion('Idle'); console.log("✅ Model Loaded Successfully"); } catch(e) { console.error("❌ Model Load Failed:", e); showToast("❌ 模型加载失败", "error"); }
         }
 
         function initInteraction() { const s=document.getElementById('stage-container');app_pixi.stage.interactive=true;app_pixi.stage.on('pointerdown',(e)=>{if(model&&(!e.data.originalEvent.touches||e.data.originalEvent.touches.length===1)){isDragging=true;dragData=e.data;model.alpha=0.8;}});app_pixi.stage.on('pointerup',()=>{isDragging=false;if(model)model.alpha=1;}).on('pointerupoutside',()=>{isDragging=false;if(model)model.alpha=1;});app_pixi.stage.on('pointermove',()=>{if(isDragging&&model){const p=dragData.getLocalPosition(model.parent);model.x=p.x-model.width/2;model.y=p.y-model.height/2;}});s.addEventListener('wheel',(e)=>{e.preventDefault();if(model){model.scale.x*=(e.deltaY<0?1.1:0.9);model.scale.y=model.scale.x;}},{passive:false});s.addEventListener('touchstart',(e)=>{if(e.touches.length===2&&model){isDragging=false;initialDist=Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY);initialScale=model.scale.x;}});s.addEventListener('touchmove',(e)=>{if(e.touches.length===2&&model&&initialDist){e.preventDefault();model.scale.set(initialScale*(Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY)/initialDist));}}); }
         function lipSync(){if(!model||!analyser||!isTalking)return;analyser.getByteFrequencyData(dataArray);let sum=0;for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];if(model.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',Math.min(1.0,(sum/dataArray.length)/30));}
-        
-        function triggerMotion(emo){
-            if(!model) return;
-            try {
-                const im = model.internalModel;
-                emo = emo.toUpperCase();
-                if (im.settings.expressions && im.settings.expressions.length > 0) {
-                    let exprMap = {'HAPPY': ['happy', 'smile', 'joy', 'f01'], 'ANGRY': ['angry', 'mad', 'f02'], 'SAD': ['sad', 'cry', 'f03'], 'SHOCK': ['shock', 'surprise', 'f04']};
-                    let exprKeywords = exprMap[emo] || [];
-                    let targetExpr = im.settings.expressions.find(e => exprKeywords.some(k => e.Name.toLowerCase().includes(k.toLowerCase())))?.Name;
-                    if (targetExpr) { if (im.expressionManager) im.expressionManager.setExpression(targetExpr); else model.expression(targetExpr); }
-                }
-                const definitions = im.motionManager.definitions?.Motions || im.motionManager.motionGroups || im.motionManager.definitions;
-                if (!definitions) return;
-                const groupAliases = {'HAPPY': ['Happy', 'Joy', 'Smile'], 'ANGRY': ['Angry', 'Mad'], 'SAD': ['Sad', 'Cry'], 'SHOCK': ['Shock', 'Surprise'], 'IDLE': ['Idle', 'Wait'], 'NORMAL': ['TapBody']};
-                const fileKeywords = {'HAPPY': ['happy', '02', '04'], 'ANGRY': ['angry', '01', '10'], 'SAD': ['sad', '06'], 'SHOCK': ['shock', '05']};
-                let targetGroups = groupAliases[emo] || [];
-                for (let g of targetGroups) { if (definitions[g]) { im.motionManager.startRandomMotion(g, 3); return; } }
-                let keywords = fileKeywords[emo] || [];
-                for (const [groupName, motions] of Object.entries(definitions)) {
-                    if (!Array.isArray(motions)) continue;
-                    for (let i = 0; i < motions.length; i++) {
-                        const f = (motions[i].File || motions[i].file || "").toLowerCase();
-                        if (keywords.some(k => f.includes(k.toLowerCase()))) { im.motionManager.startMotion(groupName, i, 3); return; }
-                    }
-                }
-                if (emo !== 'IDLE' && definitions['TapBody']) { im.motionManager.startRandomMotion('TapBody', 3); }
-            } catch(e) { console.error("Trigger Error:", e); }
-        }
+        function triggerMotion(emo){ if(!model) return; try { const im = model.internalModel; emo = emo.toUpperCase(); if (im.settings.expressions && im.settings.expressions.length > 0) { let exprMap = {'HAPPY': ['happy', 'smile', 'joy', 'f01'], 'ANGRY': ['angry', 'mad', 'f02'], 'SAD': ['sad', 'cry', 'f03'], 'SHOCK': ['shock', 'surprise', 'f04']}; let exprKeywords = exprMap[emo] || []; let targetExpr = im.settings.expressions.find(e => exprKeywords.some(k => e.Name.toLowerCase().includes(k.toLowerCase())))?.Name; if (targetExpr) { if (im.expressionManager) im.expressionManager.setExpression(targetExpr); else model.expression(targetExpr); } } const definitions = im.motionManager.definitions?.Motions || im.motionManager.motionGroups || im.motionManager.definitions; if (!definitions) return; const groupAliases = {'HAPPY': ['Happy', 'Joy', 'Smile'], 'ANGRY': ['Angry', 'Mad'], 'SAD': ['Sad', 'Cry'], 'SHOCK': ['Shock', 'Surprise'], 'IDLE': ['Idle', 'Wait'], 'NORMAL': ['TapBody']}; const fileKeywords = {'HAPPY': ['happy', '02', '04'], 'ANGRY': ['angry', '01', '10'], 'SAD': ['sad', '06'], 'SHOCK': ['shock', '05']}; let targetGroups = groupAliases[emo] || []; for (let g of targetGroups) { if (definitions[g]) { im.motionManager.startRandomMotion(g, 3); return; } } let keywords = fileKeywords[emo] || []; for (const [groupName, motions] of Object.entries(definitions)) { if (!Array.isArray(motions)) continue; for (let i = 0; i < motions.length; i++) { const f = (motions[i].File || motions[i].file || "").toLowerCase(); if (keywords.some(k => f.includes(k.toLowerCase()))) { im.motionManager.startMotion(groupName, i, 3); return; } } } if (emo !== 'IDLE' && definitions['TapBody']) { im.motionManager.startRandomMotion('TapBody', 3); } } catch(e) { console.error("Trigger Error:", e); } }
 
         document.getElementById('studio-btn').onclick=()=>{document.getElementById('studio-overlay').style.display='flex';socket.emit('get_studio_data');};
-        
-        socket.on('studio_data',(d)=>{
-            const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id;
-            if(!d.models||d.models.length===0){list.innerHTML="<div style='grid-column:1/-1;text-align:center;color:red'>❌ 未找到模型</div>";}
-            else{
-                d.models.forEach(m=>{
-                    let el=document.createElement('div');el.className=`model-card ${m.id===d.current_id?'active':''}`;
-                    let delBtn=iAmAdmin&&m.id!==d.current_id?`<div class="btn-del" onclick="delModel('${m.id}',event)">🗑️</div>`:"";
-                    el.innerHTML=`<div>${m.name}</div>${delBtn}`;el.onclick=()=>socket.emit('switch_model',{id:m.id});list.appendChild(el);
-                    if(m.id===d.current_id){
-                        document.getElementById('persona-model-name').textContent=m.name;document.getElementById('persona-text').value=m.persona||"";
-                        const vSelect=document.getElementById('voice-select');vSelect.innerHTML="";
-                        if(d.voices){d.voices.forEach(v=>{let opt=document.createElement('option');opt.value=v.id;opt.textContent=v.name;vSelect.appendChild(opt);});}
-                        if(m.voice)vSelect.value=m.voice;
-                        let r=parseInt(m.rate)||0,p=parseInt(m.pitch)||0;document.getElementById('rate-range').value=r;updateVal('rate',r);document.getElementById('pitch-range').value=p;updateVal('pitch',p);
-                        let s=m.scale!==undefined?m.scale:0.5,x=m.x!==undefined?m.x:0.5,y=m.y!==undefined?m.y:0.5;updateValLabels(s,x,y);
-                    }
-                });
-            }
-            
-            const bgList = document.getElementById('bg-list');
-            bgList.innerHTML = "";
-            if(d.backgrounds) {
-                d.backgrounds.forEach(bg => {
-                    let chip = document.createElement('span');
-                    chip.className = `bg-chip ${bg===d.current_bg ? 'active' : ''}`;
-                    chip.textContent = bg;
-                    chip.onclick = () => changeBackground(bg);
-                    bgList.appendChild(chip);
-                });
-            }
-        });
-        
-        window.uploadBackground = (f) => {
-            if(!f) return;
-            let fd = new FormData(); fd.append('file', f);
-            showToast("🖼️ 上传背景...");
-            fetch('/upload_bg', {method:'POST', body:fd}).then(r=>r.json()).then(d=>{if(d.success){ showToast("✅ 上传成功"); socket.emit('get_studio_data'); } else showToast("❌ " + d.msg, "error");});
-        };
+        socket.on('studio_data',(d)=>{ const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id; if(!d.models||d.models.length===0){list.innerHTML="<div style='grid-column:1/-1;text-align:center;color:red'>❌ 未找到模型</div>";} else{ d.models.forEach(m=>{ let el=document.createElement('div');el.className=`model-card ${m.id===d.current_id?'active':''}`; let delBtn=iAmAdmin&&m.id!==d.current_id?`<div class="btn-del" onclick="delModel('${m.id}',event)">🗑️</div>`:""; el.innerHTML=`<div>${m.name}</div>${delBtn}`;el.onclick=()=>socket.emit('switch_model',{id:m.id});list.appendChild(el); if(m.id===d.current_id){ document.getElementById('persona-model-name').textContent=m.name;document.getElementById('persona-text').value=m.persona||""; const vSelect=document.getElementById('voice-select');vSelect.innerHTML=""; if(d.voices){d.voices.forEach(v=>{let opt=document.createElement('option');opt.value=v.id;opt.textContent=v.name;vSelect.appendChild(opt);});} if(m.voice)vSelect.value=m.voice; let r=parseInt(m.rate)||0,p=parseInt(m.pitch)||0;document.getElementById('rate-range').value=r;updateVal('rate',r);document.getElementById('pitch-range').value=p;updateVal('pitch',p); let s=m.scale!==undefined?m.scale:0.5,x=m.x!==undefined?m.x:0.5,y=m.y!==undefined?m.y:0.5;updateValLabels(s,x,y); } }); } const bgList = document.getElementById('bg-list'); bgList.innerHTML = ""; if(d.backgrounds) { d.backgrounds.forEach(bg => { let chip = document.createElement('span'); chip.className = `bg-chip ${bg===d.current_bg ? 'active' : ''}`; chip.textContent = bg; chip.onclick = () => changeBackground(bg); bgList.appendChild(chip); }); } });
+        window.uploadBackground = (f) => { if(!f) return; let fd = new FormData(); fd.append('file', f); showToast("🖼️ 上传背景..."); fetch('/upload_bg', {method:'POST', body:fd}).then(r=>r.json()).then(d=>{if(d.success){ showToast("✅ 上传成功"); socket.emit('get_studio_data'); } else showToast("❌ " + d.msg, "error");}); };
         window.changeBackground = (name) => { socket.emit('switch_background', {name: name}); };
         socket.on('background_update', (d) => { changeBackgroundUI(d.url ? d.url.split('/').pop() : ''); });
-        function changeBackgroundUI(filename) {
-            const el = document.getElementById('stage-container');
-            if (filename) { el.style.backgroundImage = `url('/static/backgrounds/${filename}')`; } else { el.style.backgroundImage = 'radial-gradient(circle,#636e72 10%,#2d3436 90%)'; }
-        }
-
+        function changeBackgroundUI(filename) { const el = document.getElementById('stage-container'); if (filename) { el.style.backgroundImage = `url('/static/backgrounds/${filename}')`; } else { el.style.backgroundImage = 'radial-gradient(circle,#636e72 10%,#2d3436 90%)'; } }
         socket.on('model_switched',(m)=>{currentCfg=m;loadModel(m.path,m);document.getElementById('room-title').textContent=`🤖 ${m.name}`;if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');showToast(`✨ 已切换为 ${m.name}`);});
         document.getElementById('save-settings-btn').onclick=()=>{let r=document.getElementById('rate-range').value,p=document.getElementById('pitch-range').value;socket.emit('save_settings',{id:currentModelId,persona:document.getElementById('persona-text').value,voice:document.getElementById('voice-select').value,rate:(r>=0?'+':'')+r+'%',pitch:(p>=0?'+':'')+p+'Hz',scale:document.getElementById('model-scale').value,x:document.getElementById('model-x').value,y:document.getElementById('model-y').value});};
         window.delModel=(id,e)=>{e.stopPropagation();if(confirm('删除？'))socket.emit('delete_model',{id});};window.dlModel=(n)=>socket.emit('download_model',{name:n});window.uploadFile=(f)=>{let fd=new FormData();fd.append('file',f);showToast("📤 上传中...");fetch('/upload_model',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{if(d.success){showToast("✅ 成功");socket.emit('get_studio_data');}else showToast("❌ "+d.msg,"error")});}
