@@ -16,16 +16,11 @@
         /* ==========================================================================
            1. 全局基础重置
            ========================================================================== */
-        * { 
-            box-sizing: border-box; 
-            outline: none; 
-            -webkit-tap-highlight-color: transparent; 
-        }
+        * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
         
         body { 
             font-family: "Segoe UI", "Microsoft YaHei", sans-serif; 
-            margin: 0; 
-            padding: 0; 
+            margin: 0; padding: 0; 
             height: 100dvh; 
             width: 100vw; 
             background-color: #2d3436; 
@@ -33,28 +28,12 @@
             color: #333; 
         }
 
-        #live2d-canvas { 
-            position: absolute; 
-            top: 0; 
-            left: 0; 
-            width: 100%; 
-            height: 100%; 
-        }
+        #live2d-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
         
-        /* 竖屏锁定提示 (仅在移动端横屏时显示) */
         #orientation-lock { 
-            display: none; 
-            position: fixed; 
-            top: 0; 
-            left: 0; 
-            width: 100%; 
-            height: 100%; 
-            background: #2d3436; 
-            z-index: 99999; 
-            color: white; 
-            flex-direction: column; 
-            align-items: center; 
-            justify-content: center; 
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: #2d3436; z-index: 99999; 
+            color: white; flex-direction: column; align-items: center; justify-content: center; 
             text-align: center; 
         }
         @media screen and (max-width: 1024px) and (orientation: landscape) { 
@@ -62,535 +41,157 @@
         }
 
         /* ==========================================================================
-           2. PC 端布局样式 (屏幕宽度 > 1024px)
+           2. PC 端布局样式
            ========================================================================== */
         @media (min-width: 1025px) {
-            body { 
-                display: flex; 
-                flex-direction: row; 
-            }
-            
-            /* 左侧舞台区域 */
+            body { display: flex; flex-direction: row; }
             #stage-container { 
-                flex: 1; 
-                position: relative; 
+                flex: 1; position: relative; 
                 background-image: radial-gradient(circle, #636e72 10%, #2d3436 90%); 
-                overflow: hidden; 
-                background-size: cover; 
-                background-position: center; 
-                z-index: 1; 
+                overflow: hidden; background-size: cover; background-position: center; z-index: 1; 
             }
-            
-            /* 右侧聊天栏区域 */
             #chat-container { 
-                width: 420px; 
-                display: flex; 
-                flex-direction: column; 
-                background: #fff; 
-                z-index: 10; 
-                box-shadow: -5px 0 20px rgba(0,0,0,0.15); 
-                border-left: 1px solid #eee; 
-                height: 100%; 
+                width: 420px; display: flex; flex-direction: column; background: #fff; 
+                z-index: 10; box-shadow: -5px 0 20px rgba(0,0,0,0.15); border-left: 1px solid #eee; height: 100%; 
             }
-            
             #header { 
-                background: #6c5ce7; 
-                color: white; 
-                padding: 0 20px; 
-                display: flex; 
-                justify-content: space-between; 
-                align-items: center; 
-                height: 60px; 
-                flex-shrink: 0; 
-                font-weight: bold; 
-                font-size: 18px; 
+                background: #6c5ce7; color: white; padding: 0 20px; display: flex; 
+                justify-content: space-between; align-items: center; height: 60px; flex-shrink: 0; 
+                font-weight: bold; font-size: 18px; 
             }
-            
-            #chat-window { 
-                flex: 1; 
-                overflow-y: auto; 
-                padding: 20px; 
-                background: #f5f7fa; 
-            }
-            
+            #chat-window { flex: 1; overflow-y: auto; padding: 20px; background: #f5f7fa; }
             #input-area { 
-                padding: 20px; 
-                background: white; 
-                border-top: 1px solid #eee; 
-                flex-shrink: 0; 
-                display: flex; 
-                align-items: center; 
-                height: 80px; 
+                padding: 20px; background: white; border-top: 1px solid #eee; flex-shrink: 0; 
+                display: flex; align-items: center; height: 80px; 
             }
-            
             #user-input { 
-                flex: 1; 
-                padding: 12px 15px; 
-                border: 2px solid #e0e0e0; 
-                border-radius: 25px; 
-                font-size: 16px; 
+                flex: 1; padding: 12px 15px; border: 2px solid #e0e0e0; border-radius: 25px; font-size: 16px; 
             }
-            
             #send-btn { 
-                background: #6c5ce7; 
-                color: white; 
-                border: none; 
-                padding: 0 30px; 
-                margin-left: 12px; 
-                border-radius: 25px; 
-                height: 46px; 
-                font-weight: bold; 
-                cursor: pointer; 
+                background: #6c5ce7; color: white; border: none; padding: 0 30px; 
+                margin-left: 12px; border-radius: 25px; height: 46px; font-weight: bold; cursor: pointer; 
             }
-            
-            .message-bubble { 
-                background: white; 
-                color: #333; 
-                box-shadow: 0 2px 5px rgba(0,0,0,0.05); 
-            }
+            .message-bubble { background: white; color: #333; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
             .self .message-bubble { background: #6c5ce7; color: white; }
             .pico .message-bubble { background: #fff0f6; border: 2px solid #f8a5c2; }
             
-            .icon-btn { 
-                background: rgba(0,0,0,0.1); 
-                padding: 8px 12px; 
-                border-radius: 8px; 
-                cursor: pointer; 
-                transition: 0.2s; 
-            }
+            .icon-btn { background: rgba(0,0,0,0.1); padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: 0.2s; }
             .icon-btn:hover { background: rgba(0,0,0,0.2); }
 
-            /* PC端特有的直播模式 (透明悬浮) */
-            body.live-mode #header, 
-            body.live-mode #input-area, 
-            body.live-mode #debug-pos { 
-                display: none !important; 
-            }
-            
+            /* 直播模式 */
+            body.live-mode #header, body.live-mode #input-area, body.live-mode #debug-pos { display: none !important; }
             body.live-mode #chat-container { 
-                position: absolute; 
-                right: 30px; 
-                top: 30px; 
-                bottom: 30px; 
-                width: 350px; 
-                height: auto; 
-                background: rgba(0, 0, 0, 0.5); 
-                border-radius: 12px; 
-                pointer-events: none; 
+                position: absolute; right: 30px; top: 30px; bottom: 30px; width: 350px; 
+                height: auto; background: rgba(0, 0, 0, 0.5); border-radius: 12px; pointer-events: none; 
             }
-            
-            body.live-mode #chat-window { 
-                background: transparent; 
-            }
-            
-            body.live-mode .message-bubble { 
-                background: rgba(255,255,255,0.95); 
-                backdrop-filter: blur(4px); 
-            }
+            body.live-mode #chat-window { background: transparent; }
+            body.live-mode .message-bubble { background: rgba(255,255,255,0.95); backdrop-filter: blur(4px); }
         }
 
         /* ==========================================================================
-           3. 移动端布局样式 (屏幕宽度 <= 1024px)
+           3. 移动端布局样式
            ========================================================================== */
         @media (max-width: 1024px) {
-            body { 
-                display: block; 
-                background: #2d3436; 
-            }
-            
+            body { display: block; background: #2d3436; }
             #stage-container { 
-                position: fixed; 
-                top: 0; 
-                left: 0; 
-                width: 100vw; 
-                height: 100dvh; 
-                z-index: 0; 
-                background-image: radial-gradient(circle, #636e72 10%, #2d3436 90%); 
-                background-size: cover; 
-                background-position: center; 
+                position: fixed; top: 0; left: 0; width: 100vw; height: 100dvh; 
+                z-index: 0; background-image: radial-gradient(circle, #636e72 10%, #2d3436 90%); 
+                background-size: cover; background-position: center; 
             }
-            
             #chat-container { 
-                position: fixed; 
-                top: 0; 
-                left: 0; 
-                width: 100vw; 
-                height: 100dvh; 
-                z-index: 10; 
-                background: transparent; 
-                display: flex; 
-                flex-direction: column; 
-                justify-content: flex-end; 
-                pointer-events: none; /* 让点击穿透到 Live2D */
+                position: fixed; top: 0; left: 0; width: 100vw; height: 100dvh; 
+                z-index: 10; background: transparent; display: flex; flex-direction: column; 
+                justify-content: flex-end; pointer-events: none; 
             }
-            
             #header { 
-                position: absolute; 
-                top: 0; 
-                left: 0; 
-                width: 100%; 
-                padding: max(10px, env(safe-area-inset-top)) 15px 10px; 
-                background: transparent; 
-                display: flex; 
-                justify-content: space-between; 
-                align-items: center; 
-                pointer-events: auto; 
-                z-index: 20; 
+                position: absolute; top: 0; left: 0; width: 100%; padding: max(10px, env(safe-area-inset-top)) 15px 10px; 
+                background: transparent; display: flex; justify-content: space-between; align-items: center; 
+                pointer-events: auto; z-index: 20; 
             }
-            
-            #room-title { 
-                text-shadow: 0 1px 3px rgba(0,0,0,0.8); 
-                color: white; 
-                font-weight: 800; 
-                font-size: 18px; 
-            }
-            
-            .icon-btn { 
-                background: rgba(0,0,0,0.4); 
-                backdrop-filter: blur(5px); 
-                color: white; 
-                padding: 8px 12px; 
-                border-radius: 8px; 
-            }
+            #room-title { text-shadow: 0 1px 3px rgba(0,0,0,0.8); color: white; font-weight: 800; font-size: 18px; }
+            .icon-btn { background: rgba(0,0,0,0.4); backdrop-filter: blur(5px); color: white; padding: 8px 12px; border-radius: 8px; }
             
             #chat-window { 
-                flex: 0 1 60%; 
-                overflow-y: auto; 
-                padding: 15px; 
+                flex: 0 1 60%; overflow-y: auto; padding: 15px; 
                 background: linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 100%); 
-                pointer-events: auto; 
-                -webkit-overflow-scrolling: touch; 
-                padding-bottom: 10px; 
+                pointer-events: auto; -webkit-overflow-scrolling: touch; padding-bottom: 10px; 
             }
-            
             #input-area { 
-                pointer-events: auto; 
-                background: rgba(255, 255, 255, 0.9); 
-                backdrop-filter: blur(15px); 
-                -webkit-backdrop-filter: blur(15px); 
-                margin: 0 10px; 
-                margin-bottom: max(10px, env(safe-area-inset-bottom)); 
-                border-radius: 20px 20px 0 0; 
-                padding: 10px; 
-                display: flex; 
-                align-items: center; 
+                pointer-events: auto; background: rgba(255, 255, 255, 0.9); 
+                backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); 
+                margin: 0 10px; margin-bottom: max(10px, env(safe-area-inset-bottom)); 
+                border-radius: 20px 20px 0 0; padding: 10px; display: flex; align-items: center; 
                 box-shadow: 0 4px 15px rgba(0,0,0,0.3); 
             }
-            
             #user-input { 
-                flex: 1; 
-                padding: 10px; 
-                border: 1px solid rgba(0,0,0,0.1); 
-                border-radius: 20px; 
-                background: rgba(255,255,255,0.8); 
-                font-size: 16px; 
+                flex: 1; padding: 10px; border: 1px solid rgba(0,0,0,0.1); 
+                border-radius: 20px; background: rgba(255,255,255,0.8); font-size: 16px; 
             }
-            
             #send-btn { 
-                background: #6c5ce7; 
-                color: white; 
-                border: none; 
-                width: 44px; 
-                height: 44px; 
-                border-radius: 50%; 
-                margin-left: 8px; 
-                font-weight: bold; 
-                display: flex; 
-                align-items: center; 
-                justify-content: center; 
+                background: #6c5ce7; color: white; border: none; width: 44px; height: 44px; 
+                border-radius: 50%; margin-left: 8px; font-weight: bold; display: flex; 
+                align-items: center; justify-content: center; 
             }
-            
             .message-bubble { 
-                background: rgba(255, 255, 255, 0.9) !important; 
-                backdrop-filter: blur(5px); 
-                border: 1px solid rgba(255,255,255,0.5); 
-                color: #2d3436 !important; 
+                background: rgba(255, 255, 255, 0.9) !important; backdrop-filter: blur(5px); 
+                border: 1px solid rgba(255,255,255,0.5); color: #2d3436 !important; 
                 box-shadow: 0 2px 4px rgba(0,0,0,0.2); 
             }
-            .self .message-bubble { 
-                background: rgba(108, 92, 231, 0.95) !important; 
-                color: white !important; 
-                border: none; 
-            }
-            .message-info { 
-                color: rgba(255,255,255,0.9); 
-                text-shadow: 0 1px 2px rgba(0,0,0,0.8); 
-            }
+            .self .message-bubble { background: rgba(108, 92, 231, 0.95) !important; color: white !important; border: none; }
+            .message-info { color: rgba(255,255,255,0.9); text-shadow: 0 1px 2px rgba(0,0,0,0.8); }
         }
 
         /* ==========================================================================
-           4. 通用组件与工具样式 (所有端通用)
+           4. 组件与工具样式
            ========================================================================== */
-        .message-container { 
-            display: flex; 
-            margin-bottom: 15px; 
-            flex-direction: column; 
-            width: 100%; 
-        }
+        .message-container { display: flex; margin-bottom: 15px; flex-direction: column; width: 100%; }
+        .message-info { font-size: 12px; margin-bottom: 4px; padding: 0 5px; color: #888; }
+        .message-bubble { padding: 10px 15px; border-radius: 18px; max-width: 85%; word-wrap: break-word; position: relative; line-height: 1.5; }
+        .self { align-items: flex-end; } .self .message-bubble { border-bottom-right-radius: 4px; }
+        .other { align-items: flex-start; } .other .message-bubble { border-bottom-left-radius: 4px; }
         
-        .message-info { 
-            font-size: 12px; 
-            margin-bottom: 4px; 
-            padding: 0 5px; 
-            color: #888; 
-        }
-        
-        .message-bubble { 
-            padding: 10px 15px; 
-            border-radius: 18px; 
-            max-width: 85%; 
-            word-wrap: break-word; 
-            position: relative; 
-            line-height: 1.5; 
-        }
-        
-        .self { align-items: flex-end; } 
-        .self .message-bubble { border-bottom-right-radius: 4px; }
-        
-        .other { align-items: flex-start; } 
-        .other .message-bubble { border-bottom-left-radius: 4px; }
-        
-        .emotion-tag { 
-            display: inline-block; 
-            font-size: 0.8em; 
-            padding: 1px 4px; 
-            border-radius: 4px; 
-            background: rgba(232, 67, 147, 0.1); 
-            color: #e84393; 
-            margin-left: 5px; 
-            font-weight: bold;
-        }
-        
-        .message-img { 
-            max-width: 100%; 
-            border-radius: 10px; 
-            margin-top: 5px; 
-            display: block; 
-            cursor: pointer; 
-            border: 2px solid white; 
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1); 
-        }
+        .emotion-tag { display: inline-block; font-size: 0.8em; padding: 1px 4px; border-radius: 4px; background: rgba(232, 67, 147, 0.1); color: #e84393; margin-left: 5px; font-weight: bold;}
+        .message-img { max-width: 100%; border-radius: 10px; margin-top: 5px; display: block; cursor: pointer; border: 2px solid white; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
 
-        /* ★★★ 核心修复：音频播放条样式 (强制显示) ★★★ */
         .audio-player {
-            display: block !important;
-            margin-top: 8px;
-            height: 40px;
-            width: 100%;
-            min-width: 200px;
-            border-radius: 20px;
-            background: #f1f3f5;
-            border: 1px solid #ddd;
-            opacity: 1 !important;
-            pointer-events: auto !important;
-            z-index: 999; /* 确保层级够高 */
+            display: block !important; margin-top: 8px; height: 40px; width: 100%; min-width: 200px; 
+            border-radius: 20px; background: #f1f3f5; border: 1px solid #ddd; 
+            opacity: 1 !important; pointer-events: auto !important; z-index: 999; 
         }
 
-        /* 模态框 (覆盖层) */
-        .overlay { 
-            position: fixed; 
-            top: 0; 
-            left: 0; 
-            width: 100%; 
-            height: 100%; 
-            background: rgba(0, 0, 0, 0.85); 
-            z-index: 9999; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            backdrop-filter: blur(5px); 
-        }
-        
-        .modal-box { 
-            background: white; 
-            padding: 25px; 
-            border-radius: 20px; 
-            width: 90%; 
-            max-width: 450px; 
-            max-height: 80vh; 
-            overflow-y: auto; 
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5); 
-        }
-        
+        .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.85); z-index: 9999; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(5px); }
+        .modal-box { background: white; padding: 25px; border-radius: 20px; width: 90%; max-width: 450px; max-height: 80vh; overflow-y: auto; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
         #login-overlay { z-index: 10000; } 
         #studio-overlay { display: none; z-index: 9000; }
         
-        /* 表单控件 */
-        #username-input { 
-            width: 80%; 
-            padding: 12px; 
-            margin: 20px 0; 
-            border: 2px solid #6c5ce7; 
-            border-radius: 10px; 
-            font-size: 18px; 
-            text-align: center; 
-            outline: none; 
-        }
-        
-        #login-btn { 
-            background: #6c5ce7; 
-            color: white; 
-            border: none; 
-            padding: 12px 40px; 
-            border-radius: 30px; 
-            font-size: 18px; 
-            font-weight: bold; 
-            transition: all 0.3s; 
-            cursor: pointer; 
-        }
-        #login-btn:disabled { 
-            background: #b2bec3; 
-            cursor: not-allowed; 
-            opacity: 0.7; 
-        }
+        #username-input { width: 80%; padding: 12px; margin: 20px 0; border: 2px solid #6c5ce7; border-radius: 10px; font-size: 18px; text-align: center; outline: none; }
+        #login-btn { background: #6c5ce7; color: white; border: none; padding: 12px 40px; border-radius: 30px; font-size: 18px; font-weight: bold; transition: all 0.3s; cursor: pointer; }
+        #login-btn:disabled { background: #b2bec3; cursor: not-allowed; opacity: 0.7; }
         
         .admin-only { display: none; }
-        
         .slider-container { margin: 12px 0; }
-        .slider-label { 
-            font-size: 12px; 
-            color: #666; 
-            display: flex; 
-            justify-content: space-between; 
-            margin-bottom: 5px; 
-        }
+        .slider-label { font-size: 12px; color: #666; display: flex; justify-content: space-between; margin-bottom: 5px; }
         input[type="range"] { width: 100%; cursor: pointer; }
         
-        .upload-box { 
-            border: 2px dashed #ccc; 
-            padding: 20px; 
-            text-align: center; 
-            border-radius: 12px; 
-            margin-top: 15px; 
-            cursor: pointer; 
-            transition: background 0.2s; 
-            background: #fafafa; 
-        }
+        .upload-box { border: 2px dashed #ccc; padding: 20px; text-align: center; border-radius: 12px; margin-top: 15px; cursor: pointer; transition: background 0.2s; background: #fafafa; }
+        .model-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px; margin-top: 15px; }
+        .model-card { background: #f8f9fa; padding: 12px; border-radius: 10px; text-align: center; cursor: pointer; border: 2px solid transparent; transition: all 0.2s; font-size: 14px; }
+        .model-card.active { border-color: #6c5ce7; background: #ecebff; font-weight: bold; color: #6c5ce7; }
         
-        .model-list { 
-            display: grid; 
-            grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); 
-            gap: 10px; 
-            margin-top: 15px; 
-        }
+        .chip { display: inline-block; background: #eee; padding: 6px 12px; border-radius: 15px; margin: 5px; cursor: pointer; font-size: 13px; }
+        .bg-chip { display: inline-block; background: #fff; padding: 5px 10px; border-radius: 8px; margin: 5px; cursor: pointer; font-size: 12px; border: 1px solid #ddd; }
+        .bg-chip.active { background: #d1ecf1; border-color: #17a2b8; font-weight: bold; }
+        .btn-del { color: red; font-size: 12px; display: block; margin-top: 5px; }
         
-        .model-card { 
-            background: #f8f9fa; 
-            padding: 12px; 
-            border-radius: 10px; 
-            text-align: center; 
-            cursor: pointer; 
-            border: 2px solid transparent; 
-            transition: all 0.2s; 
-            font-size: 14px; 
-        }
-        .model-card.active { 
-            border-color: #6c5ce7; 
-            background: #ecebff; 
-            font-weight: bold; 
-            color: #6c5ce7; 
-        }
-        
-        .chip { 
-            display: inline-block; 
-            background: #eee; 
-            padding: 6px 12px; 
-            border-radius: 15px; 
-            margin: 5px; 
-            cursor: pointer; 
-            font-size: 13px; 
-        }
-        
-        .bg-chip { 
-            display: inline-block; 
-            background: #fff; 
-            padding: 5px 10px; 
-            border-radius: 8px; 
-            margin: 5px; 
-            cursor: pointer; 
-            font-size: 12px; 
-            border: 1px solid #ddd; 
-        }
-        .bg-chip.active { 
-            background: #d1ecf1; 
-            border-color: #17a2b8; 
-            font-weight: bold; 
-        }
-        
-        .btn-del { 
-            color: red; 
-            font-size: 12px; 
-            display: block; 
-            margin-top: 5px; 
-        }
-        
-        /* 预览区域 */
-        #preview-area { 
-            position: absolute; 
-            bottom: 90px; 
-            left: 20px; 
-            right: 20px; 
-            background: rgba(255, 255, 255, 0.95); 
-            border-radius: 12px; 
-            padding: 10px; 
-            display: none; 
-            box-shadow: 0 -5px 20px rgba(0, 0, 0, 0.15); 
-            z-index: 100; 
-            pointer-events: auto; 
-            text-align: center; 
-        }
+        #preview-area { position: absolute; bottom: 90px; left: 20px; right: 20px; background: rgba(255, 255, 255, 0.95); border-radius: 12px; padding: 10px; display: none; box-shadow: 0 -5px 20px rgba(0, 0, 0, 0.15); z-index: 100; pointer-events: auto; text-align: center; }
         #preview-img { max-height: 120px; max-width: 100%; border-radius: 8px; }
-        #close-preview { 
-            position: absolute; 
-            top: -10px; 
-            right: -10px; 
-            width: 24px; 
-            height: 24px; 
-            background: white; 
-            border-radius: 50%; 
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2); 
-            cursor: pointer; 
-            font-weight: bold; 
-            line-height: 24px; 
-        }
+        #close-preview { position: absolute; top: -10px; right: -10px; width: 24px; height: 24px; background: white; border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,0.2); cursor: pointer; font-weight: bold; line-height: 24px; }
         
-        /* Toast 通知 */
-        #toast-container { 
-            position: fixed; 
-            top: 30px; 
-            left: 50%; 
-            transform: translateX(-50%); 
-            z-index: 11000; 
-            text-align: center; 
-            width: 100%; 
-            pointer-events: none; 
-        }
-        .toast { 
-            display: inline-block; 
-            background: rgba(0, 0, 0, 0.85); 
-            color: white; 
-            padding: 10px 25px; 
-            border-radius: 30px; 
-            margin-top: 10px; 
-            animation: fadeOut 3s forwards 2s; 
-            backdrop-filter: blur(4px); 
-            font-weight: 500; 
-            box-shadow: 0 5px 15px rgba(0,0,0,0.3); 
-        }
+        #toast-container { position: fixed; top: 30px; left: 50%; transform: translateX(-50%); z-index: 11000; text-align: center; width: 100%; pointer-events: none; }
+        .toast { display: inline-block; background: rgba(0, 0, 0, 0.85); color: white; padding: 10px 25px; border-radius: 30px; margin-top: 10px; animation: fadeOut 3s forwards 2s; backdrop-filter: blur(4px); font-weight: 500; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
         @keyframes fadeOut { to { opacity: 0; visibility: hidden; } }
         
-        #debug-pos { 
-            position: absolute; 
-            top: 10px; 
-            left: 10px; 
-            color: #0f0; 
-            background: rgba(0, 0, 0, 0.5); 
-            padding: 5px; 
-            font-size: 10px; 
-            pointer-events: none; 
-            z-index: 100; 
-            border-radius: 4px; 
-        }
+        #debug-pos { position: absolute; top: 10px; left: 10px; color: #0f0; background: rgba(0, 0, 0, 0.5); padding: 5px; font-size: 10px; pointer-events: none; z-index: 100; border-radius: 4px; }
     </style>
 </head>
 <body>
@@ -883,7 +484,7 @@
             s.addEventListener('touchmove',(e)=>{if(e.touches.length===2&&model&&initialDist){e.preventDefault();model.scale.set(initialScale*(Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY)/initialDist));}}); 
         }
 
-        // 口型同步
+        // 口型同步 (Server Audio)
         function lipSync(){if(!model||!analyser||!isTalking)return;analyser.getByteFrequencyData(dataArray);let sum=0;for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];if(model.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',Math.min(1.0,(sum/dataArray.length)/30));}
         
         // 动作触发
@@ -914,7 +515,7 @@
         socket.on('studio_data',(d)=>{ 
             const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id; 
             
-            // ★★★ 核心修复：优先填充语音列表，不依赖模型 ★★★
+            // 语音列表
             const vSelect = document.getElementById('voice-select');
             vSelect.innerHTML = "";
             if(d.voices && d.voices.length > 0) {
@@ -925,7 +526,6 @@
                     vSelect.appendChild(opt);
                 });
             } else {
-                // 保底
                 let opt = document.createElement('option');
                 opt.value = "zh-CN-XiaoxiaoNeural";
                 opt.textContent = "默认 (晓晓)";
@@ -943,21 +543,13 @@
                     el.onclick=()=>socket.emit('switch_model',{id:m.id});
                     list.appendChild(el); 
                     
-                    // 如果是当前模型，填充设置面板
                     if(m.id===d.current_id){ 
                         document.getElementById('persona-model-name').textContent=m.name;
                         document.getElementById('persona-text').value=m.persona||""; 
-                        
-                        // 选中当前语音
                         if(m.voice) vSelect.value = m.voice;
-                        
-                        // 填充音调语速
-                        let r = parseInt(m.rate)||0;
-                        let p = parseInt(m.pitch)||0;
+                        let r = parseInt(m.rate)||0; let p = parseInt(m.pitch)||0;
                         document.getElementById('rate-range').value = r; updateVal('rate', r);
                         document.getElementById('pitch-range').value = p; updateVal('pitch', p);
-                        
-                        // 填充位置缩放
                         let s=m.scale!==undefined?m.scale:0.5, x=m.x!==undefined?m.x:0.5, y=m.y!==undefined?m.y:0.5;
                         if(document.getElementById('model-scale')) {
                             document.getElementById('model-scale').value = s;
@@ -1015,11 +607,54 @@
         socket.on('system_message',(d)=>{addMsg(d.text,'系统','system');});
         socket.on('response',(d)=>{addMsg(d.text,'Pico','pico',d.emotion);triggerMotion(d.emotion||'NORMAL');});
         
-        // ★★★ 核心修复：音频失败反馈 ★★★
+        // ★★★ 核心修复：浏览器 TTS 降级处理 ★★★
         socket.on('audio_failed', (d) => {
             showToast("⚠️ " + d.msg, "error");
-            console.error("Audio Failed:", d.msg);
+            if (d.text) {
+                console.log("Fallback to local TTS for:", d.text);
+                speakLocal(d.text);
+            }
         });
+
+        // 浏览器本地朗读 + 模拟口型
+        function speakLocal(text) {
+            if (!window.speechSynthesis) return;
+            // 停止之前的朗读
+            window.speechSynthesis.cancel();
+            
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'zh-CN'; // 默认中文
+            utterance.rate = 1.0;
+
+            // 开始模拟口型
+            utterance.onstart = () => {
+                isTalking = true;
+                simulateMouth(true);
+            };
+            
+            // 结束模拟口型
+            utterance.onend = () => {
+                isTalking = false;
+                simulateMouth(false);
+                if(model?.internalModel?.coreModel) model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', 0);
+            };
+
+            window.speechSynthesis.speak(utterance);
+        }
+
+        // 简单的随机口型模拟
+        let mouthInterval;
+        function simulateMouth(start) {
+            if (mouthInterval) clearInterval(mouthInterval);
+            if (!start) return;
+
+            mouthInterval = setInterval(() => {
+                if (!model?.internalModel?.coreModel) return;
+                // 随机张嘴 0.0 ~ 0.6
+                const val = Math.random() * 0.6;
+                model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', val);
+            }, 100);
+        }
 
         let lastPico = null;
         socket.on('audio_response',(d)=>{
