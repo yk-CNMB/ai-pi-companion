@@ -1,6 +1,9 @@
 #!/bin/bash
-# 自我修复 Windows 换行符
-sed -i 's/\r$//' "$0" 2>/dev/null || true
+# =======================================================================
+# 核心功能回归启动脚本 (Final)
+# 职责：杀死旧进程，激活环境，启动服务。
+# 依赖：假设所有 Python/系统依赖已在环境中安装完成。
+# =======================================================================
 
 CDIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$CDIR/.venv"
@@ -10,39 +13,30 @@ MY_DOMAIN="yk-pico-project.site"
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 RED='\033[0;31m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}🤖 Pico AI (离线 TTS 最终模式) 启动中...${NC}"
+echo -e "${GREEN}🤖 Pico AI (核心回归模式) 启动中...${NC}"
 
-# --- 1. 虚拟环境 ---
-if [ ! -d "$VENV_DIR" ]; then python3 -m venv "$VENV_DIR"; fi
-source "$VENV_DIR/bin/activate"
+# --- 1. 强制杀死旧进程 (解决端口占用) ---
+echo -e "${YELLOW}🔄 正在停止所有旧的 Flask/Gunicorn 和 Cloudflare 进程...${NC}"
+pkill -f "gunicorn"
+pkill -f "cloudflared"
+sleep 1 # 等待端口释放
+echo -e "${GREEN}✅ 旧进程已清理。${NC}"
 
-# --- 2. 强制安装系统依赖 (TTS 核心) ---
-echo -e "${YELLOW}⚙️ 正在安装系统级 TTS 引擎和音频库 (eSpeak, libasound, portaudio)...${NC}"
-# 安装 eSpeak (TTS 引擎) 和 libasound2-dev, portaudio19-dev (Pyaudio依赖)
-sudo apt update -qq
-sudo apt install espeak libasound2-dev portaudio19-dev -y -qq
-echo -e "${GREEN}✅ 系统依赖安装完成。${NC}"
 
-# --- 3. 强制安装 Python 依赖 (pyttsx3, pyaudio) ---
-echo "📦 正在使用清华源强制安装 Python 依赖..."
-PIP_CMD="pip install -i https://pypi.tuna.tsinghua.edu.cn/simple"
-
-$PIP_CMD --upgrade pip -q
-$PIP_CMD -r requirements.txt -q 
-echo -e "${GREEN}✅ Python 依赖安装完成。${NC}"
-
-# --- 4. Cloudflare 隧道 (确保存在) ---
-if [ ! -f "$CDIR/cloudflared" ]; then
-    ARCH=$(dpkg --print-architecture)
-    URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb"
-    if [[ "$ARCH" == "arm64" ]]; then URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64.deb"; fi
-    if [[ "$ARCH" == "armhf" ]]; then URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-armhf.deb"; fi
-    wget -q -O cf.deb "$URL" && dpkg-deb -x cf.deb tmp && mv tmp/usr/local/bin/cloudflared "$CDIR/" && rm -rf cf.deb tmp && chmod +x "$CDIR/cloudflared"
+# --- 2. 虚拟环境激活 ---
+if [ -d "$VENV_DIR" ]; then
+    source "$VENV_DIR/bin/activate"
+    echo -e "${GREEN}✅ 虚拟环境已激活。${NC}"
+else
+    echo -e "${RED}❌ 错误：未找到虚拟环境 ${VENV_DIR}。请先手动运行 setup_and_run.sh。${NC}"
+    exit 1
 fi
 
+# --- 3. Cloudflare 隧道配置检查 (仅用于启动) ---
 TUNNEL_CRED=$(find ~/.cloudflared -name "*.json" | head -n 1)
 if [ -n "$TUNNEL_CRED" ]; then
     TUNNEL_ID=$(basename "$TUNNEL_CRED" .json)
@@ -55,15 +49,26 @@ ingress:
     service: http://127.0.0.1:5000
   - service: http_status:404
 YAML
+else
+    echo -e "${RED}❌ Cloudflare 凭证未找到。无法启动隧道。${NC}"
 fi
 
-# --- 5. 启动服务 ---
-echo "--- Session $(date) ---" > "$LOG_FILE"
+# --- 4. 启动服务 ---
+echo "--- Session $(date) ---" >> "$LOG_FILE"
 
-echo -e "🚀 启动后端..."
+echo -e "🚀 启动后端 Gunicorn..."
+# 使用 nohup 异步启动 Gunicorn
 nohup "$VENV_DIR/bin/gunicorn" --worker-class gthread --threads 4 -w 1 --bind 0.0.0.0:5000 app:app >> "$LOG_FILE" 2>&1 &
+echo -e "${GREEN}✅ Gunicorn 后端已在端口 5000 启动。${NC}"
 
-echo -e "🚇 启动隧道..."
-nohup "$CDIR/cloudflared" tunnel --config "$CDIR/tunnel_config.yml" run >> "$LOG_FILE" 2>&1 &
+# 启动隧道
+if [ -f "$CDIR/cloudflared" ] && [ -n "$TUNNEL_CRED" ]; then
+    echo -e "🚇 启动 Cloudflare 隧道..."
+    nohup "$CDIR/cloudflared" tunnel --config "$CDIR/tunnel_config.yml" run >> "$LOG_FILE" 2>&1 &
+    echo -e "${GREEN}✅ 隧道已启动！访问: https://${MY_DOMAIN}/pico${NC}"
+else
+    echo -e "${RED}⚠️ Cloudflare 启动失败，请检查 cloudflared 文件和凭证。${NC}"
+fi
 
-echo -e "${GREEN}✅ 服务已启动！访问: https://${MY_DOMAIN}/pico${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo -e "${YELLOW}请检查 ${LOG_FILE} 获取详细日志。${NC}"
