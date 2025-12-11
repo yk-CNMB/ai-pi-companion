@@ -484,7 +484,7 @@
             s.addEventListener('touchmove',(e)=>{if(e.touches.length===2&&model&&initialDist){e.preventDefault();model.scale.set(initialScale*(Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY)/initialDist));}}); 
         }
 
-        // 口型同步 (Server Audio)
+        // 口型同步
         function lipSync(){if(!model||!analyser||!isTalking)return;analyser.getByteFrequencyData(dataArray);let sum=0;for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];if(model.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',Math.min(1.0,(sum/dataArray.length)/30));}
         
         // 动作触发
@@ -515,7 +515,7 @@
         socket.on('studio_data',(d)=>{ 
             const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id; 
             
-            // 语音列表
+            // ★★★ 核心修复：优先填充语音列表，不依赖模型 ★★★
             const vSelect = document.getElementById('voice-select');
             vSelect.innerHTML = "";
             if(d.voices && d.voices.length > 0) {
@@ -526,6 +526,7 @@
                     vSelect.appendChild(opt);
                 });
             } else {
+                // 保底
                 let opt = document.createElement('option');
                 opt.value = "zh-CN-XiaoxiaoNeural";
                 opt.textContent = "默认 (晓晓)";
@@ -543,13 +544,21 @@
                     el.onclick=()=>socket.emit('switch_model',{id:m.id});
                     list.appendChild(el); 
                     
+                    // 如果是当前模型，填充设置面板
                     if(m.id===d.current_id){ 
                         document.getElementById('persona-model-name').textContent=m.name;
                         document.getElementById('persona-text').value=m.persona||""; 
+                        
+                        // 选中当前语音
                         if(m.voice) vSelect.value = m.voice;
-                        let r = parseInt(m.rate)||0; let p = parseInt(m.pitch)||0;
+                        
+                        // 填充音调语速
+                        let r = parseInt(m.rate)||0;
+                        let p = parseInt(m.pitch)||0;
                         document.getElementById('rate-range').value = r; updateVal('rate', r);
                         document.getElementById('pitch-range').value = p; updateVal('pitch', p);
+                        
+                        // 填充位置缩放
                         let s=m.scale!==undefined?m.scale:0.5, x=m.x!==undefined?m.x:0.5, y=m.y!==undefined?m.y:0.5;
                         if(document.getElementById('model-scale')) {
                             document.getElementById('model-scale').value = s;
@@ -607,9 +616,17 @@
         socket.on('system_message',(d)=>{addMsg(d.text,'系统','system');});
         socket.on('response',(d)=>{addMsg(d.text,'Pico','pico',d.emotion);triggerMotion(d.emotion||'NORMAL');});
         
-        // ★★★ 核心修复：浏览器 TTS 降级处理 ★★★
+        // ★★★ 核心修复：音频失败反馈 + 自动调用本地 ★★★
         socket.on('audio_failed', (d) => {
-            showToast("⚠️ " + d.msg, "error");
+            // 如果有 type='warning'，显示蓝色 toast
+            if (d.type === 'warning') {
+                showToast("🔊 " + d.msg, "info");
+            } else {
+                showToast("⚠️ " + d.msg, "error");
+            }
+            console.error("Audio Failed:", d.msg);
+            
+            // 自动降级到本地浏览器 TTS
             if (d.text) {
                 console.log("Fallback to local TTS for:", d.text);
                 speakLocal(d.text);
@@ -619,26 +636,15 @@
         // 浏览器本地朗读 + 模拟口型
         function speakLocal(text) {
             if (!window.speechSynthesis) return;
-            // 停止之前的朗读
             window.speechSynthesis.cancel();
             
             const utterance = new SpeechSynthesisUtterance(text);
-            utterance.lang = 'zh-CN'; // 默认中文
+            utterance.lang = 'zh-CN'; 
             utterance.rate = 1.0;
 
-            // 开始模拟口型
-            utterance.onstart = () => {
-                isTalking = true;
-                simulateMouth(true);
-            };
+            utterance.onstart = () => { isTalking = true; simulateMouth(true); };
+            utterance.onend = () => { isTalking = false; simulateMouth(false); if(model?.internalModel?.coreModel) model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', 0); };
             
-            // 结束模拟口型
-            utterance.onend = () => {
-                isTalking = false;
-                simulateMouth(false);
-                if(model?.internalModel?.coreModel) model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', 0);
-            };
-
             window.speechSynthesis.speak(utterance);
         }
 
@@ -650,7 +656,6 @@
 
             mouthInterval = setInterval(() => {
                 if (!model?.internalModel?.coreModel) return;
-                // 随机张嘴 0.0 ~ 0.6
                 const val = Math.random() * 0.6;
                 model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', val);
             }, 100);
