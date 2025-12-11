@@ -622,6 +622,24 @@
         socket.on('studio_data',(d)=>{ 
             const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id; 
             
+            // ★★★ 核心修复：优先填充语音列表，不依赖模型 ★★★
+            const vSelect = document.getElementById('voice-select');
+            vSelect.innerHTML = "";
+            if(d.voices && d.voices.length > 0) {
+                d.voices.forEach(v => {
+                    let opt = document.createElement('option');
+                    opt.value = v.id;
+                    opt.textContent = v.name;
+                    vSelect.appendChild(opt);
+                });
+            } else {
+                // 保底
+                let opt = document.createElement('option');
+                opt.value = "zh-CN-XiaoxiaoNeural";
+                opt.textContent = "默认 (晓晓)";
+                vSelect.appendChild(opt);
+            }
+
             // 渲染模型列表
             if(!d.models||d.models.length===0){list.innerHTML="<div style='grid-column:1/-1;text-align:center;color:red'>❌ 未找到模型</div>";} 
             else{ 
@@ -638,17 +656,7 @@
                         document.getElementById('persona-model-name').textContent=m.name;
                         document.getElementById('persona-text').value=m.persona||""; 
                         
-                        // ★★★ 填充语音下拉框 ★★★
-                        const vSelect=document.getElementById('voice-select');
-                        vSelect.innerHTML = "";
-                        if(d.voices && d.voices.length > 0) {
-                            d.voices.forEach(v=>{
-                                let opt = document.createElement('option');
-                                opt.value = v.id;
-                                opt.textContent = v.name;
-                                vSelect.appendChild(opt);
-                            });
-                        }
+                        // 选中当前语音
                         if(m.voice) vSelect.value = m.voice;
                         
                         // 填充音调语速
