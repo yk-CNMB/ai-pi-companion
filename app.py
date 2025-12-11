@@ -1,6 +1,6 @@
 # =======================================================================
-# Pico AI Server - pyttsx3 离线本地 TTS 集成版
-# 彻底放弃网络依赖，使用系统内置语音引擎，解决一切 TTS 故障。
+# Pico AI Server - pyttsx3 离线本地 TTS 集成版 (FINAL)
+# 解决一切 TTS 故障，不再依赖网络，使用系统内置语音引擎。
 # =======================================================================
 import os
 import json
@@ -122,7 +122,7 @@ load_state()
 
 # 当前模型缓存
 CURRENT_MODEL = {
-    "id": "default", "path": "", "persona": "", "voice": "zh", # 默认使用中文
+    "id": "default", "path": "", "persona": "", "voice": "zh", 
     "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.5, "y": 0.5
 }
 DEFAULT_INSTRUCTION = "\n【指令】回复开头标记心情：[HAPPY], [ANGRY], [SAD], [SHOCK], [NORMAL]。"
@@ -189,57 +189,51 @@ init_model()
 
 # ================= TTS 核心 (pyttsx3 实现) =================
 
-# 缓存 pyttsx3 引擎实例，避免重复初始化
 tts_engine = None
 TTS_INIT_LOCK = threading.Lock()
 
 def get_tts_engine():
     global tts_engine
     with TTS_INIT_LOCK:
+        if tts_engine is False: # 之前初始化失败
+             return None
         if tts_engine is None:
             try:
-                tts_engine = pyttsx3.init()
-                logging.info("pyttsx3 引擎初始化成功")
+                # 尝试初始化，使用 'espeak' 驱动
+                tts_engine = pyttsx3.init(driverName='espeak') 
+                logging.info("pyttsx3 引擎初始化成功 (Espeak)")
             except Exception as e:
                 logging.error(f"pyttsx3 引擎初始化失败: {e}")
-                tts_engine = False # 标记为失败，不再尝试初始化
+                tts_engine = False
         return tts_engine
 
 def run_local_tts(text, output_path, voice, rate_str, pitch_str):
     """
-    使用 pyttsx3 生成 MP3/WAV 文件
+    使用 pyttsx3 生成 WAV 文件
     """
     engine = get_tts_engine()
     if not engine:
-        return False, "pyttsx3 引擎未初始化，请检查 espeak 等系统依赖。"
+        return False, "pyttsx3 引擎未初始化或系统依赖缺失 (Espeak/Pyaudio)。"
 
     try:
         # --- 1. 速度调节 ---
-        # pyttsx3 默认速度约 200 wpm (Words Per Minute)
         rate_change = int(re.sub(r'[^\d\+\-]', '', rate_str))
         current_rate = engine.getProperty('rate')
-        # 根据百分比调整速度，例如 +10% 提速 10%
         new_rate = int(current_rate * (1 + rate_change / 100.0))
         engine.setProperty('rate', max(80, min(500, new_rate)))
         
-        # --- 2. 语音选择 (Espeak/eSpeak-NG) ---
+        # --- 2. 语音选择 ---
         voices = engine.getProperty('voices')
-        
-        # 优先选择中文语音 (zh)
         target_voice = next((v for v in voices if 'zh' in v.id.lower() or 'mandarin' in v.name.lower()), None)
 
         if target_voice:
              engine.setProperty('voice', target_voice.id)
-        else:
-             # 如果找不到中文，使用第一个语音并给出警告
-             logging.warning("未找到中文语音包，使用默认系统语音。")
-
-        # --- 3. 语音合成 ---
-        # pyttsx3 导出为 MP3 需要额外依赖（如 FFmpeg），导出 WAV 更稳定
-        engine.save_to_file(text, output_path)
-        engine.runAndWait() 
         
-        # NOTE: pyttsx3 默认输出格式依赖系统，通常是 WAV。前端需要兼容。
+        # --- 3. 语音合成 ---
+        # pyttsx3 导出为 MP3 需要额外依赖，导出 WAV 更稳定
+        engine.save_to_file(text, output_path)
+        # 必须调用 runAndWait() 才能完成文件写入
+        engine.runAndWait() 
 
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             return True, ""
@@ -297,7 +291,7 @@ def pico_v(v):
 def update_key():
     data = request.json
     new_key = data.get('key', '').strip()
-    key_type = data.get('type') # 'gemini' 
+    key_type = data.get('type') 
     
     if key_type == 'gemini':
         if not new_key.startswith("AIza"): return jsonify({'success': False, 'msg': 'Gemini Key 格式错误'})
