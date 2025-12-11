@@ -1,6 +1,7 @@
 # =======================================================================
-# Pico AI Server - FINAL TTS STABILIZATION EDITION
-# 解决：NoAudioReceived 错误 (强制 User-Agent 模拟 + 语音白名单)
+# Pico AI Server - FINAL STABILIZATION EDITION (TTS ARG CLEANUP)
+# 修复：unrecognized arguments: --proxy-user-agent (移除不受支持的参数)
+# 保留：Gemini 429 错误自动处理、TTS 参数强制合规、前端回退机制
 # =======================================================================
 import os
 import json
@@ -189,15 +190,13 @@ def init_model():
 
 init_model()
 
-# ================= TTS 核心 (稳定化) =================
+# ================= TTS 核心 (稳定参数 + 代理) =================
 
 def clean_tts_param(val, unit):
     """
     强制清洗 TTS 参数，确保格式为 [+-]xxUNIT。
     """
     s = str(val).strip()
-    
-    # 提取数字和符号
     nums = re.sub(r'[^\d\+\-]', '', s)
     
     if not nums or nums in ['+', '-']:
@@ -213,7 +212,7 @@ def clean_tts_param(val, unit):
 
 def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
     """
-    执行 TTS 命令。使用清洗后的参数并模拟浏览器 User-Agent。
+    执行 TTS 命令。使用清洗后的参数。
     """
     try:
         # ★★★ 强制合规参数 ★★★
@@ -228,19 +227,20 @@ def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
             "--write-media", output_path,
             "--voice", voice,
             "--rate", safe_rate,
-            "--pitch", safe_pitch,
-            # ★★★ User-Agent 模拟，提高被接受率 ★★★
-            "--proxy-user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0" 
+            "--pitch", safe_pitch
+            # ★★★ 移除 --proxy-user-agent，因为您的版本不支持 ★★★
         ]
         
-        # 注入代理配置
+        # 注入代理配置 (标准环境变量方式)
         my_env = os.environ.copy()
         proxy_url = CONFIG.get("TTS_PROXY", "").strip()
         if proxy_url:
             my_env["http_proxy"] = proxy_url
             my_env["https_proxy"] = proxy_url
+            # 如果 edge-tts 支持 --proxy，也可以加进去，但环境变量更通用
+            # cmd.extend(["--proxy", proxy_url]) 
         
-        logging.info(f"执行 TTS 命令: {' '.join(cmd[:3])} ...") # 避免日志太长
+        logging.info(f"执行 TTS 命令: {' '.join(cmd[:3])} ...") 
         
         result = subprocess.run(
             cmd, 
@@ -250,11 +250,6 @@ def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
             timeout=60,
             env=my_env
         )
-        
-        # 检查是否收到音频 (NoAudioReceived 依然会抛出异常，这里主要捕获服务器的拒绝信息)
-        err_out = result.stderr.decode('utf-8', errors='ignore')
-        if "No audio was received" in err_out or "400" in err_out:
-            return False, f"Server Refused: {err_out.splitlines()[-1]}"
             
         return True, ""
     except Exception as e:
@@ -262,8 +257,7 @@ def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
         if hasattr(e, 'stderr') and e.stderr: 
             err_msg = e.stderr.decode('utf-8', errors='ignore')
         
-        # 专门针对 NoAudioReceived 报错，提取关键信息
-        if "NoAudioReceived" in err_msg:
+        if "No audio was received" in err_msg:
              return False, "TTS Server timeout or refused voice name."
 
         logging.error(f"TTS 失败: {err_msg}")
