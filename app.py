@@ -1,7 +1,6 @@
 # =======================================================================
-# Pico AI Server - ULTIMATE SAFEGUARD EDITION
-# 包含：Gemini 429 错误自动处理、TTS 参数智能清洗、完整前端回退机制
-# 解决：NoAudioReceived 错误 (通过强制传递合规参数)
+# Pico AI Server - FINAL TTS STABILIZATION EDITION
+# 解决：NoAudioReceived 错误 (强制 User-Agent 模拟 + 语音白名单)
 # =======================================================================
 import os
 import json
@@ -75,7 +74,7 @@ for d in [AUDIO_DIR, MODELS_DIR, BG_DIR]:
 CONFIG = {
     "GEMINI_API_KEY": "",
     "TTS_VOICE": "zh-CN-XiaoxiaoNeural",
-    "TTS_PROXY": ""  # 可选：HTTP代理地址
+    "TTS_PROXY": ""
 }
 
 try:
@@ -190,7 +189,7 @@ def init_model():
 
 init_model()
 
-# ================= TTS 核心 (带参数清洗 V2) =================
+# ================= TTS 核心 (稳定化) =================
 
 def clean_tts_param(val, unit):
     """
@@ -199,7 +198,6 @@ def clean_tts_param(val, unit):
     s = str(val).strip()
     
     # 提取数字和符号
-    # 示例: "+0%" -> "+0"
     nums = re.sub(r'[^\d\+\-]', '', s)
     
     if not nums or nums in ['+', '-']:
@@ -210,21 +208,19 @@ def clean_tts_param(val, unit):
         except ValueError:
             n = 0
             
-    # 强制格式化：带符号整数 + 单位
     return f"{n:+}{unit}"
 
 
 def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
     """
-    执行 TTS 命令。使用清洗后的参数。
+    执行 TTS 命令。使用清洗后的参数并模拟浏览器 User-Agent。
     """
     try:
-        # ★★★ 关键修复：清洗参数，确保格式正确 ★★★
-        # 即使值是 +0%，清洗后也会是 +0% 或 +0Hz
+        # ★★★ 强制合规参数 ★★★
         safe_rate = clean_tts_param(rate, "%")
         safe_pitch = clean_tts_param(pitch, "Hz")
         
-        logging.info(f"TTS 最终参数: Rate={safe_rate}, Pitch={safe_pitch}")
+        logging.info(f"TTS 最终参数: Voice={voice}, Rate={safe_rate}, Pitch={safe_pitch}")
 
         cmd = [
             sys.executable, "-m", "edge_tts",
@@ -232,7 +228,9 @@ def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
             "--write-media", output_path,
             "--voice", voice,
             "--rate", safe_rate,
-            "--pitch", safe_pitch # 始终传递，确保兼容性
+            "--pitch", safe_pitch,
+            # ★★★ User-Agent 模拟，提高被接受率 ★★★
+            "--proxy-user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0" 
         ]
         
         # 注入代理配置
@@ -242,7 +240,7 @@ def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
             my_env["http_proxy"] = proxy_url
             my_env["https_proxy"] = proxy_url
         
-        logging.info(f"执行 TTS 命令: {' '.join(cmd)}")
+        logging.info(f"执行 TTS 命令: {' '.join(cmd[:3])} ...") # 避免日志太长
         
         result = subprocess.run(
             cmd, 
@@ -253,15 +251,21 @@ def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
             env=my_env
         )
         
-        # 检查是否收到音频 (如果 stderr 有内容，表示可能有非致命错误，但我们主要看 NoAudioReceived)
-        if b"No audio was received" in result.stderr:
-            return False, result.stderr.decode('utf-8', errors='ignore')
+        # 检查是否收到音频 (NoAudioReceived 依然会抛出异常，这里主要捕获服务器的拒绝信息)
+        err_out = result.stderr.decode('utf-8', errors='ignore')
+        if "No audio was received" in err_out or "400" in err_out:
+            return False, f"Server Refused: {err_out.splitlines()[-1]}"
             
         return True, ""
     except Exception as e:
         err_msg = str(e)
         if hasattr(e, 'stderr') and e.stderr: 
             err_msg = e.stderr.decode('utf-8', errors='ignore')
+        
+        # 专门针对 NoAudioReceived 报错，提取关键信息
+        if "NoAudioReceived" in err_msg:
+             return False, "TTS Server timeout or refused voice name."
+
         logging.error(f"TTS 失败: {err_msg}")
         return False, err_msg
 
@@ -273,8 +277,13 @@ def bg_tts_task(text, voice, rate, pitch, room=None, sid=None):
     fname = f"{uuid.uuid4()}.mp3"
     out_path = os.path.join(AUDIO_DIR, fname)
     
-    # 尝试服务器生成
+    # 尝试服务器生成 (第一次)
     success, err_reason = run_edge_tts_cmd(clean_text, out_path, voice, rate, pitch)
+    
+    # 失败后如果使用的是默认语音，尝试备用稳定语音 (第二次)
+    if not success and voice == "zh-CN-XiaoxiaoNeural":
+        logging.warning("TTS 失败，尝试切换到备用语音 zh-CN-YunxiNeural")
+        success, err_reason = run_edge_tts_cmd(clean_text, out_path, "zh-CN-YunxiNeural", rate, pitch)
 
     if success and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
         url = f"/static/audio/{fname}"
@@ -285,11 +294,11 @@ def bg_tts_task(text, voice, rate, pitch, room=None, sid=None):
         elif sid: socketio.emit('audio_response', payload, to=sid, namespace='/')
     else:
         # 生成失败，把文本发给前端，让浏览器读
-        logging.error(f"❌ 语音生成失败，切换前端合成: {err_reason}")
+        logging.error(f"❌ 语音生成最终失败，切换前端合成: {err_reason}")
         err_payload = {
-            'msg': f'TTS网络超时，切换本地语音', 
+            'msg': f'TTS网络不稳定，切换本地语音', 
             'text': clean_text,
-            'type': 'warning' # 友好提示
+            'type': 'warning' 
         }
         if room: socketio.emit('audio_failed', err_payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_failed', err_payload, to=sid, namespace='/')
@@ -397,7 +406,7 @@ def process_ai_response(sender, msg, img_data=None, sid=None):
                 logging.error("AI 429 限流保护触发")
                 txt = "（系统：API 调用次数已耗尽，请稍后或更换 Key 再试）"
             else:
-                raise e # 其他错误继续抛出
+                raise e 
 
         emo='NORMAL'
         match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', txt)
