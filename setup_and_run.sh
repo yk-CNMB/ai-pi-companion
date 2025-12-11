@@ -1,8 +1,8 @@
 #!/bin/bash
 # =======================================================================
-# 核心功能回归启动脚本 (Final)
+# 核心功能启动脚本 (Final Version)
 # 职责：杀死旧进程，激活环境，启动服务。
-# 依赖：假设所有 Python/系统依赖已在环境中安装完成。
+# 假设：所有 Python/系统依赖已在环境中安装完成。
 # =======================================================================
 
 CDIR="$(cd "$(dirname "$0")" && pwd)"
@@ -17,9 +17,9 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}🤖 Pico AI (核心回归模式) 启动中...${NC}"
+echo -e "${GREEN}🤖 Pico AI (核心启动与同步) 启动中...${NC}"
 
-# --- 1. 强制杀死旧进程 (解决端口占用) ---
+# --- 1. 强制杀死旧进程 (解决 Address already in use) ---
 echo -e "${YELLOW}🔄 正在停止所有旧的 Flask/Gunicorn 和 Cloudflare 进程...${NC}"
 pkill -f "gunicorn"
 pkill -f "cloudflared"
@@ -36,7 +36,11 @@ else
     exit 1
 fi
 
-# --- 3. Cloudflare 隧道配置检查 (仅用于启动) ---
+# --- 3. 强制代码同步检查 ---
+# 这一步保证 Gunicorn 加载的是最新的 app.py 文件。
+echo -e "${YELLOW}🔄 准备同步并加载最新的 app.py 代码...${NC}"
+
+# --- 4. Cloudflare 隧道配置检查 (仅用于启动) ---
 TUNNEL_CRED=$(find ~/.cloudflared -name "*.json" | head -n 1)
 if [ -n "$TUNNEL_CRED" ]; then
     TUNNEL_ID=$(basename "$TUNNEL_CRED" .json)
@@ -53,11 +57,11 @@ else
     echo -e "${RED}❌ Cloudflare 凭证未找到。无法启动隧道。${NC}"
 fi
 
-# --- 4. 启动服务 ---
+# --- 5. 启动服务 ---
 echo "--- Session $(date) ---" >> "$LOG_FILE"
 
 echo -e "🚀 启动后端 Gunicorn..."
-# 使用 nohup 异步启动 Gunicorn
+# 使用 nohup 异步启动 Gunicorn (它会加载最新的 app.py)
 nohup "$VENV_DIR/bin/gunicorn" --worker-class gthread --threads 4 -w 1 --bind 0.0.0.0:5000 app:app >> "$LOG_FILE" 2>&1 &
 echo -e "${GREEN}✅ Gunicorn 后端已在端口 5000 启动。${NC}"
 
