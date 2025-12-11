@@ -1,6 +1,6 @@
 # =======================================================================
-# Pico AI Server - pyttsx3 离线本地 TTS 集成版 (FINAL)
-# 解决一切 TTS 故障，不再依赖网络，使用系统内置语音引擎。
+# Pico AI Server - pyttsx3 离线本地 TTS 集成版 (FINAL FIX)
+# 修复：pyttsx3 在初始化失败时的 'name is not defined' 错误。
 # =======================================================================
 import os
 import json
@@ -28,9 +28,13 @@ from werkzeug.utils import secure_filename
 # ★★★ 导入 pyttsx3 库 ★★★
 try:
     import pyttsx3
+    # 标记 TTS 模块已成功导入
+    TTS_AVAILABLE = True 
     print("✅ Python 内部库 pyttsx3 已加载")
 except ImportError:
+    TTS_AVAILABLE = False
     print("⚠️ Python 内部库 pyttsx3 未找到，请检查 requirements.txt 安装")
+
 
 # 日志配置
 logging.basicConfig(
@@ -194,17 +198,28 @@ TTS_INIT_LOCK = threading.Lock()
 
 def get_tts_engine():
     global tts_engine
+    if not TTS_AVAILABLE: # 模块就没导入成功
+        return None
+        
     with TTS_INIT_LOCK:
-        if tts_engine is False: # 之前初始化失败
+        # 0. 检查是否初始化失败过
+        if tts_engine is False: 
              return None
+
+        # 1. 首次初始化
         if tts_engine is None:
             try:
                 # 尝试初始化，使用 'espeak' 驱动
-                tts_engine = pyttsx3.init(driverName='espeak') 
+                engine = pyttsx3.init(driverName='espeak') 
+                # 测试获取 voices，如果失败则会抛出异常
+                engine.getProperty('voices')
+                tts_engine = engine # 成功，保存实例
                 logging.info("pyttsx3 引擎初始化成功 (Espeak)")
             except Exception as e:
-                logging.error(f"pyttsx3 引擎初始化失败: {e}")
-                tts_engine = False
+                logging.error(f"pyttsx3 引擎初始化失败: {e}. 请确保 espeak 和 libespeak-dev 已安装。")
+                tts_engine = False # 失败，标记为 False
+                return None
+                
         return tts_engine
 
 def run_local_tts(text, output_path, voice, rate_str, pitch_str):
@@ -213,7 +228,7 @@ def run_local_tts(text, output_path, voice, rate_str, pitch_str):
     """
     engine = get_tts_engine()
     if not engine:
-        return False, "pyttsx3 引擎未初始化或系统依赖缺失 (Espeak/Pyaudio)。"
+        return False, "pyttsx3 引擎未初始化或系统依赖缺失。"
 
     try:
         # --- 1. 速度调节 ---
@@ -230,9 +245,7 @@ def run_local_tts(text, output_path, voice, rate_str, pitch_str):
              engine.setProperty('voice', target_voice.id)
         
         # --- 3. 语音合成 ---
-        # pyttsx3 导出为 MP3 需要额外依赖，导出 WAV 更稳定
         engine.save_to_file(text, output_path)
-        # 必须调用 runAndWait() 才能完成文件写入
         engine.runAndWait() 
 
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
@@ -261,7 +274,8 @@ def bg_tts_task(text, voice, rate, pitch, room=None, sid=None):
 
     if success and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
         url = f"/static/audio/{fname}"
-        payload = {'audio': url}
+        # 兼容性警告：pyttsx3 输出的是 WAV 文件，前端播放器必须能识别
+        payload = {'audio': url} 
         logging.info(f"✅ 语音生成成功 (pyttsx3): {url}")
         
         if room: socketio.emit('audio_response', payload, to=room, namespace='/')
@@ -405,7 +419,7 @@ def process_ai_response(sender, msg, img_data=None, sid=None):
         err_msg = str(e)
         if sid: socketio.emit('system_message', {'text': f'AI Error: {err_msg[:50]}...'}, to=sid)
 
-# ================= Socket Events =================
+# ================= Socket Events (保持不变) =================
 @socketio.on('connect')
 def on_connect(): emit('server_ready', {'status': 'ok'})
 
