@@ -1,7 +1,7 @@
 # =======================================================================
-# Pico AI Server - PARAM FIX EDITION
-# 修复：ValueError: Invalid pitch '+0%'.
-# 功能：自动清洗 TTS 参数，兼容旧版数据，增加代理支持
+# Pico AI Server - ULTIMATE SAFEGUARD EDITION
+# 包含：Gemini 429 错误自动处理、TTS 参数智能清洗、完整前端回退机制
+# 解决：NoAudioReceived 错误 (通过强制传递合规参数)
 # =======================================================================
 import os
 import json
@@ -21,7 +21,7 @@ import subprocess
 import sys
 import traceback
 
-# 尝试导入 edge_tts，用于检测环境
+# 尝试导入 edge_tts
 try:
     import edge_tts
     print("✅ Python 内部库 edge_tts 已加载")
@@ -34,15 +34,15 @@ from google import genai
 from google.genai import types
 from werkzeug.utils import secure_filename
 
-# 日志配置 - 详细模式
+# 日志配置
 logging.basicConfig(
     level=logging.INFO, 
     format='[%(asctime)s] %(levelname)s: %(message)s'
 )
 
 app = Flask(__name__, static_folder='static')
-app.config['SECRET_KEY'] = 'pico_ultimate_secret_key'
-app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB 上传限制
+app.config['SECRET_KEY'] = 'pico_safeguard_key'
+app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
 
 # SocketIO 配置
 socketio = SocketIO(app, 
@@ -63,7 +63,6 @@ BG_DIR = os.path.join(BASE_DIR, "static", "backgrounds")
 STATE_FILE = os.path.join(BASE_DIR, "server_state.json")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 
-# 确保目录存在
 for d in [AUDIO_DIR, MODELS_DIR, BG_DIR]:
     if not os.path.exists(d):
         try:
@@ -72,7 +71,7 @@ for d in [AUDIO_DIR, MODELS_DIR, BG_DIR]:
         except Exception as e:
             logging.error(f"创建目录失败 {d}: {e}")
 
-# --- 配置加载 (含代理) ---
+# --- 配置加载 ---
 CONFIG = {
     "GEMINI_API_KEY": "",
     "TTS_VOICE": "zh-CN-XiaoxiaoNeural",
@@ -191,42 +190,41 @@ def init_model():
 
 init_model()
 
-# ================= TTS 核心 (带参数清洗) =================
+# ================= TTS 核心 (带参数清洗 V2) =================
 
-def sanitize_tts_param(val, unit):
+def clean_tts_param(val, unit):
     """
-    强制清洗 TTS 参数。
-    val: 输入值 (如 +0%, 50, -10Hz)
-    unit: 期望单位 ('Hz' 或 '%')
-    返回: 严格符合 ^[+-]\d+UNIT$ 格式的字符串 (如 +0Hz)
+    强制清洗 TTS 参数，确保格式为 [+-]xxUNIT。
     """
-    try:
-        # 转字符串并移除首尾空格
-        s = str(val).strip()
-        # 提取其中的数字和符号 (+, -)
-        nums = "".join(filter(lambda x: x.isdigit() or x in ['+', '-'], s))
-        
-        # 如果没提取到数字，默认为 0
-        if not nums or nums in ['+', '-']:
-            n = 0
-        else:
+    s = str(val).strip()
+    
+    # 提取数字和符号
+    # 示例: "+0%" -> "+0"
+    nums = re.sub(r'[^\d\+\-]', '', s)
+    
+    if not nums or nums in ['+', '-']:
+        n = 0
+    else:
+        try:
             n = int(nums)
+        except ValueError:
+            n = 0
             
-        # 强制格式化：带符号整数 + 单位
-        return f"{n:+}{unit}"
-    except:
-        return f"+0{unit}"
+    # 强制格式化：带符号整数 + 单位
+    return f"{n:+}{unit}"
+
 
 def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
     """
-    执行 TTS 命令。执行前先清洗参数。
+    执行 TTS 命令。使用清洗后的参数。
     """
     try:
-        # ★★★ 关键修复：清洗参数 ★★★
-        safe_rate = sanitize_tts_param(rate, "%")
-        safe_pitch = sanitize_tts_param(pitch, "Hz")
+        # ★★★ 关键修复：清洗参数，确保格式正确 ★★★
+        # 即使值是 +0%，清洗后也会是 +0% 或 +0Hz
+        safe_rate = clean_tts_param(rate, "%")
+        safe_pitch = clean_tts_param(pitch, "Hz")
         
-        logging.info(f"TTS 参数清洗: Rate={rate}->{safe_rate}, Pitch={pitch}->{safe_pitch}")
+        logging.info(f"TTS 最终参数: Rate={safe_rate}, Pitch={safe_pitch}")
 
         cmd = [
             sys.executable, "-m", "edge_tts",
@@ -234,7 +232,7 @@ def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
             "--write-media", output_path,
             "--voice", voice,
             "--rate", safe_rate,
-            "--pitch", safe_pitch
+            "--pitch", safe_pitch # 始终传递，确保兼容性
         ]
         
         # 注入代理配置
@@ -244,9 +242,8 @@ def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
             my_env["http_proxy"] = proxy_url
             my_env["https_proxy"] = proxy_url
         
-        logging.info(f"执行 TTS: {text[:10]}...")
+        logging.info(f"执行 TTS 命令: {' '.join(cmd)}")
         
-        # 60秒超时
         result = subprocess.run(
             cmd, 
             check=True, 
@@ -255,6 +252,11 @@ def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
             timeout=60,
             env=my_env
         )
+        
+        # 检查是否收到音频 (如果 stderr 有内容，表示可能有非致命错误，但我们主要看 NoAudioReceived)
+        if b"No audio was received" in result.stderr:
+            return False, result.stderr.decode('utf-8', errors='ignore')
+            
         return True, ""
     except Exception as e:
         err_msg = str(e)
@@ -285,8 +287,9 @@ def bg_tts_task(text, voice, rate, pitch, room=None, sid=None):
         # 生成失败，把文本发给前端，让浏览器读
         logging.error(f"❌ 语音生成失败，切换前端合成: {err_reason}")
         err_payload = {
-            'msg': f'TTS失败，已切换本地语音', 
-            'text': clean_text  # 把文本传回去
+            'msg': f'TTS网络超时，切换本地语音', 
+            'text': clean_text,
+            'type': 'warning' # 友好提示
         }
         if room: socketio.emit('audio_failed', err_payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_failed', err_payload, to=sid, namespace='/')
@@ -355,7 +358,7 @@ def api_danmaku():
     socketio.start_background_task(process_ai_response, user, msg)
     return jsonify({'success': True})
 
-# ================= AI 逻辑 =================
+# ================= AI 逻辑 (带 429 保护) =================
 users = {}
 chatroom_chat = None
 
@@ -370,6 +373,7 @@ def init_chatroom():
 def process_ai_response(sender, msg, img_data=None, sid=None):
     try:
         if not chatroom_chat: init_chatroom()
+        
         if not client: 
             if sid: socketio.emit('system_message', {'text': '请设置 API Key'}, to=sid)
             return
@@ -383,13 +387,23 @@ def process_ai_response(sender, msg, img_data=None, sid=None):
                 content.append(types.Part.from_bytes(data=base64.b64decode(encoded), mime_type="image/jpeg"))
             except: pass
             
-        resp = chatroom_chat.send_message(content)
+        # ★★★ 429 错误保护 ★★★
+        try:
+            resp = chatroom_chat.send_message(content)
+            txt = resp.text
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                logging.error("AI 429 限流保护触发")
+                txt = "（系统：API 调用次数已耗尽，请稍后或更换 Key 再试）"
+            else:
+                raise e # 其他错误继续抛出
+
         emo='NORMAL'
-        match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', resp.text)
-        txt=resp.text
+        match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', txt)
         if match: 
             emo=match.group(1)
-            txt=resp.text.replace(match.group(0),'').strip()
+            txt=txt.replace(match.group(0),'').strip()
             
         ai_msg = {'type': 'response', 'sender': 'Pico', 'text': txt, 'emotion': emo}
         GLOBAL_STATE['chat_history'].append(ai_msg)
@@ -400,7 +414,8 @@ def process_ai_response(sender, msg, img_data=None, sid=None):
         
     except Exception as e:
         logging.error(f"AI Error: {e}")
-        if sid: socketio.emit('system_message', {'text': f'AI Error: {e}'}, to=sid)
+        err_msg = str(e)
+        if sid: socketio.emit('system_message', {'text': f'AI Error: {err_msg[:50]}...'}, to=sid)
 
 # ================= Socket Events =================
 @socketio.on('connect')
