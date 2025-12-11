@@ -13,7 +13,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}🤖 Pico AI (最终稳定版) 启动中...${NC}"
+echo -e "${GREEN}🤖 Pico AI (重装甲稳定版) 启动中...${NC}"
 
 # --- 1. 代码同步 ---
 echo -e "🔄 从 GitHub 拉取最新代码..."
@@ -29,9 +29,10 @@ fi
 if [ ! -d "$VENV_DIR" ]; then python3 -m venv "$VENV_DIR"; fi
 source "$VENV_DIR/bin/activate"
 
-# 确保安装了 edge-tts 和 gunicorn
-pip install -r requirements.txt -q 2>/dev/null
+echo "📦 检查核心依赖..."
+# 确保 edge-tts 已安装，这是声音的关键
 pip install edge-tts gunicorn flask-socketio -q 2>/dev/null
+pip install -r requirements.txt -q 2>/dev/null
 
 # --- 3. Cloudflare 隧道 (IPv4 修复) ---
 if [ ! -f "$CDIR/cloudflared" ]; then
