@@ -1,6 +1,6 @@
 # =======================================================================
-# Pico AI Server - FULL UNCOMPRESSED VERSION
-# 修复：TTS 超时延长、详细错误日志、完整功能保留
+# Pico AI Server - ULTIMATE FALLBACK EDITION
+# 包含：完整逻辑、代理支持、前端浏览器朗读触发机制
 # =======================================================================
 import os
 import json
@@ -25,7 +25,7 @@ try:
     import edge_tts
     print("✅ Python 内部库 edge_tts 已加载")
 except ImportError:
-    print("⚠️ Python 内部库 edge_tts 未找到，依赖将不可用！")
+    print("⚠️ Python 内部库 edge_tts 未找到，将完全依赖命令行模式")
 
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
@@ -40,7 +40,7 @@ logging.basicConfig(
 )
 
 app = Flask(__name__, static_folder='static')
-app.config['SECRET_KEY'] = 'pico_final_secret_key'
+app.config['SECRET_KEY'] = 'pico_ultimate_secret_key'
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB 上传限制
 
 # SocketIO 配置 - 增加 buffer 防止大图断连
@@ -71,10 +71,11 @@ for d in [AUDIO_DIR, MODELS_DIR, BG_DIR]:
         except Exception as e:
             logging.error(f"创建目录失败 {d}: {e}")
 
-# --- 配置加载 ---
+# --- 配置加载 (含代理) ---
 CONFIG = {
     "GEMINI_API_KEY": "",
-    "TTS_VOICE": "zh-CN-XiaoxiaoNeural"
+    "TTS_VOICE": "zh-CN-XiaoxiaoNeural",
+    "TTS_PROXY": ""  # 可选：HTTP代理地址
 }
 
 try:
@@ -190,15 +191,13 @@ def init_model():
 
 init_model()
 
-# ================= TTS 核心 (超时修正版) =================
+# ================= TTS 核心 (带代理和失败检测) =================
 
 def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
     """
-    使用 sys.executable 调用模块，确保环境一致性。
-    超时时间从 30s 延长到 60s。
+    执行 TTS 命令，返回 (success, error_message)
     """
     try:
-        # 构造命令：python -m edge_tts ...
         cmd = [
             sys.executable, "-m", "edge_tts",
             "--text", text,
@@ -207,51 +206,58 @@ def run_edge_tts_cmd(text, output_path, voice, rate, pitch):
             "--rate", rate,
             "--pitch", pitch
         ]
-        logging.info(f"执行 TTS: {text[:10]}... | Voice: {voice}")
         
-        # ★★★ 关键修改：超时时间 60秒 ★★★
+        # 注入代理配置
+        my_env = os.environ.copy()
+        proxy_url = CONFIG.get("TTS_PROXY", "").strip()
+        if proxy_url:
+            my_env["http_proxy"] = proxy_url
+            my_env["https_proxy"] = proxy_url
+        
+        logging.info(f"执行 TTS: {text[:10]}...")
+        
+        # 60秒超时
         result = subprocess.run(
             cmd, 
             check=True, 
             stdout=subprocess.PIPE, 
             stderr=subprocess.PIPE,
-            timeout=60
+            timeout=60,
+            env=my_env
         )
-        return True
-    except subprocess.CalledProcessError as e:
-        # 捕获并打印详细错误
-        err_msg = e.stderr.decode('utf-8') if e.stderr else "Unknown Error"
-        logging.error(f"TTS 命令报错 (Code {e.returncode}): {err_msg}")
-        return False
-    except subprocess.TimeoutExpired:
-        logging.error("TTS 生成超时 (60s) - 网络连接过慢")
-        return False
+        return True, ""
     except Exception as e:
-        logging.error(f"TTS 未知异常: {e}")
-        return False
+        err_msg = str(e)
+        if hasattr(e, 'stderr') and e.stderr: 
+            err_msg = e.stderr.decode('utf-8', errors='ignore')
+        logging.error(f"TTS 失败: {err_msg}")
+        return False, err_msg
 
 def bg_tts_task(text, voice, rate, pitch, room=None, sid=None):
-    """后台任务：生成并推送"""
+    """后台任务：生成并推送，或者触发前端降级"""
     clean_text = re.sub(r'\[(.*?)\]', '', text).strip()
     if not clean_text: return
 
     fname = f"{uuid.uuid4()}.mp3"
     out_path = os.path.join(AUDIO_DIR, fname)
     
-    # 执行生成
-    success = run_edge_tts_cmd(clean_text, out_path, voice, rate, pitch)
+    # 尝试服务器生成
+    success, err_reason = run_edge_tts_cmd(clean_text, out_path, voice, rate, pitch)
 
     if success and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
         url = f"/static/audio/{fname}"
         payload = {'audio': url}
-        logging.info(f"✅ 音频生成成功: {url}")
+        logging.info(f"✅ 语音生成成功: {url}")
         
         if room: socketio.emit('audio_response', payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_response', payload, to=sid, namespace='/')
     else:
-        # 发送失败通知给前端
-        logging.error("❌ 音频生成失败，发送错误通知")
-        err_payload = {'msg': '语音生成失败 (超时或库缺失)'}
+        # ★★★ 绝杀：生成失败，把文本发给前端，让浏览器读 ★★★
+        logging.error(f"❌ 语音生成失败，切换前端合成: {err_reason}")
+        err_payload = {
+            'msg': f'TTS失败，已切换本地语音', 
+            'text': clean_text  # 把文本传回去
+        }
         if room: socketio.emit('audio_failed', err_payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_failed', err_payload, to=sid, namespace='/')
 
@@ -402,7 +408,6 @@ def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
 
 @socketio.on('get_studio_data')
 def on_get_data():
-    # 静态语音列表 (保证任何时候都有数据)
     voices = [
         {"id":"zh-CN-XiaoxiaoNeural", "name":"🇨🇳 晓晓 (女声)"},
         {"id":"zh-CN-YunxiNeural", "name":"🇨🇳 云希 (少年)"},
