@@ -1,5 +1,5 @@
 # =======================================================================
-# Pico AI Server - app.py (TTS 修复 + 弹幕 + 视觉)
+# Pico AI Server - app.py (语法修正 + TTS 兜底)
 # =======================================================================
 import os
 import json
@@ -17,7 +17,6 @@ import urllib.parse
 import base64
 from io import BytesIO
 
-# 移除不必要的 soundfile 依赖，防止崩溃
 import edge_tts
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
@@ -27,7 +26,6 @@ from werkzeug.utils import secure_filename
 
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = 'secret'
-# 允许最大 10MB 的图片上传
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60, max_http_buffer_size=10*1024*1024)
@@ -44,7 +42,7 @@ for d in [AUDIO_DIR, MODELS_DIR, BG_DIR]:
 
 # --- 配置加载 ---
 CONFIG = {
-    "TTS_MODE": "edge",  # 默认改回 edge，保证有声音
+    "TTS_MODE": "edge", 
     "VITS_API_URL": "https://artrajz-vits-simple-api.hf.space/voice/vits?text={text}&id=165&format=wav&lang=zh"
 }
 try:
@@ -88,8 +86,11 @@ def load_state():
         except: pass
 
 def save_state():
-    try: with open(STATE_FILE, 'w', encoding='utf-8') as f: json.dump(GLOBAL_STATE, f, ensure_ascii=False, indent=2)
-    except: pass
+    try:
+        with open(STATE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(GLOBAL_STATE, f, ensure_ascii=False, indent=2)
+    except:
+        pass
 
 load_state()
 
@@ -111,8 +112,13 @@ def get_model_config(mid):
 
 def save_model_config(mid, data):
     p = os.path.join(MODELS_DIR, mid, "config.json")
-    curr = get_model_config(mid); curr.update(data)
-    with open(p, "w", encoding="utf-8") as f: json.dump(curr, f, indent=2, ensure_ascii=False)
+    curr = get_model_config(mid)
+    curr.update(data)
+    try:
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(curr, f, indent=2, ensure_ascii=False)
+    except:
+        pass
     return curr
 
 def scan_models():
@@ -150,14 +156,13 @@ def init_model():
 
 init_model()
 
-# ================= TTS 核心逻辑 (修复版) =================
+# ================= TTS 核心逻辑 =================
 def run_vits_api(text, output_path):
     api_url = CONFIG.get("VITS_API_URL")
     if not api_url: return False
     target_url = api_url.replace("{text}", urllib.parse.quote(text)).replace("{lang}", "zh")
     print(f"🔄 [VITS] 请求中: {text[:10]}...")
     try:
-        # 缩短超时时间到 10秒，防止卡死
         resp = requests.get(target_url, timeout=10)
         if resp.status_code == 200 and len(resp.content) > 1000:
             with open(output_path, "wb") as f: f.write(resp.content)
@@ -173,11 +178,9 @@ def run_edge_tts(text, voice, output_path):
     try:
         print(f"🔄 [Edge] 兜底合成中...")
         async def _run():
-            # 使用更可爱的晓晓音色
             comm = edge_tts.Communicate(text, "zh-CN-XiaoxiaoNeural", rate="+10%", pitch="+15Hz")
             await comm.save(output_path)
         
-        # 修复 asyncio 在线程中的 Loop 问题
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(_run())
@@ -195,11 +198,9 @@ def bg_tts(text, voice, rate, pitch, room=None, sid=None):
     out_path = os.path.join(AUDIO_DIR, fname)
     success = False
     
-    # 优先尝试 VITS (如果配置了)
     if "api" in voice or CONFIG.get("TTS_MODE") == "vits":
         success = run_vits_api(clean, out_path)
     
-    # 如果 VITS 失败，强制切换到 Edge (绝不让 Pico 变成哑巴)
     if not success:
         success = run_edge_tts(clean, "edge", out_path)
 
@@ -394,6 +395,29 @@ def on_save(d):
     updated = save_model_config(d['id'], d)
     if CURRENT_MODEL['id'] == d['id']: CURRENT_MODEL.update(updated); init_chatroom(); emit('model_switched', CURRENT_MODEL, to='lobby')
     emit('toast', {'text': '✅ 保存成功'})
+
+@socketio.on('delete_model')
+def on_del(d):
+    if not is_admin(request.sid): return
+    if d['id']==CURRENT_MODEL['id']: return
+    try: 
+        shutil.rmtree(os.path.join(MODELS_DIR, d['id']))
+        emit('toast',{'text':'🗑️ 已删除'})
+        on_get_data()
+    except: pass
+
+@socketio.on('download_model')
+def on_dl(d):
+    if not is_admin(request.sid): return
+    name=d.get('name'); emit('toast',{'text':f'🚀 下载 {name}...','type':'info'}); socketio.start_background_task(bg_dl_task, name)
+
+def bg_dl_task(name):
+    u={"Mao":".../Mao","Natori":".../Natori"}.get(name,"https://github.com/Live2D/CubismWebSamples/trunk/Samples/Resources/"+name)
+    t=os.path.join(MODELS_DIR,name.lower()); shutil.rmtree(t, ignore_errors=True); os.makedirs(t,exist_ok=True)
+    try: 
+        os.system(f"svn export --force -q {u} {t}")
+        socketio.emit('toast',{'text':f'✅ {name} 完成!'},namespace='/')
+    except: pass
 
 if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000)
