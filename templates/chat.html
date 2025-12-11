@@ -4,40 +4,31 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Pico Studio</title>
+    <!-- 核心库 -->
     <script src="/static/js/live2d.min.js"></script>
     <script src="/static/js/live2dcubismcore.min.js"></script>
     <script src="/static/js/pixi.min.js"></script>
     <script src="/static/js/index.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+    
     <style>
-        /* =========================================
-           1. PC 端基础样式 (保持原样，绝对不动)
-           ========================================= */
+        /* ==========================================================================
+           第一部分：全局基础样式 (所有设备通用)
+           ========================================================================== */
+        * { box-sizing: border-box; }
+        
         body {
-            font-family: "Segoe UI", sans-serif;
+            font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
             margin: 0;
             padding: 0;
-            height: 100dvh;
+            height: 100dvh; /* 兼容移动端地址栏 */
             width: 100vw;
             background-color: #2d3436;
-            display: flex;
-            flex-direction: row; /* PC 默认左右布局 */
             overflow: hidden;
             color: #333;
         }
 
-        #stage-container {
-            flex: 1;
-            position: relative;
-            background-image: radial-gradient(circle, #636e72 10%, #2d3436 90%);
-            overflow: hidden;
-            touch-action: none;
-            background-size: cover;
-            background-position: center;
-            transition: background-image 0.5s ease;
-            z-index: 0;
-        }
-
+        /* 舞台画布 (Live2D) */
         #live2d-canvas {
             position: absolute;
             top: 0;
@@ -46,159 +37,355 @@
             height: 100%;
         }
 
-        #chat-container {
-            width: 400px;
-            display: flex;
-            flex-direction: column;
-            background: rgba(255, 255, 255, 0.95);
-            z-index: 10;
-            box-shadow: -5px 0 15px rgba(0, 0, 0, 0.2);
-            transition: all 0.3s ease;
-            height: 100%;
+        /* 竖屏锁定提示 */
+        #orientation-lock { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #2d3436; z-index: 99999; color: white; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+        @media screen and (max-width: 1024px) and (orientation: landscape) { #orientation-lock { display: flex !important; } }
+
+        /* ==========================================================================
+           第二部分：PC 端桌面样式 (屏幕宽度 > 1024px) - 保持经典左右布局
+           ========================================================================== */
+        @media (min-width: 1025px) {
+            body {
+                display: flex;
+                flex-direction: row; /* 左右排列 */
+            }
+
+            /* 1. 左侧模型区域 */
+            #stage-container {
+                flex: 1; /* 自动撑满剩余空间 */
+                position: relative;
+                background-image: radial-gradient(circle, #636e72 10%, #2d3436 90%);
+                overflow: hidden;
+                touch-action: none;
+                background-size: cover;
+                background-position: center;
+                transition: background-image 0.5s ease;
+                z-index: 1;
+            }
+
+            /* 2. 右侧聊天区域 */
+            #chat-container {
+                width: 400px; /* 固定宽度 */
+                display: flex;
+                flex-direction: column;
+                background: rgba(255, 255, 255, 0.98); /* 纯色背景 */
+                z-index: 10;
+                box-shadow: -5px 0 15px rgba(0, 0, 0, 0.2);
+                border-left: 1px solid #ddd;
+                height: 100%;
+            }
+
+            /* 3. 头部标题栏 */
+            #header {
+                background: #6c5ce7;
+                color: white;
+                padding: 12px 15px;
+                text-align: center;
+                font-weight: bold;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                flex-shrink: 0;
+                height: 50px;
+            }
+            .icon-btn {
+                background: rgba(0, 0, 0, 0.15);
+                color: white;
+                cursor: pointer;
+                padding: 6px 10px;
+                border-radius: 6px;
+                user-select: none;
+                transition: background 0.2s;
+            }
+            .icon-btn:hover { background: rgba(0,0,0,0.3); }
+
+            /* 4. 聊天列表 */
+            #chat-window {
+                flex: 1;
+                overflow-y: auto;
+                padding: 15px;
+                background: #f5f7fa;
+            }
+
+            /* 5. 底部输入区 */
+            #input-area {
+                display: flex;
+                padding: 15px;
+                background: white;
+                border-top: 1px solid #eee;
+                flex-shrink: 0;
+                align-items: center;
+                height: 70px;
+            }
+            #user-input {
+                flex: 1;
+                padding: 10px 15px;
+                border: 2px solid #ddd;
+                border-radius: 25px;
+                font-size: 16px;
+                outline: none;
+                transition: border 0.3s;
+            }
+            #user-input:focus { border-color: #6c5ce7; }
+            #send-btn {
+                background: #6c5ce7;
+                color: white;
+                border: none;
+                padding: 0 25px;
+                margin-left: 10px;
+                border-radius: 25px;
+                font-weight: bold;
+                height: 42px;
+                cursor: pointer;
+            }
+            #send-btn:hover { background: #5b4cc4; }
+
+            /* 6. PC端的消息气泡 */
+            .message-bubble {
+                background: white;
+                color: #333;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            }
+            .self .message-bubble { background: #6c5ce7; color: white; }
+            .pico .message-bubble { background: #fff0f6; border: 2px solid #f8a5c2; }
+            .system .message-bubble { background: #eee; color: #666; }
         }
 
-        /* =========================================
-           2. 移动端/iPad 专属样式 (只改这里！)
-           目标：沉浸式透明叠加布局
-           ========================================= */
+        /* ==========================================================================
+           第三部分：移动端/iPad 样式 (屏幕宽度 <= 1024px) - 沉浸式透明叠加布局
+           ========================================================================== */
         @media (max-width: 1024px) {
             body {
-                flex-direction: column;
-                display: block; /* 改为块级，方便绝对定位叠加 */
+                display: block; /* 块级布局，允许绝对定位叠加 */
+                background: #2d3436;
             }
 
-            /* 模型区域：强制全屏铺满底层 */
+            /* 1. 模型层：强制全屏沉底 */
             #stage-container {
-                position: fixed; /* 固定在屏幕上 */
+                position: fixed;
                 top: 0;
                 left: 0;
-                width: 100%;
-                height: 100%;
-                z-index: 0; /* 在最底层 */
-                flex: none; /* 取消 flex 限制 */
+                width: 100vw;
+                height: 100dvh;
+                z-index: 0; /* 最底层 */
+                background-image: radial-gradient(circle, #636e72 10%, #2d3436 90%);
+                background-size: cover;
+                background-position: center;
             }
 
-            /* 聊天容器：覆盖在模型上方，背景变透明 */
+            /* 2. 聊天层：覆盖在模型之上，背景透明 */
             #chat-container {
                 position: fixed;
                 top: 0;
                 left: 0;
-                width: 100%;
-                height: 100%;
-                background: transparent; /* 关键：背景透明 */
-                box-shadow: none;
+                width: 100vw;
+                height: 100dvh;
                 z-index: 10;
-                pointer-events: none; /* 关键：让点击穿透空白处，摸到后面的模型 */
-                justify-content: flex-end; /* 内容沉底 */
+                background: transparent; /* 关键：透明 */
+                display: flex;
+                flex-direction: column;
+                justify-content: flex-end; /* 内容靠下 */
+                pointer-events: none; /* 关键：点击穿透空白区域 */
             }
 
-            /* header 变为透明悬浮 */
+            /* 3. 头部：透明悬浮 */
             #header {
-                background: transparent !important;
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                padding: max(10px, env(safe-area-inset-top)) 15px 10px;
+                background: transparent;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
                 pointer-events: auto; /* 按钮可点 */
-                padding-top: max(12px, env(safe-area-inset-top)); /* 避开刘海 */
-                text-shadow: 0 1px 2px rgba(0,0,0,0.8); /* 防止文字看不清 */
+                z-index: 20;
+            }
+            #room-title {
+                text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+                color: white;
+                font-weight: 800;
             }
             .icon-btn {
-                background: rgba(0,0,0,0.4) !important; /* 按钮加深底色 */
-                color: white !important;
+                background: rgba(0, 0, 0, 0.4);
                 backdrop-filter: blur(4px);
+                color: white;
+                padding: 8px 12px;
+                border-radius: 8px;
             }
 
-            /* 聊天列表：半透明渐变，只占下半屏 */
+            /* 4. 聊天窗口：只占下半屏，渐变背景 */
             #chat-window {
-                flex: 0 1 50%; /* 只占屏幕高度的 50% */
-                background: linear-gradient(to top, rgba(0,0,0,0.2) 0%, transparent 100%) !important;
-                mask-image: linear-gradient(to bottom, transparent, black 20%);
-                -webkit-mask-image: linear-gradient(to bottom, transparent, black 20%);
+                flex: 0 1 55%; /* 高度限制 */
+                overflow-y: auto;
+                padding: 15px;
+                background: linear-gradient(to top, rgba(0,0,0,0.4) 0%, transparent 100%);
+                mask-image: linear-gradient(to bottom, transparent, black 15%);
+                -webkit-mask-image: linear-gradient(to bottom, transparent, black 15%);
                 pointer-events: auto; /* 消息可滚动 */
-                padding-bottom: 0;
+                overscroll-behavior: contain;
+                padding-bottom: 5px;
             }
 
-            /* 消息气泡：加磨砂玻璃效果 */
-            .message-bubble {
-                background: rgba(255, 255, 255, 0.85) !important;
-                backdrop-filter: blur(5px);
-                border: 1px solid rgba(255,255,255,0.4);
-            }
-
-            /* 输入框：底部悬浮岛风格 */
+            /* 5. 移动端输入区：悬浮岛风格 */
             #input-area {
                 pointer-events: auto; /* 输入框可点 */
-                background: rgba(255, 255, 255, 0.85) !important;
-                backdrop-filter: blur(10px);
-                border-top: 1px solid rgba(255,255,255,0.3);
-                border-radius: 20px 20px 0 0;
-                margin: 0 10px;
-                margin-bottom: max(10px, env(safe-area-inset-bottom));
+                background: rgba(255, 255, 255, 0.85);
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+                margin: 0 12px;
+                margin-bottom: max(12px, env(safe-area-inset-bottom));
+                border-radius: 20px 20px 0 0; /* 甚至可以是全圆角 */
+                padding: 12px;
+                display: flex;
+                align-items: center;
+                box-shadow: 0 4px 15px rgba(0,0,0,0.2);
             }
+            #user-input {
+                flex: 1;
+                padding: 10px;
+                border: 1px solid rgba(0,0,0,0.1);
+                border-radius: 20px;
+                background: rgba(255,255,255,0.9);
+                font-size: 16px; /* 防 iOS 缩放 */
+            }
+            #send-btn {
+                background: #6c5ce7;
+                color: white;
+                border: none;
+                width: 45px;
+                height: 45px;
+                border-radius: 50%;
+                margin-left: 8px;
+                font-weight: bold;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                box-shadow: 0 2px 5px rgba(108, 92, 231, 0.4);
+            }
+
+            /* 6. 移动端专属气泡样式 (玻璃拟态) */
+            .message-bubble {
+                background: rgba(255, 255, 255, 0.85) !important;
+                backdrop-filter: blur(4px);
+                -webkit-backdrop-filter: blur(4px);
+                border: 1px solid rgba(255,255,255,0.3);
+                color: #2d3436 !important;
+                font-weight: 500;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            .self .message-bubble {
+                background: rgba(108, 92, 231, 0.9) !important;
+                color: white !important;
+                border: none;
+            }
+            .message-info {
+                color: rgba(255,255,255,0.9);
+                text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+            }
+            .pico .message-info { color: #fd79a8 !important; }
         }
 
-        /* =========================================
-           3. 通用组件样式 (保持原样)
-           ========================================= */
-        #orientation-lock { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #2d3436; z-index: 99999; color: white; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-        @media screen and (max-width: 1024px) and (orientation: landscape) { #orientation-lock { display: flex !important; } }
-
-        #header { background: #6c5ce7; color: white; padding: 12px 15px; text-align: center; font-weight: bold; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
-        .icon-btn { cursor: pointer; padding: 6px 10px; background: rgba(0, 0, 0, 0.15); border-radius: 6px; user-select: none; }
+        /* ==========================================================================
+           第四部分：通用组件 (气泡结构、弹窗、Toast 等)
+           ========================================================================== */
         
-        #chat-window { flex: 1; overflow-y: auto; padding: 15px; background: #f5f7fa; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+        /* 消息容器基础结构 */
+        .message-container { display: flex; margin-bottom: 15px; flex-direction: column; width: 100%; }
+        .message-info { font-size: 12px; margin-bottom: 4px; padding: 0 5px; }
+        .message-bubble { padding: 10px 14px; border-radius: 16px; max-width: 85%; word-wrap: break-word; position: relative; }
         
-        .message-container { display: flex; margin-bottom: 15px; flex-direction: column; }
-        .message-info { font-size: 12px; color: #999; margin-bottom: 4px; padding: 0 5px; }
-        .message-bubble { padding: 10px 14px; border-radius: 16px; max-width: 85%; word-wrap: break-word; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); }
-        .message-img { max-width: 100%; border-radius: 10px; margin-top: 5px; display: block; cursor: pointer; }
+        /* 对齐方式 */
+        .self { align-items: flex-end; }
+        .self .message-bubble { border-bottom-right-radius: 4px; }
+        .other { align-items: flex-start; }
+        .other .message-bubble { border-bottom-left-radius: 4px; }
+        
+        /* 图片与音频 */
+        .message-img { max-width: 100%; border-radius: 10px; margin-top: 5px; display: block; cursor: pointer; border: 2px solid white; }
+        .audio-player { margin-top: 8px; height: 32px; width: 100%; opacity: 0.9; border-radius: 16px; display: block; }
 
-        .self { align-items: flex-end; } .self .message-bubble { background: #6c5ce7; color: white; border-bottom-right-radius: 4px; }
-        .other { align-items: flex-start; } .other .message-bubble { background: white; color: #333; border-bottom-left-radius: 4px; }
-        .pico { align-items: flex-start; } .pico .message-info { color: #e84393; font-weight: bold; } .pico .message-bubble { background: #fff0f6; color: #333; border: 2px solid #f8a5c2; border-bottom-left-radius: 4px; }
-        .emotion-tag { display: inline-block; font-size: 0.8em; padding: 1px 4px; border-radius: 4px; background: rgba(232, 67, 147, 0.1); color: #e84393; margin-left: 5px; }
-        .system { align-items: center; margin: 10px 0; } .system .message-bubble { background: #eee; color: #666; font-size: 12px; padding: 4px 12px; border-radius: 12px; box-shadow: none; }
-        .audio-player { margin-top: 8px; height: 32px; width: 100%; opacity: 0.8; border-radius: 16px; display: block; }
-
-        #input-area { display: flex; padding: 10px; background: white; border-top: 1px solid #eee; flex-shrink: 0; align-items: center; padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
-        #user-input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 25px; font-size: 16px; outline: none; }
-        #send-btn { background: #6c5ce7; color: white; border: none; padding: 0 20px; margin-left: 10px; border-radius: 25px; font-weight: bold; height: 45px; flex-shrink: 0; }
-
-        #preview-area { position: absolute; bottom: 80px; left: 10px; right: 10px; background: rgba(255, 255, 255, 0.9); border-radius: 10px; padding: 10px; display: none; box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1); z-index: 20; }
+        /* 图片预览浮层 */
+        #preview-area { position: absolute; bottom: 80px; left: 10px; right: 10px; background: rgba(255, 255, 255, 0.9); border-radius: 10px; padding: 10px; display: none; box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1); z-index: 100; pointer-events: auto; }
         #preview-img { max-height: 100px; max-width: 100%; border-radius: 5px; }
         #close-preview { position: absolute; top: 5px; right: 5px; cursor: pointer; font-size: 20px; color: #666; }
 
+        /* 弹窗与遮罩 */
         .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.85); z-index: 9999; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(5px); }
-        .modal-box { background: white; padding: 25px; border-radius: 20px; width: 90%; max-width: 450px; max-height: 80vh; overflow-y: auto; }
+        .modal-box { background: white; padding: 25px; border-radius: 20px; width: 90%; max-width: 450px; max-height: 80vh; overflow-y: auto; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
         #login-overlay { z-index: 10000; }
         #studio-overlay { display: none; z-index: 9000; }
-        #username-input { width: 80%; padding: 12px; margin: 20px 0; border: 2px solid #6c5ce7; border-radius: 10px; font-size: 18px; text-align: center; outline: none; }
-        #login-btn { background: #6c5ce7; color: white; border: none; padding: 12px 40px; border-radius: 30px; font-size: 18px; font-weight: bold; transition: all 0.3s; }
-        #login-btn:disabled { background: #b2bec3; cursor: not-allowed; opacity: 0.7; }
         
+        /* 登录框元素 */
+        #username-input { width: 80%; padding: 12px; margin: 20px 0; border: 2px solid #6c5ce7; border-radius: 10px; font-size: 18px; text-align: center; outline: none; }
+        #login-btn { background: #6c5ce7; color: white; border: none; padding: 12px 40px; border-radius: 30px; font-size: 18px; font-weight: bold; transition: all 0.3s; cursor: pointer; }
+        #login-btn:disabled { background: #b2bec3; cursor: not-allowed; opacity: 0.7; }
+
+        /* 工作室元素 */
         .admin-only { display: none; }
         .slider-container { margin: 10px 0; }
         .slider-label { font-size: 12px; color: #666; display: flex; justify-content: space-between; }
         input[type="range"] { width: 100%; margin-top: 5px; }
-        .upload-box { border: 2px dashed #ccc; padding: 15px; text-align: center; border-radius: 10px; margin-top: 10px; cursor: pointer; }
+        .upload-box { border: 2px dashed #ccc; padding: 15px; text-align: center; border-radius: 10px; margin-top: 10px; cursor: pointer; transition: background 0.2s; }
+        .upload-box:hover { background: #f9f9f9; }
         .model-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 10px; margin-top: 15px; }
-        .model-card { background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center; cursor: pointer; border: 2px solid transparent; }
+        .model-card { background: #f8f9fa; padding: 10px; border-radius: 8px; text-align: center; cursor: pointer; border: 2px solid transparent; transition: all 0.2s; }
+        .model-card:hover { transform: translateY(-2px); box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
         .model-card.active { border-color: #6c5ce7; background: #e0dfff; font-weight: bold; }
         .chip { display: inline-block; background: #eee; padding: 6px 12px; border-radius: 15px; margin: 5px; cursor: pointer; }
         .bg-chip { display: inline-block; background: #f0f0f0; padding: 5px 10px; border-radius: 8px; margin: 5px; cursor: pointer; font-size: 12px; border: 1px solid #ddd; }
         .bg-chip.active { background: #d1ecf1; border-color: #17a2b8; font-weight: bold; }
         .btn-del { color: red; font-size: 12px; display: block; margin-top: 5px; }
-        #toast-container { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 11000; text-align: center; width: 100%; }
-        .toast { display: inline-block; background: rgba(0, 0, 0, 0.8); color: white; padding: 8px 20px; border-radius: 20px; margin-top: 10px; animation: fadeOut 3s forwards 2s; }
+
+        /* Toast 提示 */
+        #toast-container { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 11000; text-align: center; width: 100%; pointer-events: none; }
+        .toast { display: inline-block; background: rgba(0, 0, 0, 0.85); color: white; padding: 10px 25px; border-radius: 30px; margin-top: 10px; animation: fadeOut 3s forwards 2s; backdrop-filter: blur(4px); font-weight: 500; }
         @keyframes fadeOut { to { opacity: 0; visibility: hidden; } }
+
+        /* 调试信息 */
         #debug-pos { position: absolute; top: 10px; left: 10px; color: #0f0; background: rgba(0, 0, 0, 0.5); padding: 5px; font-size: 10px; pointer-events: none; z-index: 100; }
 
-        /* 直播模式 CSS (PC 端用，保留) */
-        body.live-mode #header, body.live-mode #input-area, body.live-mode #debug-pos { display: none !important; }
-        body.live-mode #chat-container { position: absolute; right: 0; top: 0; bottom: 0; width: 350px; background: rgba(255, 255, 255, 0.4); box-shadow: none; z-index: 100; pointer-events: none; }
-        body.live-mode #chat-window { background: transparent; text-shadow: 0 0 2px white; pointer-events: auto; }
-        body.live-mode #stage-container { width: 100vw; height: 100vh; flex: none; }
+        /* ==========================================================================
+           第五部分：PC 端专属“直播模式” (Live Mode)
+           用于 OBS 推流的纯净模式，通过 JS 切换 class="live-mode" 触发
+           ========================================================================== */
+        @media (min-width: 1025px) {
+            body.live-mode #header, 
+            body.live-mode #input-area, 
+            body.live-mode #debug-pos { display: none !important; }
+            
+            body.live-mode #chat-container {
+                position: absolute;
+                right: 20px;
+                top: 50px;
+                bottom: 50px;
+                width: 350px;
+                height: auto;
+                background: rgba(0, 0, 0, 0.3); /* 黑色半透明，适合直播 */
+                border-radius: 10px;
+                box-shadow: none;
+                border: none;
+                pointer-events: none; /* 直播时鼠标穿透 */
+            }
+            body.live-mode #chat-window {
+                background: transparent;
+                text-shadow: 0 1px 2px black;
+                color: white;
+            }
+            body.live-mode .message-bubble {
+                background: rgba(255,255,255,0.9);
+            }
+        }
     </style>
 </head>
 <body>
-    <div id="orientation-lock"><div style="font-size: 40px; margin-bottom: 20px;">📱</div><h2>为了最佳体验，请竖屏使用</h2><p>检测到屏幕翻转，这会导致模型比例变形。</p></div>
+    <!-- 竖屏提示 -->
+    <div id="orientation-lock">
+        <div style="font-size: 40px; margin-bottom: 20px;">📱</div>
+        <h2>为了最佳体验，请竖屏使用</h2>
+        <p>检测到屏幕翻转，这会导致模型比例变形。</p>
+    </div>
 
     <div id="toast-container"></div>
     <div id="login-overlay" class="overlay"><div class="modal-box" style="text-align:center"><h2>Pico 直播间</h2><input id="username-input" placeholder="请输入昵称" maxlength="12" autocomplete="off"><br><button id="login-btn" disabled>连接中...</button></div></div>
@@ -207,28 +394,54 @@
         <div class="modal-box">
             <div style="display:flex;justify-content:space-between;align-items:center"><h3>🛠️ 工作室</h3><div onclick="document.getElementById('studio-overlay').style.display='none'" style="font-size:24px;padding:0 10px;cursor:pointer">×</div></div>
             <div id="model-list" class="model-list">加载中...</div>
-            <hr><h4>🖼️ 舞台背景</h4>
+            <hr>
+            <h4>🖼️ 舞台背景</h4>
             <div class="upload-box" onclick="document.getElementById('bg-input').click()">点击上传图片 (JPG/PNG)<input type="file" id="bg-input" accept="image/*" style="display:none" onchange="uploadBackground(this.files[0])"></div>
             <div id="bg-list" style="margin-top:10px; max-height:100px; overflow-y:auto"></div>
             <div style="margin-top:5px"><span class="bg-chip" onclick="changeBackground('')">🚫 默认灰色</span></div>
+
             <div class="admin-only">
-                <hr><h4>🔑 API 设置</h4><div style="display:flex; gap:5px;"><input id="api-key-input" placeholder="输入 Gemini API Key (AIza...)" style="flex:1; padding:8px; border:1px solid #ddd; border-radius:8px;"><button onclick="saveGeminiKey()" style="background:#6c5ce7; color:white; border:none; padding:8px 15px; border-radius:8px; cursor:pointer;">保存</button></div><div style="font-size:10px; color:#999; margin-top:5px;">保存后无需重启，立即生效。</div>
-                <hr><h4>⚙️ 调音 & 位置</h4><div>当前模型: <span id="persona-model-name" style="font-weight:bold">--</span></div><label style="font-size:12px;color:#666">人设提示词:</label><textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea><label style="font-size:12px;color:#666">声线选择:</label><select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd"></select><div class="slider-container"><div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div><input type="range" id="rate-range" min="-50" max="50" oninput="updateVal('rate', this.value)"></div><div class="slider-container"><div class="slider-label"><span>音调</span><span id="pitch-val">0Hz</span></div><input type="range" id="pitch-range" min="-50" max="50" oninput="updateVal('pitch', this.value)"></div><div class="slider-container"><div class="slider-label"><span>位置 X</span><span id="x-val">0.5</span></div><input type="range" id="model-x" min="0" max="1" step="0.01" oninput="previewTransform()"></div><div class="slider-container"><div class="slider-label"><span>位置 Y</span><span id="y-val">0.5</span></div><input type="range" id="model-y" min="0" max="2" step="0.01" oninput="previewTransform()"></div><div class="slider-container"><div class="slider-label"><span>缩放</span><span id="scale-val">0.5</span></div><input type="range" id="model-scale" min="0.1" max="2.0" step="0.05" oninput="previewTransform()"></div><button id="save-settings-btn" style="width:100%;padding:10px;margin-top:10px;background:#6c5ce7;color:white;border:none;border-radius:10px">保存所有配置</button><hr><h4>☁️ 上传模型</h4><div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 .zip<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div><div style="margin-top:10px"><span class="chip" onclick="dlModel('Mao')">Mao</span><span class="chip" onclick="dlModel('Natori')">Natori</span></div>
+                <hr>
+                <h4>🔑 API 设置</h4>
+                <div style="display:flex; gap:5px;">
+                    <input id="api-key-input" placeholder="输入 Gemini API Key (AIza...)" style="flex:1; padding:8px; border:1px solid #ddd; border-radius:8px;">
+                    <button onclick="saveGeminiKey()" style="background:#6c5ce7; color:white; border:none; padding:8px 15px; border-radius:8px; cursor:pointer;">保存</button>
+                </div>
+                <div style="font-size:10px; color:#999; margin-top:5px;">保存后无需重启，立即生效。</div>
+
+                <hr>
+                <h4>⚙️ 调音 & 位置</h4>
+                <div>当前模型: <span id="persona-model-name" style="font-weight:bold">--</span></div>
+                <label style="font-size:12px;color:#666">人设提示词:</label>
+                <textarea id="persona-text" style="width:100%;height:60px;padding:8px;border-radius:8px;border:1px solid #ddd;margin-bottom:5px"></textarea>
+                <label style="font-size:12px;color:#666">声线选择:</label>
+                <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd"></select>
+                <div class="slider-container"><div class="slider-label"><span>语速</span><span id="rate-val">0%</span></div><input type="range" id="rate-range" min="-50" max="50" oninput="updateVal('rate', this.value)"></div>
+                <div class="slider-container"><div class="slider-label"><span>音调</span><span id="pitch-val">0Hz</span></div><input type="range" id="pitch-range" min="-50" max="50" oninput="updateVal('pitch', this.value)"></div>
+                <div class="slider-container"><div class="slider-label"><span>位置 X</span><span id="x-val">0.5</span></div><input type="range" id="model-x" min="0" max="1" step="0.01" oninput="previewTransform()"></div>
+                <div class="slider-container"><div class="slider-label"><span>位置 Y</span><span id="y-val">0.5</span></div><input type="range" id="model-y" min="0" max="2" step="0.01" oninput="previewTransform()"></div>
+                <div class="slider-container"><div class="slider-label"><span>缩放</span><span id="scale-val">0.5</span></div><input type="range" id="model-scale" min="0.1" max="2.0" step="0.05" oninput="previewTransform()"></div>
+                <button id="save-settings-btn" style="width:100%;padding:10px;margin-top:10px;background:#6c5ce7;color:white;border:none;border-radius:10px">保存所有配置</button>
+                <hr><h4>☁️ 上传模型</h4><div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 .zip<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div><div style="margin-top:10px"><span class="chip" onclick="dlModel('Mao')">Mao</span><span class="chip" onclick="dlModel('Natori')">Natori</span></div>
             </div>
             <hr><h4>🧹 缓存</h4><div><span class="chip" onclick="clearLocalHistory()">清除历史</span><span class="chip" onclick="clearLocalMemories()">清除记忆</span></div>
         </div>
     </div>
 
+    <!-- 舞台区 -->
     <div id="stage-container"><canvas id="live2d-canvas"></canvas><div id="debug-pos"></div></div>
+
+    <!-- 聊天区 -->
     <div id="chat-container">
         <div id="header">
             <span id="room-title">🤖 互动区</span>
             <div style="display:flex;gap:10px">
-                <div class="icon-btn" id="live-btn" title="直播模式" onclick="toggleLiveMode()">📺</div>
+                <div class="icon-btn" id="live-btn" title="直播模式 (仅PC)" onclick="toggleLiveMode()">📺</div>
                 <div class="icon-btn" id="reset-btn" title="归位">🎯</div>
                 <div class="icon-btn" id="studio-btn" title="设置">🛠️</div>
             </div>
         </div>
+        
         <div id="chat-window"></div>
         
         <div id="preview-area">
@@ -237,7 +450,7 @@
         </div>
 
         <div id="input-area">
-            <div class="icon-btn" onclick="document.getElementById('img-input').click()" style="margin-right:5px">📷</div>
+            <div class="icon-btn" onclick="document.getElementById('img-input').click()" style="margin-right:10px;display:flex;align-items:center;justify-content:center;">📷</div>
             <input type="file" id="img-input" accept="image/*" style="display:none" onchange="handleImgSelect(this.files[0])">
             <input id="user-input" placeholder="发送弹幕...">
             <button id="send-btn">发送</button>
@@ -280,10 +493,30 @@
         function updateValLabels(s,x,y) { document.getElementById('scale-val').textContent=s.toFixed(2); document.getElementById('x-val').textContent=x.toFixed(2); document.getElementById('y-val').textContent=y.toFixed(2); }
 
         document.getElementById('reset-btn').onclick = () => { applyConfig(currentCfg); showToast("🎯 已恢复", "info"); };
-        window.addEventListener('resize', () => { if(app_pixi) app_pixi.renderer.resize(document.getElementById('stage-container').clientWidth, document.getElementById('stage-container').clientHeight); setTimeout(() => applyConfig(currentCfg), 100); });
         
-        window.toggleLiveMode = () => { document.body.classList.toggle('live-mode'); showToast("📺 直播模式 (双击退出)"); window.dispatchEvent(new Event('resize')); };
-        document.body.addEventListener('dblclick', (e) => { if(document.body.classList.contains('live-mode')) { document.body.classList.remove('live-mode'); showToast("已退出直播模式"); window.dispatchEvent(new Event('resize')); } });
+        // 窗口大小改变时重绘
+        window.addEventListener('resize', () => { 
+            if(app_pixi) app_pixi.renderer.resize(document.getElementById('stage-container').clientWidth, document.getElementById('stage-container').clientHeight); 
+            setTimeout(() => applyConfig(currentCfg), 100); 
+        });
+        
+        window.toggleLiveMode = () => { 
+            // 仅在 PC 端允许切换直播模式
+            if(window.innerWidth > 1024) {
+                document.body.classList.toggle('live-mode'); 
+                showToast("📺 直播模式 (双击退出)"); 
+                window.dispatchEvent(new Event('resize')); 
+            } else {
+                showToast("手机端已默认开启沉浸模式", "info");
+            }
+        };
+        document.body.addEventListener('dblclick', (e) => { 
+            if(document.body.classList.contains('live-mode')) { 
+                document.body.classList.remove('live-mode'); 
+                showToast("已退出直播模式"); 
+                window.dispatchEvent(new Event('resize')); 
+            } 
+        });
 
         window.handleImgSelect = (f) => {
             if(!f) return;
