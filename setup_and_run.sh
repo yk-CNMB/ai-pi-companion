@@ -13,31 +13,28 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}🤖 Pico AI (依赖强修版) 启动中...${NC}"
+echo -e "${GREEN}🤖 Pico AI (离线 TTS 模式) 启动中...${NC}"
 
-# --- 1. 代码同步 ---
-echo -e "🔄 从 GitHub 拉取最新代码..."
-git fetch --all > /dev/null 2>&1
-if git reset --hard origin/main > /dev/null 2>&1; then
-    echo -e "${GREEN}✅ 代码已同步到最新${NC}"
-    find . -name "*.sh" -exec sed -i 's/\r$//' {} +
-else
-    echo -e "${RED}⚠️ 更新失败 (使用本地代码)${NC}"
-fi
-
-# --- 2. 虚拟环境 ---
+# --- 1. 虚拟环境 ---
 if [ ! -d "$VENV_DIR" ]; then python3 -m venv "$VENV_DIR"; fi
 source "$VENV_DIR/bin/activate"
 
-# --- 3. 强制安装依赖 (关键修复) ---
-echo "📦 正在强制检查并安装 edge-tts..."
-pip install --upgrade pip -q
-# 显式安装 edge-tts，防止 requirements.txt 里漏掉或者安装失败
-pip install edge-tts gunicorn flask-socketio requests google-genai -q
-pip install -r requirements.txt -q 2>/dev/null
-echo -e "${GREEN}✅ 依赖安装完成${NC}"
+# --- 2. 强制安装系统依赖 (TTS 核心) ---
+echo -e "${YELLOW}⚙️ 正在安装系统级 TTS 语音引擎 (eSpeak/eSpeak-NG)...${NC}"
+# 安装 eSpeak 及其中文语言包
+sudo apt update -qq
+sudo apt install espeak -y -qq
+echo -e "${GREEN}✅ 系统语音引擎安装完成。${NC}"
 
-# --- 4. Cloudflare 隧道 ---
+# --- 3. 强制安装 Python 依赖 (pyttsx3) ---
+echo "📦 正在使用清华源强制安装依赖 (pyttsx3)..."
+PIP_CMD="pip install -i https://pypi.tuna.tsinghua.edu.cn/simple"
+
+$PIP_CMD --upgrade pip -q
+$PIP_CMD -r requirements.txt -q 
+echo -e "${GREEN}✅ Python 依赖安装完成。${NC}"
+
+# --- 4. Cloudflare 隧道 (确保存在) ---
 if [ ! -f "$CDIR/cloudflared" ]; then
     ARCH=$(dpkg --print-architecture)
     URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb"
@@ -61,12 +58,6 @@ YAML
 fi
 
 # --- 5. 启动服务 ---
-echo -e "🧹 清理旧进程..."
-pkill -9 -f gunicorn
-pkill -9 -f cloudflared
-if command -v fuser &> /dev/null; then fuser -k 5000/tcp > /dev/null 2>&1; fi
-sleep 2
-
 echo "--- Session $(date) ---" > "$LOG_FILE"
 
 echo -e "🚀 启动后端..."
