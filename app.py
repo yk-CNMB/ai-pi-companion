@@ -1,22 +1,21 @@
 # =======================================================================
-# Pico AI Server - app.py (语法修正 + TTS 兜底)
+# Pico AI Server - 稳定回归版 (无额外依赖)
 # =======================================================================
 import os
 import json
 import uuid
-import asyncio
 import time
 import glob
 import shutil
 import re
 import zipfile
-import subprocess
 import threading
 import requests
 import urllib.parse
 import base64
-from io import BytesIO
+import asyncio
 
+# 移除了 soundfile，只用 edge_tts
 import edge_tts
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
@@ -28,6 +27,7 @@ app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = 'secret'
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
 
+# 关键：设置 buffer size 防止发图断连
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60, max_http_buffer_size=10*1024*1024)
 SERVER_VERSION = str(int(time.time()))
 
@@ -40,7 +40,7 @@ STATE_FILE = os.path.join(BASE_DIR, "server_state.json")
 for d in [AUDIO_DIR, MODELS_DIR, BG_DIR]:
     if not os.path.exists(d): os.makedirs(d)
 
-# --- 配置加载 ---
+# --- 配置 ---
 CONFIG = {
     "TTS_MODE": "edge", 
     "VITS_API_URL": "https://artrajz-vits-simple-api.hf.space/voice/vits?text={text}&id=165&format=wav&lang=zh"
@@ -59,18 +59,12 @@ if api_key and "AIza" in api_key:
     except: pass
 
 EMOTION_INSTRUCTION = """
-【重要系统指令】
-你必须在每次回复的开头，明确标记你当前的心情。
-请严格从以下标签中选择一个，放在句首：
-[HAPPY] - 开心、兴奋
-[ANGRY] - 生气、愤怒
-[SAD] - 悲伤、哭泣
-[SHOCK] - 惊讶、震惊
-[NORMAL] - 平静、普通
-
-例如：
-[HAPPY] 哇！真的吗？
-[ANGRY] 哼，不理你了！
+【重要】请在回复开头用标签标记心情：
+[HAPPY] - 开心
+[ANGRY] - 生气
+[SAD] - 悲伤
+[SHOCK] - 惊讶
+[NORMAL] - 平静
 """
 
 GLOBAL_STATE = { "current_model_id": "default", "current_background": "", "chat_history": [] }
@@ -89,8 +83,7 @@ def save_state():
     try:
         with open(STATE_FILE, 'w', encoding='utf-8') as f:
             json.dump(GLOBAL_STATE, f, ensure_ascii=False, indent=2)
-    except:
-        pass
+    except: pass
 
 load_state()
 
@@ -117,8 +110,7 @@ def save_model_config(mid, data):
     try:
         with open(p, "w", encoding="utf-8") as f:
             json.dump(curr, f, indent=2, ensure_ascii=False)
-    except:
-        pass
+    except: pass
     return curr
 
 def scan_models():
@@ -156,53 +148,36 @@ def init_model():
 
 init_model()
 
-# ================= TTS 核心逻辑 =================
-def run_vits_api(text, output_path):
-    api_url = CONFIG.get("VITS_API_URL")
-    if not api_url: return False
-    target_url = api_url.replace("{text}", urllib.parse.quote(text)).replace("{lang}", "zh")
-    print(f"🔄 [VITS] 请求中: {text[:10]}...")
+# ================= TTS 逻辑 (纯 Python 实现) =================
+# 这里解决了之前的 "Silence" 问题，通过手动创建事件循环
+def run_edge_tts_python(text, output_path):
+    print(f"🔄 [Edge Python] 生成中: {text[:10]}...")
     try:
-        resp = requests.get(target_url, timeout=10)
-        if resp.status_code == 200 and len(resp.content) > 1000:
-            with open(output_path, "wb") as f: f.write(resp.content)
-            print(f"✅ [VITS] 成功")
-            return True
-        else:
-            print(f"❌ [VITS] 失败: {resp.status_code}")
-    except Exception as e:
-        print(f"❌ [VITS] 错误: {e}")
-    return False
-
-def run_edge_tts(text, voice, output_path):
-    try:
-        print(f"🔄 [Edge] 兜底合成中...")
-        async def _run():
-            comm = edge_tts.Communicate(text, "zh-CN-XiaoxiaoNeural", rate="+10%", pitch="+15Hz")
-            await comm.save(output_path)
+        async def _gen():
+            # 使用较新的晓晓音色
+            communicate = edge_tts.Communicate(text, "zh-CN-XiaoxiaoNeural", rate="+10%", pitch="+0Hz")
+            await communicate.save(output_path)
         
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(_run())
-        loop.close()
-        print(f"✅ [Edge] 成功")
+        # 关键：在线程中创建全新的事件循环，避免冲突
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        new_loop.run_until_complete(_gen())
+        new_loop.close()
+        print(f"✅ [Edge Python] 成功")
         return True
-    except Exception as e: 
-        print(f"❌ [Edge] 失败: {e}")
+    except Exception as e:
+        print(f"❌ [Edge Python] 失败: {e}")
         return False
 
 def bg_tts(text, voice, rate, pitch, room=None, sid=None):
     clean = re.sub(r'\[(.*?)\]', '', text).strip()
     if not clean: return
-    fname = f"{uuid.uuid4()}.wav"
+    fname = f"{uuid.uuid4()}.mp3"
     out_path = os.path.join(AUDIO_DIR, fname)
     success = False
     
-    if "api" in voice or CONFIG.get("TTS_MODE") == "vits":
-        success = run_vits_api(clean, out_path)
-    
-    if not success:
-        success = run_edge_tts(clean, "edge", out_path)
+    # 直接使用 Python 库，不依赖任何系统命令
+    success = run_edge_tts_python(clean, out_path)
 
     if success:
         url = f"/static/audio/{fname}"
@@ -211,9 +186,9 @@ def bg_tts(text, voice, rate, pitch, room=None, sid=None):
         if room: socketio.emit('audio_response', payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_response', payload, to=sid, namespace='/')
     else:
-        print("❌ 所有 TTS 方案均失败，无声音")
+        print("❌ TTS 生成失败")
 
-# ================= 路由与 API =================
+# ================= 路由 =================
 @app.route('/')
 def idx(): return redirect(url_for('pico_v', v=SERVER_VERSION))
 @app.route('/pico/<v>')
@@ -221,6 +196,29 @@ def pico_v(v):
     r = make_response(render_template('chat.html'))
     r.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     return r
+
+@app.route('/upload_bg', methods=['POST'])
+def upload_bg():
+    if 'file' not in request.files: return jsonify({'success': False})
+    f = request.files['file']
+    if f and '.' in f.filename:
+        n = secure_filename(f.filename)
+        f.save(os.path.join(BG_DIR, f"{int(time.time())}_{n}"))
+        return jsonify({'success': True})
+    return jsonify({'success': False})
+
+@app.route('/update_key', methods=['POST'])
+def update_key():
+    data = request.json
+    new_key = data.get('key', '').strip()
+    if not new_key.startswith("AIza"): return jsonify({'success': False, 'msg': 'Key格式错误'})
+    global client, CONFIG; CONFIG['GEMINI_API_KEY'] = new_key
+    try: client = genai.Client(api_key=new_key)
+    except: pass
+    try:
+        with open("config.json", "w", encoding='utf-8') as f: json.dump(CONFIG, f)
+    except: pass
+    return jsonify({'success': True})
 
 @app.route('/upload_model', methods=['POST'])
 def upload_model():
@@ -232,48 +230,13 @@ def upload_model():
             p = os.path.join(MODELS_DIR, n); shutil.rmtree(p, ignore_errors=True)
             with zipfile.ZipFile(f, 'r') as z: z.extractall(p)
             for root, dirs, files in os.walk(p):
-                if any(f.endswith(('.model3.json', '.model.json')) for f in files):
+                if any(f.endswith('.model3.json') for f in files):
                     if root != p: 
                          for item in os.listdir(root): shutil.move(os.path.join(root, item), p)
                     break
             return jsonify({'success': True})
         except: return jsonify({'success': False})
     return jsonify({'success': False})
-
-@app.route('/upload_bg', methods=['POST'])
-def upload_bg():
-    if 'file' not in request.files: return jsonify({'success': False, 'msg': '无文件'})
-    f = request.files['file']
-    if f.filename == '': return jsonify({'success': False, 'msg': '文件名为空'})
-    if f and '.' in f.filename and f.filename.rsplit('.', 1)[1].lower() in {'png', 'jpg', 'jpeg', 'gif', 'webp'}:
-        filename = secure_filename(f.filename)
-        name_part, ext_part = os.path.splitext(filename)
-        final_name = f"{name_part}_{int(time.time())}{ext_part}"
-        f.save(os.path.join(BG_DIR, final_name))
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'msg': '格式不支持'})
-
-@app.route('/update_key', methods=['POST'])
-def update_key():
-    data = request.json
-    new_key = data.get('key', '').strip()
-    if not new_key or not new_key.startswith("AIza"):
-        return jsonify({'success': False, 'msg': '无效的 API Key'})
-    global client, CONFIG
-    CONFIG['GEMINI_API_KEY'] = new_key
-    try: client = genai.Client(api_key=new_key)
-    except Exception as e: return jsonify({'success': False, 'msg': f"Key 格式错误: {e}"})
-    try:
-        current_conf = {}
-        if os.path.exists("config.json"):
-            with open("config.json", "r") as f:
-                lines = [line for line in f.readlines() if not line.strip().startswith("//")]
-                if lines: current_conf = json.loads("\n".join(lines))
-        current_conf['GEMINI_API_KEY'] = new_key
-        with open("config.json", "w", encoding='utf-8') as f:
-            json.dump(current_conf, f, indent=2, ensure_ascii=False)
-        return jsonify({'success': True})
-    except Exception as e: return jsonify({'success': False, 'msg': f"写入失败: {e}"})
 
 @app.route('/api/danmaku', methods=['POST'])
 def api_danmaku():
@@ -306,8 +269,7 @@ users = {}; chatroom_chat = None
 def init_chatroom():
     global chatroom_chat
     if not client: return
-    sys_prompt = CURRENT_MODEL.get('persona', "")
-    if EMOTION_INSTRUCTION not in sys_prompt: sys_prompt += EMOTION_INSTRUCTION
+    sys_prompt = CURRENT_MODEL.get('persona', "") + EMOTION_INSTRUCTION
     try: chatroom_chat = client.chats.create(model="gemini-2.5-flash", config={"system_instruction": sys_prompt})
     except: pass
 
@@ -322,7 +284,7 @@ def on_login(d):
     if not chatroom_chat: init_chatroom()
     emit('login_success', {'username': u, 'current_model': CURRENT_MODEL, 'current_background': GLOBAL_STATE.get('current_background', '')})
     emit('history_sync', {'history': GLOBAL_STATE['chat_history']})
-    socketio.start_background_task(bg_tts, f"Hi {u}", "api_miku", "", "", sid=request.sid)
+    socketio.start_background_task(bg_tts, f"你好 {u}", "edge", "", "", sid=request.sid)
 
 @socketio.on('message')
 def on_message(d):
@@ -336,7 +298,6 @@ def on_message(d):
     GLOBAL_STATE['chat_history'].append(user_msg_obj)
     save_state()
     emit('chat_message', {'text': msg, 'sender': sender, 'image': img_data}, to='lobby')
-    
     socketio.start_background_task(process_socket_ai, sid, msg, img_data)
 
 def process_socket_ai(sid, msg, img_data):
@@ -363,15 +324,13 @@ def process_socket_ai(sid, msg, img_data):
             socketio.emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
             bg_tts(txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], room='lobby')
     except Exception as e:
-        print(f"Socket AI Err: {e}")
-        socketio.emit('system_message', {'text': f'AI 错误: {e}'}, to=sid)
+        print(f"AI Error: {e}")
 
 def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
 
 @socketio.on('get_studio_data')
 def on_get_data():
-    voices = [{"id":"api_miku", "name":"🎵 Miku VITS"}, {"id":"edge_backup", "name":"☁️ Edge 晓晓"}]
-    emit('studio_data', {'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 'voices': voices, 'backgrounds': scan_backgrounds(), 'current_bg': GLOBAL_STATE.get('current_background', '')})
+    emit('studio_data', {'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 'backgrounds': scan_backgrounds(), 'current_bg': GLOBAL_STATE.get('current_background', '')})
 
 @socketio.on('switch_model')
 def on_switch(d):
@@ -381,15 +340,14 @@ def on_switch(d):
 
 @socketio.on('switch_background')
 def on_switch_bg(d):
-    bg_name = d.get('name')
-    GLOBAL_STATE['current_background'] = bg_name
+    GLOBAL_STATE['current_background'] = d.get('name')
     save_state()
-    emit('background_update', {'url': f"/static/backgrounds/{bg_name}" if bg_name else ""}, to='lobby')
+    emit('background_update', {'url': f"/static/backgrounds/{d.get('name')}" if d.get('name') else ""}, to='lobby')
 
 @socketio.on('save_settings')
 def on_save(d):
-    global CURRENT_MODEL
     if not is_admin(request.sid): return
+    global CURRENT_MODEL
     try: d['scale']=float(d['scale']); d['x']=float(d['x']); d['y']=float(d['y'])
     except: pass
     updated = save_model_config(d['id'], d)
@@ -399,12 +357,10 @@ def on_save(d):
 @socketio.on('delete_model')
 def on_del(d):
     if not is_admin(request.sid): return
-    if d['id']==CURRENT_MODEL['id']: return
-    try: 
-        shutil.rmtree(os.path.join(MODELS_DIR, d['id']))
+    if d['id']!=CURRENT_MODEL['id']: 
+        shutil.rmtree(os.path.join(MODELS_DIR, d['id']), ignore_errors=True)
         emit('toast',{'text':'🗑️ 已删除'})
         on_get_data()
-    except: pass
 
 @socketio.on('download_model')
 def on_dl(d):
@@ -412,11 +368,9 @@ def on_dl(d):
     name=d.get('name'); emit('toast',{'text':f'🚀 下载 {name}...','type':'info'}); socketio.start_background_task(bg_dl_task, name)
 
 def bg_dl_task(name):
-    u={"Mao":".../Mao","Natori":".../Natori"}.get(name,"https://github.com/Live2D/CubismWebSamples/trunk/Samples/Resources/"+name)
+    u=f"https://github.com/Live2D/CubismWebSamples/trunk/Samples/Resources/{name}"
     t=os.path.join(MODELS_DIR,name.lower()); shutil.rmtree(t, ignore_errors=True); os.makedirs(t,exist_ok=True)
-    try: 
-        os.system(f"svn export --force -q {u} {t}")
-        socketio.emit('toast',{'text':f'✅ {name} 完成!'},namespace='/')
+    try: os.system(f"svn export --force -q {u} {t}"); socketio.emit('toast',{'text':f'✅ {name} 完成!'},namespace='/')
     except: pass
 
 if __name__ == '__main__':
