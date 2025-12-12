@@ -5,6 +5,6 @@ flask-socketio
 google-genai
 gunicorn
 python-dotenv
-requests
-gtts
+edge-tts
+
 
