@@ -14,7 +14,7 @@
     
     <style>
         /* ==========================================================================
-           1. 全局基础重置 (完整未压缩)
+           1. 全局基础重置
            ========================================================================== */
         * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
         
@@ -41,7 +41,7 @@
         }
 
         /* ==========================================================================
-           2. PC 端布局样式 (完整未压缩)
+           2. PC 端布局样式
            ========================================================================== */
         @media (min-width: 1025px) {
             body { display: flex; flex-direction: row; }
@@ -89,7 +89,7 @@
         }
 
         /* ==========================================================================
-           3. 移动端布局样式 (完整未压缩)
+           3. 移动端布局样式
            ========================================================================== */
         @media (max-width: 1024px) {
             body { display: block; background: #2d3436; }
@@ -142,7 +142,7 @@
         }
 
         /* ==========================================================================
-           4. 组件与工具样式 (完整未压缩)
+           4. 组件与工具样式
            ========================================================================== */
         .message-container { display: flex; margin-bottom: 15px; flex-direction: column; width: 100%; }
         .message-info { font-size: 12px; margin-bottom: 4px; padding: 0 5px; color: #888; }
@@ -436,7 +436,8 @@
             const key = document.getElementById('api-key-input').value.trim(); 
             if(!key.startsWith("AIza")) { showToast("Key 格式错误", "error"); return; } 
             showToast("正在更新 Key..."); 
-            fetch('/update_key', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: key})})
+            // ★★★ 修复点：添加 type: 'gemini' ★★★
+            fetch('/update_key', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: key, type: 'gemini'})})
             .then(r=>r.json()).then(d=>{
                 if(d.success){showToast("✅ Key 已更新并生效！"); document.getElementById('api-key-input').value = "";} 
                 else {showToast("❌ " + d.msg, "error");}
@@ -515,7 +516,7 @@
         socket.on('studio_data',(d)=>{ 
             const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id; 
             
-            // ★★★ 核心修复：优先填充语音列表，不依赖模型 ★★★
+            // 语音列表填充
             const vSelect = document.getElementById('voice-select');
             vSelect.innerHTML = "";
             if(d.voices && d.voices.length > 0) {
@@ -526,10 +527,9 @@
                     vSelect.appendChild(opt);
                 });
             } else {
-                // 保底
                 let opt = document.createElement('option');
-                opt.value = "zh-CN-XiaoxiaoNeural";
-                opt.textContent = "默认 (晓晓)";
+                opt.value = "zh-CN-XiaoyiNeural";
+                opt.textContent = "默认 (晓伊)";
                 vSelect.appendChild(opt);
             }
 
@@ -544,20 +544,13 @@
                     el.onclick=()=>socket.emit('switch_model',{id:m.id});
                     list.appendChild(el); 
                     
-                    // 如果是当前模型，填充设置面板
                     if(m.id===d.current_id){ 
                         document.getElementById('persona-text').value=m.persona||""; 
-                        
-                        // 选中当前语音
                         if(m.voice) vSelect.value = m.voice;
-                        
-                        // 填充音调语速
                         let r = parseInt(m.rate)||0;
                         let p = parseInt(m.pitch)||0;
                         document.getElementById('rate-range').value = r; updateVal('rate', r);
                         document.getElementById('pitch-range').value = p; updateVal('pitch', p);
-                        
-                        // 填充位置缩放
                         let s=m.scale!==undefined?m.scale:0.5, x=m.x!==undefined?m.x:0.5, y=m.y!==undefined?m.y:0.5;
                         if(document.getElementById('model-scale')) {
                             document.getElementById('model-scale').value = s;
@@ -568,7 +561,6 @@
                 }); 
             } 
             
-            // 渲染背景列表
             const bgList = document.getElementById('bg-list'); bgList.innerHTML = ""; 
             if(d.backgrounds) { d.backgrounds.forEach(bg => { let chip = document.createElement('span'); chip.className = `bg-chip ${bg===d.current_bg ? 'active' : ''}`; chip.textContent = bg; chip.onclick = () => changeBackground(bg); bgList.appendChild(chip); }); } 
         });
@@ -615,21 +607,19 @@
         socket.on('system_message',(d)=>{addMsg(d.text,'系统','system');});
         socket.on('response',(d)=>{addMsg(d.text,'Pico','pico',d.emotion);triggerMotion(d.emotion||'NORMAL');});
         
-        // ★★★ 核心修复：彻底禁用浏览器朗读 ★★★
+        // ★★★ 核心修复：移除 speakLocal 调用，彻底静音 ★★★
         socket.on('audio_failed', (d) => {
-            // 只显示错误提示，绝不发声
             if (d.type === 'warning' || d.type === 'info') {
                 showToast("🔊 " + d.msg, "info");
             } else {
                 showToast("⚠️ " + d.msg, "error");
             }
             console.error("Audio Failed:", d.msg);
-            // speakLocal(d.text);  <-- 此行已被移除，永远不会触发机械音
+            // speakLocal(d.text);  <-- 已删除
         });
 
-        // 浏览器本地朗读 + 模拟口型 (虽然保留函数，但不再自动调用)
+        // 浏览器本地朗读 + 模拟口型 (不再自动调用)
         function speakLocal(text) {
-            // 这个函数现在只有在非常明确需要的时候才会被调用（目前代码里没有自动调用它的地方了）
             if (!window.speechSynthesis) return;
             window.speechSynthesis.cancel();
             const utterance = new SpeechSynthesisUtterance(text);
