@@ -1,7 +1,7 @@
 # =======================================================================
-# Pico AI Server - VITS 网络语音增强版
-# 基于您的原始文件修改，保留所有管理/记忆功能。
-# TTS 逻辑：VITS API (二次元) -> gTTS (兜底)
+# Pico AI Server - Edge-TTS 纯净版
+# 移除所有 gTTS/pyttsx3/VITS 代码。
+# 仅使用 Microsoft Edge TTS (免费、稳定、拟人)。
 # =======================================================================
 import os
 import json
@@ -12,12 +12,11 @@ import shutil
 import re
 import zipfile
 import threading
-import requests
 import base64
 import logging
 import sys
-from io import BytesIO
-from gtts import gTTS
+import asyncio
+import edge_tts  # 核心语音库
 
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
@@ -32,7 +31,7 @@ logging.basicConfig(
 )
 
 app = Flask(__name__, static_folder='static')
-app.config['SECRET_KEY'] = 'pico_vits_secret_key'
+app.config['SECRET_KEY'] = 'pico_edge_only_key'
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
 
 # SocketIO 配置
@@ -40,7 +39,7 @@ socketio = SocketIO(app,
     cors_allowed_origins="*", 
     async_mode='threading', 
     ping_timeout=60, 
-    ping_interval=25,
+    ping_interval=25, 
     max_http_buffer_size=100*1024*1024
 )
 
@@ -63,11 +62,9 @@ for d in [AUDIO_DIR, MODELS_DIR, BG_DIR]:
             logging.error(f"创建目录失败 {d}: {e}")
 
 # --- 配置加载 ---
-# 默认 VITS 配置
 CONFIG = {
     "GEMINI_API_KEY": "",
-    "VITS_API_URL": "https://artrajz-vits-simple-api.hf.space/voice/vits?text={text}&id={id}&format=wav&lang=zh",
-    "DEFAULT_VOICE_ID": "165" # 165 是比较通用的少女音
+    "DEFAULT_VOICE": "zh-CN-XiaoyiNeural"  # 默认使用晓伊（二次元感强）
 }
 
 try:
@@ -110,6 +107,7 @@ def load_state():
             with open(STATE_FILE, 'r', encoding='utf-8') as f:
                 saved = json.load(f)
                 if saved: GLOBAL_STATE.update(saved)
+                # 限制历史记录长度
                 if len(GLOBAL_STATE["chat_history"]) > 100:
                     GLOBAL_STATE["chat_history"] = GLOBAL_STATE["chat_history"][-100:]
         except: pass
@@ -118,7 +116,7 @@ load_state()
 
 # 当前模型缓存
 CURRENT_MODEL = {
-    "id": "default", "path": "", "persona": "", "voice": CONFIG["DEFAULT_VOICE_ID"], 
+    "id": "default", "path": "", "persona": "", "voice": "zh-CN-XiaoyiNeural", 
     "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.5, "y": 0.5
 }
 DEFAULT_INSTRUCTION = "\n【指令】回复开头标记心情：[HAPPY], [ANGRY], [SAD], [SHOCK], [NORMAL]。"
@@ -127,7 +125,7 @@ def get_model_config(mid):
     p = os.path.join(MODELS_DIR, mid, "config.json")
     d = {
         "persona": f"你是{mid}。{DEFAULT_INSTRUCTION}", 
-        "voice": CONFIG["DEFAULT_VOICE_ID"], 
+        "voice": "zh-CN-XiaoyiNeural", 
         "rate": "+0%", "pitch": "+0Hz", 
         "scale": 0.5, "x": 0.5, "y": 0.5
     }
@@ -183,7 +181,7 @@ def init_model():
 
 init_model()
 
-# ================= 语音合成核心 (VITS + gTTS) =================
+# ================= 语音合成核心 (Edge-TTS) =================
 
 def cleanup_audio_dir():
     """清理旧音频，防止SD卡爆满"""
@@ -191,73 +189,75 @@ def cleanup_audio_dir():
         now = time.time()
         for f in os.listdir(AUDIO_DIR):
             fp = os.path.join(AUDIO_DIR, f)
-            if os.path.getmtime(fp) < now - 300: # 清理5分钟前的文件
+            # 清理5分钟前的文件
+            if os.path.getmtime(fp) < now - 300: 
                 os.remove(fp)
     except: pass
 
-def generate_vits_audio(text, voice_id):
+# 异步包装器：在 Flask 同步环境中运行异步 Edge-TTS
+async def _run_edge_tts(text, voice, output_file, rate="+0%", pitch="+0Hz"):
+    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+    await communicate.save(output_file)
+
+def generate_edge_audio(text, voice_id, rate="+0%", pitch="+0Hz"):
     """
-    网络 TTS 生成器
-    1. 尝试 VITS API
-    2. 失败则回退 gTTS
+    使用 Microsoft Edge TTS 生成语音 (MP3)
     """
     cleanup_audio_dir()
     clean_text = re.sub(r'\[.*?\]', '', text).strip()
     if not clean_text: return None
 
-    filename = f"tts_{uuid.uuid4().hex}"
+    filename = f"edge_{uuid.uuid4().hex}.mp3"
+    filepath = os.path.join(AUDIO_DIR, filename)
     
-    # 1. 尝试 VITS
-    try:
-        logging.info(f"🎙️ VITS 请求: {clean_text} (ID: {voice_id})")
-        # 构造 URL
-        url = CONFIG["VITS_API_URL"].replace("{text}", requests.utils.quote(clean_text)).replace("{id}", str(voice_id))
-        resp = requests.get(url, timeout=8) # 8秒超时
-        
-        if resp.status_code == 200 and len(resp.content) > 100:
-            out_path = os.path.join(AUDIO_DIR, f"{filename}.wav")
-            with open(out_path, 'wb') as f:
-                f.write(resp.content)
-            logging.info("✅ VITS 生成成功")
-            return f"/static/audio/{filename}.wav"
-        else:
-            logging.warning(f"⚠️ VITS API 异常: {resp.status_code}")
-    except Exception as e:
-        logging.error(f"❌ VITS 请求失败: {e}")
+    # 智能声线映射 (兼容旧配置)
+    voice_map = {
+        "0": "zh-CN-XiaoyiNeural",      # 晓伊 (可爱/二次元)
+        "1": "zh-CN-XiaoxiaoNeural",    # 晓晓 (温柔)
+        "2": "zh-CN-YunxiNeural",       # 云希 (男声)
+        "zh": "zh-CN-XiaoyiNeural",     # 旧配置兼容
+        "native": "zh-CN-XiaoyiNeural"  # 旧配置兼容
+    }
+    
+    # 获取目标声线，如果不在映射表中且包含 Neural 则认为是直接指定的 ID，否则默认晓伊
+    target_voice = voice_map.get(str(voice_id))
+    if not target_voice:
+        target_voice = voice_id if "Neural" in str(voice_id) else "zh-CN-XiaoyiNeural"
 
-    # 2. 回退 gTTS
     try:
-        logging.info("🔄 降级使用 gTTS")
-        tts = gTTS(text=clean_text, lang='zh-cn')
-        out_path = os.path.join(AUDIO_DIR, f"{filename}.mp3")
-        tts.save(out_path)
-        return f"/static/audio/{filename}.mp3"
+        logging.info(f"🎙️ Edge-TTS 请求: {clean_text[:15]}... (Voice: {target_voice})")
+        # 核心调用
+        asyncio.run(_run_edge_tts(clean_text, target_voice, filepath, rate, pitch))
+        
+        if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+            logging.info("✅ Edge-TTS 生成成功")
+            return f"/static/audio/{filename}"
+        else:
+            logging.error("❌ Edge-TTS 文件生成失败 (空文件)")
+            return None
     except Exception as e:
-        logging.error(f"❌ gTTS 失败: {e}")
+        logging.error(f"❌ Edge-TTS 异常: {e}")
         return None
 
 def bg_tts_task(text, voice, rate, pitch, room=None, sid=None):
     """后台任务：生成并推送"""
-    # 这里的 voice 参数如果是 "zh" 这种旧值，就用默认 ID
-    voice_id = voice if voice and voice.isdigit() else CONFIG["DEFAULT_VOICE_ID"]
-    
-    audio_url = generate_vits_audio(text, voice_id)
+    audio_url = generate_edge_audio(text, voice, rate, pitch)
 
     if audio_url:
         payload = {'audio': audio_url} 
         if room: socketio.emit('audio_response', payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_response', payload, to=sid, namespace='/')
     else:
-        # 彻底失败，发给前端让浏览器读
+        # 如果连 Edge 都挂了，真的没办法了，发个警告给前端
         err_payload = {
-            'msg': f'TTS生成失败，切换浏览器语音', 
+            'msg': f'语音生成失败', 
             'text': text,
             'type': 'warning' 
         }
         if room: socketio.emit('audio_failed', err_payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_failed', err_payload, to=sid, namespace='/')
 
-# ================= Flask 路由 (保持不变) =================
+# ================= Flask 路由 =================
 @app.route('/')
 def idx(): return redirect(url_for('pico_v', v=SERVER_VERSION))
 
@@ -326,7 +326,7 @@ def api_danmaku():
     socketio.start_background_task(process_ai_response, user, msg)
     return jsonify({'success': True})
 
-# ================= AI 逻辑 (使用 Gemini 客户端) =================
+# ================= AI 逻辑 =================
 users = {}
 chatroom_chat = None
 
@@ -378,7 +378,7 @@ def process_ai_response(sender, msg, img_data=None, sid=None):
         
         socketio.emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
         
-        # 调用新的 VITS TTS 任务
+        # 调用 Edge-TTS 任务
         bg_tts_task(txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], room='lobby')
         
     except Exception as e:
@@ -386,7 +386,7 @@ def process_ai_response(sender, msg, img_data=None, sid=None):
         err_msg = str(e)
         if sid: socketio.emit('system_message', {'text': f'AI Error: {err_msg[:50]}...'}, to=sid)
 
-# ================= Socket Events (保持不变) =================
+# ================= Socket Events =================
 @socketio.on('connect')
 def on_connect(): emit('server_ready', {'status': 'ok'})
 
@@ -422,12 +422,11 @@ def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
 
 @socketio.on('get_studio_data')
 def on_get_data():
-    # ★★★ 这里更新了 voices 列表，提供二次元选项 ★★★
+    # ★★★ 更新了声线列表，对应后端映射逻辑 ★★★
     voices = [
-        {"id":"165", "name":"🎧 通用少女 (VITS)"},
-        {"id":"0", "name":"🎧 可爱 (VITS)"},
-        {"id":"1", "name":"🎧 成熟 (VITS)"},
-        {"id":"gtts", "name":"🤖 Google 娘 (兜底)"},
+        {"id":"0", "name":"🎧 晓伊 (二次元/可爱)"},
+        {"id":"1", "name":"🎧 晓晓 (温柔/女友)"},
+        {"id":"2", "name":"🎧 云希 (少年音)"},
     ]
     emit('studio_data', {
         'models': scan_models(), 
@@ -497,5 +496,5 @@ def bg_dl_task(name):
     except: pass
 
 if __name__ == '__main__':
-    logging.info("Starting Pico AI Server (VITS Edition)...")
+    logging.info("Starting Pico AI Server (Edge-TTS Only)...")
     socketio.run(app, host='0.0.0.0', port=5000)
