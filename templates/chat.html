@@ -539,7 +539,7 @@
                 d.models.forEach(m=>{ 
                     let el=document.createElement('div');
                     el.className=`model-card ${m.id===d.current_id?'active':''}`; 
-                    let delBtn=iAmAdmin&&m.id!==d.current_id?`<div class=\"btn-del\" onclick=\"delModel('${m.id}',event)\">🗑️</div>`:""; 
+                    let delBtn=iAmAdmin&&m.id!==d.current_id?`<div class="btn-del" onclick="delModel('${m.id}',event)">🗑️</div>`:""; 
                     el.innerHTML=`<div>${m.name}</div>${delBtn}`;
                     el.onclick=()=>socket.emit('switch_model',{id:m.id});
                     list.appendChild(el); 
@@ -674,9 +674,9 @@
         function initAudio(){if(!audioCtx)try{audioCtx=new(window.AudioContext||window.webkitAudioContext)();analyser=audioCtx.createAnalyser();analyser.fftSize=512;dataArray=new Uint8Array(analyser.frequencyBinCount);}catch(e){}}
         function addMsg(t,u,y,e,img){
             let d=document.createElement('div');d.className=`message-container ${y}`;
-            if(y!=='system') d.innerHTML=`<div class=\"message-info\">${u} ${e?`<span class=\"emotion-tag\">${e}</span>`:''}</div>`;
-            let contentHtml = `<div class=\"message-bubble\">`;
-            if(img) contentHtml += `<img src=\"${img}\" class=\"message-img\" onclick=\"window.open(this.src)\">`;
+            if(y!=='system') d.innerHTML=`<div class="message-info">${u} ${e?`<span class="emotion-tag">${e}</span>`:''}</div>`;
+            let contentHtml = `<div class="message-bubble">`;
+            if(img) contentHtml += `<img src="${img}" class="message-img" onclick="window.open(this.src)">`;
             if(t) contentHtml += `<div>${t}</div>`;
             contentHtml += `</div>`;
             d.innerHTML+=contentHtml;
