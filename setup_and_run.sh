@@ -1,14 +1,13 @@
 #!/bin/bash
 # =======================================================================
-# 核心功能启动脚本 (Final Restored Version)
-# 职责：自动修复格式、清理进程、同步代码(可选)、启动服务
+# 核心功能启动脚本 (Git Pull 恢复版)
+# 职责：自动修复格式 -> 停止旧进程 -> 激活环境 -> 拉取代码 -> 启动服务
 # =======================================================================
 
-# --- 0. 格式自愈 (关键修复) ---
-# 自动移除脚本自身和项目文件的 Windows 换行符 (\r)，解决 command not found 报错
+# --- 0. 格式自愈 (防止 Windows \r 报错) ---
 current_file="$0"
 sed -i 's/\r$//' "$current_file" 2>/dev/null
-# 顺手修复一下目录下的其他核心文件
+# 修复核心文件格式
 find . -maxdepth 2 -type f \( -name "*.py" -o -name "*.txt" -o -name "*.html" \) -exec sed -i 's/\r$//' {} +
 
 CDIR="$(cd "$(dirname "$0")" && pwd)"
@@ -23,7 +22,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}🤖 Pico AI (核心启动与同步) 启动中...${NC}"
+echo -e "${GREEN}🤖 Pico AI 启动中...${NC}"
 
 # --- 1. 强制杀死旧进程 ---
 echo -e "${YELLOW}🔄 正在停止旧进程...${NC}"
@@ -34,7 +33,7 @@ echo -e "${GREEN}✅ 旧进程已清理。${NC}"
 
 # --- 2. 虚拟环境激活 ---
 if [ -d "$VENV_DIR" ]; then
-    # 修复 activate 脚本格式（防止玄学报错）
+    # 修复 activate 脚本格式
     sed -i 's/\r$//' "$VENV_DIR/bin/activate"
     source "$VENV_DIR/bin/activate"
     echo -e "${GREEN}✅ 虚拟环境已激活。${NC}"
@@ -43,20 +42,17 @@ else
     exit 1
 fi
 
-# --- 3. 强制代码同步检查 (已还原) ---
-echo -e "${YELLOW}🔄 准备同步代码...${NC}"
+# --- 3. 强制代码同步 (已恢复) ---
+# 既然您在 GitHub 上更新，这里必须执行拉取
+echo -e "${YELLOW}⬇️ 正在从 GitHub 拉取最新代码...${NC}"
+git pull
+if [ $? -eq 0 ]; then
+    echo -e "${GREEN}✅ 代码同步完成。${NC}"
+else
+    echo -e "${RED}⚠️ 代码拉取遇到问题 (可能是本地有冲突)，尝试继续启动...${NC}"
+fi
 
-# [警告]：如果您开启了下面的 git 命令，它会从远程仓库拉取代码。
-# 这可能会覆盖掉我们刚才手动修改的 Edge-TTS 版 app.py！
-# 建议先把现在的稳定版推送到远程，或者保持注释状态。
-
-# git fetch --all
-# git reset --hard origin/main  <-- 这就是您刚才想敲的重置命令
-# git pull
-
-echo -e "${GREEN}✅ 代码同步检查跳过 (防止覆盖本地 Edge-TTS 修复)。${NC}"
-
-# --- 4. Cloudflare 隧道配置检查 ---
+# --- 4. Cloudflare 隧道配置 ---
 TUNNEL_CRED=$(find ~/.cloudflared -name "*.json" | head -n 1)
 if [ -n "$TUNNEL_CRED" ]; then
     TUNNEL_ID=$(basename "$TUNNEL_CRED" .json)
@@ -70,7 +66,7 @@ ingress:
   - service: http_status:404
 YAML
 else
-    echo -e "${RED}❌ Cloudflare 凭证未找到。无法启动隧道。${NC}"
+    echo -e "${RED}❌ Cloudflare 凭证未找到。${NC}"
 fi
 
 # --- 5. 启动服务 ---
@@ -78,6 +74,7 @@ echo "--- Session $(date) ---" >> "$LOG_FILE"
 
 echo -e "🚀 启动后端 Gunicorn..."
 chmod +x "$VENV_DIR/bin/gunicorn"
+# 使用 gthread 模式以支持 Edge-TTS 的异步操作
 nohup "$VENV_DIR/bin/gunicorn" --worker-class gthread --threads 4 -w 1 --bind 0.0.0.0:5000 app:app >> "$LOG_FILE" 2>&1 &
 echo -e "${GREEN}✅ 后端已启动 (Port 5000)${NC}"
 
@@ -86,8 +83,8 @@ if [ -f "$CDIR/cloudflared" ] && [ -n "$TUNNEL_CRED" ]; then
     nohup "$CDIR/cloudflared" tunnel --config "$CDIR/tunnel_config.yml" run >> "$LOG_FILE" 2>&1 &
     echo -e "${GREEN}✅ 隧道已启动！访问: https://${MY_DOMAIN}/pico${NC}"
 else
-    echo -e "${RED}⚠️ Cloudflare 启动失败，请检查配置。${NC}"
+    echo -e "${RED}⚠️ Cloudflare 启动失败。${NC}"
 fi
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${YELLOW}请检查 ${LOG_FILE} 获取详细日志。${NC}"
+echo -e "${YELLOW}日志文件: ${LOG_FILE}${NC}"
