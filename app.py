@@ -1,7 +1,8 @@
 # =======================================================================
-# Pico AI Server - 稳定修复版
-# 1. 修复 API Key 更新后 "client closed" 导致的死机问题
-# 2. TTS 失败静默处理：生成失败时不报错、不弹窗、不打扰
+# Pico AI Server - Final Fix
+# 1. AI 模型回退至 gemini-2.5-flash (稳定版)
+# 2. 保留 Edge-TTS 异步修复和静默处理
+# 3. 保留 API Key 更新后的会话重置逻辑
 # =======================================================================
 import os
 import json
@@ -31,7 +32,7 @@ logging.basicConfig(
 )
 
 app = Flask(__name__, static_folder='static')
-app.config['SECRET_KEY'] = 'pico_final_stable_key'
+app.config['SECRET_KEY'] = 'pico_final_v2_key'
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
 
 # SocketIO 配置
@@ -250,8 +251,7 @@ def bg_tts_task(text, voice, rate, pitch, room=None, sid=None):
         if room: socketio.emit('audio_response', payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_response', payload, to=sid, namespace='/')
     else:
-        # ★★★ 关键修改：TTS失败不发送任何消息给前端，完全静默 ★★★
-        # 这样前端既不会弹窗报错，也不会触发任何兜底声音
+        # TTS失败静默处理，不发送报错
         logging.warning(f"⚠️ TTS 生成失败，已静默处理。文本: {text[:10]}...")
         pass 
 
@@ -274,12 +274,11 @@ def update_key():
     if key_type == 'gemini':
         if not new_key.startswith("AIza"): return jsonify({'success': False, 'msg': 'Gemini Key 格式错误'})
         
-        # ★★★ 关键修复：重置 Gemini 客户端和聊天会话 ★★★
         global gemini_client, CONFIG, chatroom_chat
         CONFIG['GEMINI_API_KEY'] = new_key
         try: 
             gemini_client = genai.Client(api_key=new_key)
-            chatroom_chat = None # 强制重置会话，解决 "client has been closed"
+            chatroom_chat = None # 强制重置会话
             
             with open(CONFIG_FILE, "w", encoding='utf-8') as f: json.dump(CONFIG, f, indent=2)
             logging.info("✅ Gemini Key 已更新，会话已重置")
@@ -339,7 +338,9 @@ def init_chatroom():
     if not gemini_client: return
     sys_prompt = CURRENT_MODEL.get('persona', "")
     if not sys_prompt: sys_prompt = DEFAULT_INSTRUCTION
-    try: chatroom_chat = gemini_client.chats.create(model="gemini-2.0-flash-exp", config={"system_instruction": sys_prompt})
+    
+    # ★★★ 核心修改：改回 gemini-2.5-flash ★★★
+    try: chatroom_chat = gemini_client.chats.create(model="gemini-2.5-flash", config={"system_instruction": sys_prompt})
     except: pass
 
 def process_ai_response(sender, msg, img_data=None, sid=None):
@@ -366,13 +367,12 @@ def process_ai_response(sender, msg, img_data=None, sid=None):
         except Exception as e:
             err_str = str(e)
             
-            # ★★★ 关键修复：自动捕获 "client closed" 并重试 ★★★
             if "client has been closed" in err_str or "closed" in err_str.lower():
                 logging.warning("⚠️ 检测到客户端已关闭，正在尝试自动重连...")
-                init_chatroom() # 重新初始化
+                init_chatroom() 
                 if chatroom_chat:
                     try:
-                        resp = chatroom_chat.send_message(content) # 重试发送
+                        resp = chatroom_chat.send_message(content) 
                         txt = resp.text
                     except Exception as retry_e:
                         logging.error(f"❌ 重试失败: {retry_e}")
@@ -397,7 +397,6 @@ def process_ai_response(sender, msg, img_data=None, sid=None):
         
         socketio.emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
         
-        # 异步调用 Edge-TTS
         socketio.start_background_task(bg_tts_task, txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], room='lobby')
         
     except Exception as e:
@@ -419,7 +418,6 @@ def on_login(d):
     emit('login_success', {'username': u, 'current_model': CURRENT_MODEL, 'current_background': GLOBAL_STATE.get('current_background', '')})
     emit('history_sync', {'history': GLOBAL_STATE['chat_history']})
     
-    # 欢迎语音 (后台任务)
     socketio.start_background_task(bg_tts_task, f"欢迎 {u}", CURRENT_MODEL['voice'], "+0%", "+0%", sid=request.sid)
 
 @socketio.on('message')
@@ -517,5 +515,5 @@ def bg_dl_task(name):
     except: pass
 
 if __name__ == '__main__':
-    logging.info("Starting Pico AI Server (Async Edge-TTS Fix)...")
+    logging.info("Starting Pico AI Server (Gemini 2.5 Flash)...")
     socketio.run(app, host='0.0.0.0', port=5000)
