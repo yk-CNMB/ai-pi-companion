@@ -183,6 +183,14 @@
         .bg-chip.active { background: #d1ecf1; border-color: #17a2b8; font-weight: bold; }
         .btn-del { color: red; font-size: 12px; display: block; margin-top: 5px; }
         
+        /* 鼠标跟随开关样式 */
+        .toggle-btn {
+            background-color: #f1f2f6; color: #333; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-weight: bold; border: 2px solid #ddd; display: block; width: 100%; margin-bottom: 15px; transition: all 0.3s;
+        }
+        .toggle-btn.active {
+            background-color: #6c5ce7; color: white; border-color: #6c5ce7;
+        }
+
         #preview-area { position: absolute; bottom: 90px; left: 20px; right: 20px; background: rgba(255, 255, 255, 0.95); border-radius: 12px; padding: 10px; display: none; box-shadow: 0 -5px 20px rgba(0, 0, 0, 0.15); z-index: 100; pointer-events: auto; text-align: center; }
         #preview-img { max-height: 120px; max-width: 100%; border-radius: 8px; }
         #close-preview { position: absolute; top: -10px; right: -10px; width: 24px; height: 24px; background: white; border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,0.2); cursor: pointer; font-weight: bold; line-height: 24px; }
@@ -220,6 +228,9 @@
                 <div onclick="document.getElementById('studio-overlay').style.display='none'" style="font-size:24px;padding:0 10px;cursor:pointer">×</div>
             </div>
             
+            <!-- ★★★ 新增：鼠标跟随开关 (所有人可见) ★★★ -->
+            <button id="follow-toggle" class="toggle-btn active" onclick="toggleMouseFollow()">👀 眼神跟随: ON</button>
+
             <h4>🎭 模型选择</h4>
             <div id="model-list" class="model-list">加载中...</div>
             <hr>
@@ -314,7 +325,30 @@
         const socket = io({reconnection:true});
         let app_pixi, model, myUser="", currentModelId="", currentCfg={scale:0.5,x:0.5,y:0.5}, audioCtx, analyser, dataArray, isTalking=false;
         let isDragging=false, dragData, initialScale, initialDist, iAmAdmin=false;
-        window.model = null; let currentImgBase64 = null; 
+        window.model = null; let currentImgBase64 = null;
+        
+        // ★★★ 新增：鼠标跟随状态变量 ★★★
+        let isMouseFollow = true;
+
+        // ★★★ 新增：切换鼠标跟随逻辑 ★★★
+        function toggleMouseFollow() {
+            isMouseFollow = !isMouseFollow;
+            const btn = document.getElementById('follow-toggle');
+            if (isMouseFollow) {
+                btn.textContent = "👀 眼神跟随: ON";
+                btn.classList.add('active');
+                showToast("✅ 已开启眼神跟随");
+            } else {
+                btn.textContent = "👀 眼神跟随: OFF";
+                btn.classList.remove('active');
+                showToast("🚫 已关闭眼神跟随");
+                // 立即让模型回正
+                if (model) {
+                    // 设置焦点到屏幕中心 (x=0, y=0 是相对 focus 的中心点)
+                    model.focus(0, 0); 
+                }
+            }
+        }
 
         // 辅助函数
         function updateVal(type, val) { document.getElementById(`${type}-val`).textContent = (val > 0 ? '+' : '') + val + (type==='rate'?'%':'Hz'); }
@@ -436,7 +470,7 @@
             const key = document.getElementById('api-key-input').value.trim(); 
             if(!key.startsWith("AIza")) { showToast("Key 格式错误", "error"); return; } 
             showToast("正在更新 Key..."); 
-            // ★★★ 修复点：添加 type: 'gemini' ★★★
+            // type: 'gemini' 确保后端能识别
             fetch('/update_key', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: key, type: 'gemini'})})
             .then(r=>r.json()).then(d=>{
                 if(d.success){showToast("✅ Key 已更新并生效！"); document.getElementById('api-key-input').value = "";} 
@@ -477,9 +511,25 @@
         function initInteraction() { 
             const s=document.getElementById('stage-container');
             app_pixi.stage.interactive=true;
+            
+            // ★★★ 核心修改：PointerMove 处理 ★★★
+            app_pixi.stage.on('pointermove', (e) => {
+                if (model) {
+                    if (isDragging) {
+                        // 1. 拖拽模式
+                        const p = dragData.getLocalPosition(model.parent);
+                        model.x = p.x - model.width/2;
+                        model.y = p.y - model.height/2;
+                    } else if (isMouseFollow) {
+                        // 2. 眼神跟随模式
+                        model.focus(e.data.global.x, e.data.global.y);
+                    }
+                }
+            });
+
             app_pixi.stage.on('pointerdown',(e)=>{if(model&&(!e.data.originalEvent.touches||e.data.originalEvent.touches.length===1)){isDragging=true;dragData=e.data;model.alpha=0.8;}});
             app_pixi.stage.on('pointerup',()=>{isDragging=false;if(model)model.alpha=1;}).on('pointerupoutside',()=>{isDragging=false;if(model)model.alpha=1;});
-            app_pixi.stage.on('pointermove',()=>{if(isDragging&&model){const p=dragData.getLocalPosition(model.parent);model.x=p.x-model.width/2;model.y=p.y-model.height/2;}});
+            
             s.addEventListener('wheel',(e)=>{e.preventDefault();if(model){model.scale.x*=(e.deltaY<0?1.1:0.9);model.scale.y=model.scale.x;}},{passive:false});
             s.addEventListener('touchstart',(e)=>{if(e.touches.length===2&&model){isDragging=false;initialDist=Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY);initialScale=model.scale.x;}});
             s.addEventListener('touchmove',(e)=>{if(e.touches.length===2&&model&&initialDist){e.preventDefault();model.scale.set(initialScale*(Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY)/initialDist));}}); 
@@ -607,7 +657,7 @@
         socket.on('system_message',(d)=>{addMsg(d.text,'系统','system');});
         socket.on('response',(d)=>{addMsg(d.text,'Pico','pico',d.emotion);triggerMotion(d.emotion||'NORMAL');});
         
-        // ★★★ 核心修复：移除 speakLocal 调用，彻底静音 ★★★
+        // TTS 失败静默提示
         socket.on('audio_failed', (d) => {
             if (d.type === 'warning' || d.type === 'info') {
                 showToast("🔊 " + d.msg, "info");
@@ -615,7 +665,6 @@
                 showToast("⚠️ " + d.msg, "error");
             }
             console.error("Audio Failed:", d.msg);
-            // speakLocal(d.text);  <-- 已删除
         });
 
         // 浏览器本地朗读 + 模拟口型 (不再自动调用)
