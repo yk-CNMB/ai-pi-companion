@@ -1,16 +1,15 @@
 #!/bin/bash
 # =======================================================================
-# 核心功能启动脚本 (加强版)
-# 职责：自动修复文件格式、清理旧进程、启动服务
+# 核心功能启动脚本 (Final Restored Version)
+# 职责：自动修复格式、清理进程、同步代码(可选)、启动服务
 # =======================================================================
 
-# --- 0. 格式自愈 (关键修改) ---
-# 自动移除所有项目文件的 Windows 换行符 (\r)，防止报错
-# $0 代表脚本自己，所以它甚至会尝试修复自己
+# --- 0. 格式自愈 (关键修复) ---
+# 自动移除脚本自身和项目文件的 Windows 换行符 (\r)，解决 command not found 报错
 current_file="$0"
 sed -i 's/\r$//' "$current_file" 2>/dev/null
-# 修复核心代码文件
-find . -type f \( -name "*.py" -o -name "*.txt" -o -name "*.html" -o -name "*.json" \) -exec sed -i 's/\r$//' {} +
+# 顺手修复一下目录下的其他核心文件
+find . -maxdepth 2 -type f \( -name "*.py" -o -name "*.txt" -o -name "*.html" \) -exec sed -i 's/\r$//' {} +
 
 CDIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$CDIR/.venv"
@@ -35,16 +34,29 @@ echo -e "${GREEN}✅ 旧进程已清理。${NC}"
 
 # --- 2. 虚拟环境激活 ---
 if [ -d "$VENV_DIR" ]; then
-    # 临时修复 activate 脚本可能的格式问题
+    # 修复 activate 脚本格式（防止玄学报错）
     sed -i 's/\r$//' "$VENV_DIR/bin/activate"
     source "$VENV_DIR/bin/activate"
     echo -e "${GREEN}✅ 虚拟环境已激活。${NC}"
 else
-    echo -e "${RED}❌ 未找到虚拟环境，请检查安装。${NC}"
+    echo -e "${RED}❌ 错误：未找到虚拟环境 ${VENV_DIR}。${NC}"
     exit 1
 fi
 
-# --- 3. 隧道配置 ---
+# --- 3. 强制代码同步检查 (已还原) ---
+echo -e "${YELLOW}🔄 准备同步代码...${NC}"
+
+# [警告]：如果您开启了下面的 git 命令，它会从远程仓库拉取代码。
+# 这可能会覆盖掉我们刚才手动修改的 Edge-TTS 版 app.py！
+# 建议先把现在的稳定版推送到远程，或者保持注释状态。
+
+# git fetch --all
+# git reset --hard origin/main  <-- 这就是您刚才想敲的重置命令
+# git pull
+
+echo -e "${GREEN}✅ 代码同步检查跳过 (防止覆盖本地 Edge-TTS 修复)。${NC}"
+
+# --- 4. Cloudflare 隧道配置检查 ---
 TUNNEL_CRED=$(find ~/.cloudflared -name "*.json" | head -n 1)
 if [ -n "$TUNNEL_CRED" ]; then
     TUNNEL_ID=$(basename "$TUNNEL_CRED" .json)
@@ -58,26 +70,24 @@ ingress:
   - service: http_status:404
 YAML
 else
-    echo -e "${RED}❌ 未找到 Cloudflare 凭证，隧道将无法启动。${NC}"
+    echo -e "${RED}❌ Cloudflare 凭证未找到。无法启动隧道。${NC}"
 fi
 
-# --- 4. 启动服务 ---
+# --- 5. 启动服务 ---
 echo "--- Session $(date) ---" >> "$LOG_FILE"
-echo -e "🚀 启动后端..."
 
-# 确保 gunicorn 也是可执行的
+echo -e "🚀 启动后端 Gunicorn..."
 chmod +x "$VENV_DIR/bin/gunicorn"
-
 nohup "$VENV_DIR/bin/gunicorn" --worker-class gthread --threads 4 -w 1 --bind 0.0.0.0:5000 app:app >> "$LOG_FILE" 2>&1 &
 echo -e "${GREEN}✅ 后端已启动 (Port 5000)${NC}"
 
 if [ -f "$CDIR/cloudflared" ] && [ -n "$TUNNEL_CRED" ]; then
-    echo -e "🚇 启动隧道..."
+    echo -e "🚇 启动 Cloudflare 隧道..."
     nohup "$CDIR/cloudflared" tunnel --config "$CDIR/tunnel_config.yml" run >> "$LOG_FILE" 2>&1 &
-    echo -e "${GREEN}✅ 隧道已建立: https://${MY_DOMAIN}/pico${NC}"
+    echo -e "${GREEN}✅ 隧道已启动！访问: https://${MY_DOMAIN}/pico${NC}"
 else
-    echo -e "${RED}⚠️ 隧道未启动 (缺少 cloudflared 文件或凭证)${NC}"
+    echo -e "${RED}⚠️ Cloudflare 启动失败，请检查配置。${NC}"
 fi
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${YELLOW}日志文件: ${LOG_FILE}${NC}"
+echo -e "${YELLOW}请检查 ${LOG_FILE} 获取详细日志。${NC}"
