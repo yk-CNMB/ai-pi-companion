@@ -1,7 +1,6 @@
 # =======================================================================
-# Pico AI Server - Edge-TTS 纯净版
-# 移除所有 gTTS/pyttsx3/VITS 代码。
-# 仅使用 Microsoft Edge TTS (免费、稳定、拟人)。
+# Pico AI Server - Edge-TTS 异步优化版
+# 修复：登录时欢迎语阻塞导致生成失败的问题
 # =======================================================================
 import os
 import json
@@ -16,7 +15,7 @@ import base64
 import logging
 import sys
 import asyncio
-import edge_tts  # 核心语音库
+import edge_tts
 
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
@@ -31,7 +30,7 @@ logging.basicConfig(
 )
 
 app = Flask(__name__, static_folder='static')
-app.config['SECRET_KEY'] = 'pico_edge_only_key'
+app.config['SECRET_KEY'] = 'pico_final_fix_key'
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
 
 # SocketIO 配置
@@ -64,7 +63,7 @@ for d in [AUDIO_DIR, MODELS_DIR, BG_DIR]:
 # --- 配置加载 ---
 CONFIG = {
     "GEMINI_API_KEY": "",
-    "DEFAULT_VOICE": "zh-CN-XiaoyiNeural"  # 默认使用晓伊（二次元感强）
+    "DEFAULT_VOICE": "zh-CN-XiaoyiNeural"
 }
 
 try:
@@ -107,7 +106,6 @@ def load_state():
             with open(STATE_FILE, 'r', encoding='utf-8') as f:
                 saved = json.load(f)
                 if saved: GLOBAL_STATE.update(saved)
-                # 限制历史记录长度
                 if len(GLOBAL_STATE["chat_history"]) > 100:
                     GLOBAL_STATE["chat_history"] = GLOBAL_STATE["chat_history"][-100:]
         except: pass
@@ -184,25 +182,31 @@ init_model()
 # ================= 语音合成核心 (Edge-TTS) =================
 
 def cleanup_audio_dir():
-    """清理旧音频，防止SD卡爆满"""
     try:
         now = time.time()
         for f in os.listdir(AUDIO_DIR):
             fp = os.path.join(AUDIO_DIR, f)
-            # 清理5分钟前的文件
             if os.path.getmtime(fp) < now - 300: 
                 os.remove(fp)
     except: pass
 
-# 异步包装器：在 Flask 同步环境中运行异步 Edge-TTS
-async def _run_edge_tts(text, voice, output_file, rate="+0%", pitch="+0Hz"):
-    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
-    await communicate.save(output_file)
+def run_edge_tts_sync(text, voice, output_file, rate="+0%", pitch="+0Hz"):
+    """在同步线程中安全运行异步 Edge-TTS"""
+    async def _amain():
+        communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+        await communicate.save(output_file)
+
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(_amain())
+        loop.close()
+        return True
+    except Exception as e:
+        logging.error(f"Edge-TTS Loop Error: {e}")
+        return False
 
 def generate_edge_audio(text, voice_id, rate="+0%", pitch="+0Hz"):
-    """
-    使用 Microsoft Edge TTS 生成语音 (MP3)
-    """
     cleanup_audio_dir()
     clean_text = re.sub(r'\[.*?\]', '', text).strip()
     if not clean_text: return None
@@ -210,30 +214,27 @@ def generate_edge_audio(text, voice_id, rate="+0%", pitch="+0Hz"):
     filename = f"edge_{uuid.uuid4().hex}.mp3"
     filepath = os.path.join(AUDIO_DIR, filename)
     
-    # 智能声线映射 (兼容旧配置)
     voice_map = {
-        "0": "zh-CN-XiaoyiNeural",      # 晓伊 (可爱/二次元)
-        "1": "zh-CN-XiaoxiaoNeural",    # 晓晓 (温柔)
-        "2": "zh-CN-YunxiNeural",       # 云希 (男声)
-        "zh": "zh-CN-XiaoyiNeural",     # 旧配置兼容
-        "native": "zh-CN-XiaoyiNeural"  # 旧配置兼容
+        "0": "zh-CN-XiaoyiNeural",
+        "1": "zh-CN-XiaoxiaoNeural",
+        "2": "zh-CN-YunxiNeural",
+        "zh": "zh-CN-XiaoyiNeural",
+        "native": "zh-CN-XiaoyiNeural"
     }
     
-    # 获取目标声线，如果不在映射表中且包含 Neural 则认为是直接指定的 ID，否则默认晓伊
     target_voice = voice_map.get(str(voice_id))
     if not target_voice:
         target_voice = voice_id if "Neural" in str(voice_id) else "zh-CN-XiaoyiNeural"
 
     try:
         logging.info(f"🎙️ Edge-TTS 请求: {clean_text[:15]}... (Voice: {target_voice})")
-        # 核心调用
-        asyncio.run(_run_edge_tts(clean_text, target_voice, filepath, rate, pitch))
+        success = run_edge_tts_sync(clean_text, target_voice, filepath, rate, pitch)
         
-        if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+        if success and os.path.exists(filepath) and os.path.getsize(filepath) > 0:
             logging.info("✅ Edge-TTS 生成成功")
             return f"/static/audio/{filename}"
         else:
-            logging.error("❌ Edge-TTS 文件生成失败 (空文件)")
+            logging.error("❌ Edge-TTS 文件生成失败")
             return None
     except Exception as e:
         logging.error(f"❌ Edge-TTS 异常: {e}")
@@ -248,12 +249,7 @@ def bg_tts_task(text, voice, rate, pitch, room=None, sid=None):
         if room: socketio.emit('audio_response', payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_response', payload, to=sid, namespace='/')
     else:
-        # 如果连 Edge 都挂了，真的没办法了，发个警告给前端
-        err_payload = {
-            'msg': f'语音生成失败', 
-            'text': text,
-            'type': 'warning' 
-        }
+        err_payload = {'msg': '语音生成失败', 'text': text, 'type': 'warning'}
         if room: socketio.emit('audio_failed', err_payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_failed', err_payload, to=sid, namespace='/')
 
@@ -378,8 +374,8 @@ def process_ai_response(sender, msg, img_data=None, sid=None):
         
         socketio.emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
         
-        # 调用 Edge-TTS 任务
-        bg_tts_task(txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], room='lobby')
+        # 异步调用 Edge-TTS
+        socketio.start_background_task(bg_tts_task, txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], room='lobby')
         
     except Exception as e:
         logging.error(f"AI Error: {e}")
@@ -396,9 +392,12 @@ def on_login(d):
     users[request.sid] = {"username": u, "is_admin": False}
     join_room('lobby')
     if not chatroom_chat: init_chatroom()
+    
     emit('login_success', {'username': u, 'current_model': CURRENT_MODEL, 'current_background': GLOBAL_STATE.get('current_background', '')})
     emit('history_sync', {'history': GLOBAL_STATE['chat_history']})
-    bg_tts_task(f"欢迎 {u}", CURRENT_MODEL['voice'], "+0%", "+0%", sid=request.sid)
+    
+    # ★★★ 关键修改：欢迎语音放入后台异步任务，绝不阻塞登录 ★★★
+    socketio.start_background_task(bg_tts_task, f"欢迎 {u}", CURRENT_MODEL['voice'], "+0%", "+0%", sid=request.sid)
 
 @socketio.on('message')
 def on_msg(d):
@@ -422,7 +421,6 @@ def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
 
 @socketio.on('get_studio_data')
 def on_get_data():
-    # ★★★ 更新了声线列表，对应后端映射逻辑 ★★★
     voices = [
         {"id":"0", "name":"🎧 晓伊 (二次元/可爱)"},
         {"id":"1", "name":"🎧 晓晓 (温柔/女友)"},
@@ -496,5 +494,5 @@ def bg_dl_task(name):
     except: pass
 
 if __name__ == '__main__':
-    logging.info("Starting Pico AI Server (Edge-TTS Only)...")
+    logging.info("Starting Pico AI Server (Async Edge-TTS Fix)...")
     socketio.run(app, host='0.0.0.0', port=5000)
