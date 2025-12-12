@@ -539,7 +539,7 @@
                 d.models.forEach(m=>{ 
                     let el=document.createElement('div');
                     el.className=`model-card ${m.id===d.current_id?'active':''}`; 
-                    let delBtn=iAmAdmin&&m.id!==d.current_id?`<div class="btn-del" onclick="delModel('${m.id}',event)">🗑️</div>`:""; 
+                    let delBtn=iAmAdmin&&m.id!==d.current_id?`<div class=\"btn-del\" onclick=\"delModel('${m.id}',event)\">🗑️</div>`:""; 
                     el.innerHTML=`<div>${m.name}</div>${delBtn}`;
                     el.onclick=()=>socket.emit('switch_model',{id:m.id});
                     list.appendChild(el); 
@@ -615,35 +615,28 @@
         socket.on('system_message',(d)=>{addMsg(d.text,'系统','system');});
         socket.on('response',(d)=>{addMsg(d.text,'Pico','pico',d.emotion);triggerMotion(d.emotion||'NORMAL');});
         
-        // ★★★ 核心修复：音频失败反馈 + 自动调用本地 ★★★
+        // ★★★ 核心修复：彻底禁用浏览器朗读 ★★★
         socket.on('audio_failed', (d) => {
-            // 根据后端传递的 type 来决定是 error 还是 warning (info)
+            // 只显示错误提示，绝不发声
             if (d.type === 'warning' || d.type === 'info') {
                 showToast("🔊 " + d.msg, "info");
             } else {
                 showToast("⚠️ " + d.msg, "error");
             }
             console.error("Audio Failed:", d.msg);
-            
-            // 自动降级到本地浏览器 TTS
-            if (d.text) {
-                console.log("Fallback to local TTS for:", d.text);
-                speakLocal(d.text);
-            }
+            // speakLocal(d.text);  <-- 此行已被移除，永远不会触发机械音
         });
 
-        // 浏览器本地朗读 + 模拟口型
+        // 浏览器本地朗读 + 模拟口型 (虽然保留函数，但不再自动调用)
         function speakLocal(text) {
+            // 这个函数现在只有在非常明确需要的时候才会被调用（目前代码里没有自动调用它的地方了）
             if (!window.speechSynthesis) return;
             window.speechSynthesis.cancel();
-            
             const utterance = new SpeechSynthesisUtterance(text);
             utterance.lang = 'zh-CN'; 
             utterance.rate = 1.0;
-
             utterance.onstart = () => { isTalking = true; simulateMouth(true); };
             utterance.onend = () => { isTalking = false; simulateMouth(false); if(model?.internalModel?.coreModel) model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY', 0); };
-            
             window.speechSynthesis.speak(utterance);
         }
 
@@ -674,9 +667,9 @@
         function initAudio(){if(!audioCtx)try{audioCtx=new(window.AudioContext||window.webkitAudioContext)();analyser=audioCtx.createAnalyser();analyser.fftSize=512;dataArray=new Uint8Array(analyser.frequencyBinCount);}catch(e){}}
         function addMsg(t,u,y,e,img){
             let d=document.createElement('div');d.className=`message-container ${y}`;
-            if(y!=='system') d.innerHTML=`<div class="message-info">${u} ${e?`<span class="emotion-tag">${e}</span>`:''}</div>`;
-            let contentHtml = `<div class="message-bubble">`;
-            if(img) contentHtml += `<img src="${img}" class="message-img" onclick="window.open(this.src)">`;
+            if(y!=='system') d.innerHTML=`<div class=\"message-info\">${u} ${e?`<span class=\"emotion-tag\">${e}</span>`:''}</div>`;
+            let contentHtml = `<div class=\"message-bubble\">`;
+            if(img) contentHtml += `<img src=\"${img}\" class=\"message-img\" onclick=\"window.open(this.src)\">`;
             if(t) contentHtml += `<div>${t}</div>`;
             contentHtml += `</div>`;
             d.innerHTML+=contentHtml;
