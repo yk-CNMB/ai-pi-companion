@@ -1,54 +1,64 @@
 #!/bin/bash
 # =======================================================================
-# Pico AI 自动化启动脚本
-# 流程：强制同步 -> 自动清洗格式 -> 启动服务
+# Pico AI 启动脚本 (自动清洗版)
+# 核心逻辑：拉取代码 -> 暴力清洗所有文件格式 -> 启动
 # =======================================================================
+
+# --- 0. 启动时尝试自愈 ---
+# 尽最大努力修复自己，防止运行中途报错
+sed -i 's/\r$//' "$0" 2>/dev/null
 
 CDIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$CDIR/.venv"
 LOG_FILE="$CDIR/server.log"
 MY_DOMAIN="yk-pico-project.site"
 
-# 颜色
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 RED='\033[0;31m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo -e "${GREEN}🤖 Pico AI 正在启动...${NC}"
+echo -e "${GREEN}🤖 Pico AI 启动程序...${NC}"
 
-# --- 1. 停止旧进程 ---
+# --- 1. 清理旧进程 ---
 echo -e "${YELLOW}🔄 清理旧进程...${NC}"
 pkill -f "gunicorn"
 pkill -f "cloudflared"
 sleep 1
 
-# --- 2. 强制同步 GitHub 代码 (解决冲突) ---
-echo -e "${YELLOW}⬇️ 正在从 GitHub 强制拉取最新代码...${NC}"
+# --- 2. 强制同步 GitHub ---
+echo -e "${YELLOW}⬇️ 正在拉取 GitHub 最新代码...${NC}"
 git fetch --all
-# 强制重置本地代码，丢弃本地修改，以远程为准
 git reset --hard origin/main
 git pull
 
-# --- 3. [核心] 自动格式清洗 (这就是您要的自动写) ---
-# 拉取完代码后，立刻把所有文件的 Windows 换行符干掉
-echo -e "${YELLOW}🧹 正在自动清洗文件格式...${NC}"
-find . -type f \( -name "*.py" -o -name "*.txt" -o -name "*.html" -o -name "*.sh" -o -name "*.json" \) -exec sed -i 's/\r$//' {} +
-chmod +x setup_and_run.sh # 确保自己下次还能跑
+# --- 3. [关键] 暴力清洗格式 (自动 Sed) ---
+# 拉取完后，不管文件是不是坏的，全部强制转为 Linux 格式
+# 排除 .git 和 .venv 目录，只处理代码文件
+echo -e "${YELLOW}🧹 正在自动清洗所有文件的换行符...${NC}"
+find . -path ./.git -prune -o -path ./.venv -prune -o -type f \( -name "*.py" -o -name "*.sh" -o -name "*.html" -o -name "*.txt" -o -name "*.json" \) -exec sed -i 's/\r$//' {} +
+echo -e "${GREEN}✅ 格式清洗完成。${NC}"
 
-# --- 4. 激活环境与依赖 ---
+# 再次确保脚本本身可执行
+chmod +x "$0"
+
+# --- 4. 激活环境 ---
 if [ -d "$VENV_DIR" ]; then
-    sed -i 's/\r$//' "$VENV_DIR/bin/activate" # 顺手修一下 activate
     source "$VENV_DIR/bin/activate"
 else
     echo -e "${RED}❌ 虚拟环境未找到！${NC}"
     exit 1
 fi
 
-echo -e "${YELLOW}📦 检查依赖更新...${NC}"
+# --- 5. 依赖更新 ---
+echo -e "${YELLOW}📦 检查依赖...${NC}"
 pip install -r requirements.txt --quiet
 
-# --- 5. 启动 Cloudflare ---
+# --- 6. 启动服务 ---
+echo "--- Session $(date) ---" >> "$LOG_FILE"
+
+# Cloudflare
 TUNNEL_CRED=$(find ~/.cloudflared -name "*.json" | head -n 1)
 if [ -n "$TUNNEL_CRED" ]; then
     TUNNEL_ID=$(basename "$TUNNEL_CRED" .json)
@@ -63,13 +73,12 @@ ingress:
 YAML
     echo -e "🚇 启动隧道..."
     nohup "$CDIR/cloudflared" tunnel --config "$CDIR/tunnel_config.yml" run >> "$LOG_FILE" 2>&1 &
-else
-    echo -e "${RED}⚠️ 无法启动隧道 (缺凭证)${NC}"
 fi
 
-# --- 6. 启动后端 ---
+# 后端
 echo -e "🚀 启动 Gunicorn..."
 chmod +x "$VENV_DIR/bin/gunicorn"
 nohup "$VENV_DIR/bin/gunicorn" --worker-class gthread --threads 4 -w 1 --bind 0.0.0.0:5000 app:app >> "$LOG_FILE" 2>&1 &
 
-echo -e "${GREEN}✅ 服务已启动！请访问: https://${MY_DOMAIN}/pico${NC}"
+echo -e "${GREEN}✅ 服务已启动！访问: https://${MY_DOMAIN}/pico${NC}"
+echo -e "${BLUE}日志: tail -f ${LOG_FILE}${NC}"
