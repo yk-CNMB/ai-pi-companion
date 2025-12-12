@@ -228,7 +228,7 @@
                 <div onclick="document.getElementById('studio-overlay').style.display='none'" style="font-size:24px;padding:0 10px;cursor:pointer">×</div>
             </div>
             
-            <!-- ★★★ 新增：鼠标跟随开关 (所有人可见) ★★★ -->
+            <!-- 鼠标跟随开关 -->
             <button id="follow-toggle" class="toggle-btn active" onclick="toggleMouseFollow()">👀 眼神跟随: ON</button>
 
             <h4>🎭 模型选择</h4>
@@ -327,10 +327,8 @@
         let isDragging=false, dragData, initialScale, initialDist, iAmAdmin=false;
         window.model = null; let currentImgBase64 = null;
         
-        // ★★★ 新增：鼠标跟随状态变量 ★★★
         let isMouseFollow = true;
 
-        // ★★★ 新增：切换鼠标跟随逻辑 ★★★
         function toggleMouseFollow() {
             isMouseFollow = !isMouseFollow;
             const btn = document.getElementById('follow-toggle');
@@ -342,19 +340,15 @@
                 btn.textContent = "👀 眼神跟随: OFF";
                 btn.classList.remove('active');
                 showToast("🚫 已关闭眼神跟随");
-                // 立即让模型回正
                 if (model) {
-                    // 设置焦点到屏幕中心 (x=0, y=0 是相对 focus 的中心点)
                     model.focus(0, 0); 
                 }
             }
         }
 
-        // 辅助函数
         function updateVal(type, val) { document.getElementById(`${type}-val`).textContent = (val > 0 ? '+' : '') + val + (type==='rate'?'%':'Hz'); }
         function showToast(m,t='success'){let d=document.createElement('div');d.className='toast';d.textContent=m;if(t==='error'||t==='info')d.style.backgroundColor=t==='error'?'#d63031':(t==='info'?'#0984e3':'#00b894');document.getElementById('toast-container').appendChild(d);setTimeout(()=>d.remove(),3500);}
 
-        // Live2D 变换预览
         function previewTransform() {
             if(!model) return;
             const s = parseFloat(document.getElementById('model-scale').value);
@@ -371,7 +365,6 @@
             const st = document.getElementById('stage-container');
             if(!model.width) return;
             
-            // 计算缩放 (适配屏幕)
             const absScale = (st.clientHeight / model.height) * s;
             model.scale.set(absScale);
             model.x = (st.clientWidth * x) - (model.width / 2);
@@ -387,12 +380,10 @@
             const x = (target.x !== undefined) ? target.x : 0.5;
             const y = (target.y !== undefined) ? target.y : 0.5;
             
-            // 更新 UI 控件
             if(document.getElementById('model-scale')) {
                 document.getElementById('model-scale').value = s;
                 document.getElementById('model-x').value = x;
                 document.getElementById('model-y').value = y;
-                // 更新音调语速显示
                 let r = parseInt(target.rate)||0;
                 let p = parseInt(target.pitch)||0;
                 updateVal('rate', r);
@@ -410,7 +401,6 @@
             setTimeout(() => applyConfig(currentCfg), 100); 
         });
         
-        // 直播模式切换
         window.toggleLiveMode = () => { 
             if(window.innerWidth > 1024) {
                 document.body.classList.toggle('live-mode'); 
@@ -428,7 +418,6 @@
             } 
         });
 
-        // 图片处理
         window.handleImgSelect = (f) => {
             if(!f) return;
             if (f.size > 50 * 1024 * 1024) { showToast("❌ 图片太大了 (限50MB)", "error"); return; }
@@ -438,7 +427,6 @@
         };
         window.clearPreview = () => { currentImgBase64 = null; document.getElementById('preview-area').style.display = 'none'; document.getElementById('img-input').value = ""; };
 
-        // 登录逻辑
         const loginBtn = document.getElementById('login-btn');
         socket.on('server_ready', ()=>{loginBtn.textContent="进入直播间";loginBtn.disabled=false;});
         socket.on('disconnect', ()=>{loginBtn.textContent="已断开...";loginBtn.disabled=true;});
@@ -465,12 +453,10 @@
             } 
         });
 
-        // Key 管理
         window.saveGeminiKey = () => { 
             const key = document.getElementById('api-key-input').value.trim(); 
             if(!key.startsWith("AIza")) { showToast("Key 格式错误", "error"); return; } 
             showToast("正在更新 Key..."); 
-            // type: 'gemini' 确保后端能识别
             fetch('/update_key', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({key: key, type: 'gemini'})})
             .then(r=>r.json()).then(d=>{
                 if(d.success){showToast("✅ Key 已更新并生效！"); document.getElementById('api-key-input').value = "";} 
@@ -478,7 +464,6 @@
             }); 
         };
 
-        // 模型加载
         async function loadModel(path, cfg) {
             console.log("📥 Loading Model:", path);
             if(!app_pixi) { 
@@ -507,50 +492,44 @@
             }
         }
 
-        // 交互逻辑
         function initInteraction() { 
             const s=document.getElementById('stage-container');
             app_pixi.stage.interactive=true;
             
-            // ★★★ 核心修改：PointerMove 处理 ★★★
-            app_pixi.stage.on('pointermove', (e) => {
+            // ★★★ 核心修复：使用全局窗口监听 ★★★
+            window.addEventListener('mousemove', (e) => {
                 if (model) {
                     if (isDragging) {
-                        // 1. 拖拽模式
-                        const p = dragData.getLocalPosition(model.parent);
-                        model.x = p.x - model.width/2;
-                        model.y = p.y - model.height/2;
+                        // 拖拽逻辑保持不变 (仍然依赖 PIXI 内部事件)
+                        // ...
                     } else if (isMouseFollow) {
-                        // 2. 眼神跟随模式
-                        model.focus(e.data.global.x, e.data.global.y);
+                        // 眼神跟随：直接传入屏幕坐标
+                        model.focus(e.clientX, e.clientY);
                     }
                 }
             });
 
             app_pixi.stage.on('pointerdown',(e)=>{if(model&&(!e.data.originalEvent.touches||e.data.originalEvent.touches.length===1)){isDragging=true;dragData=e.data;model.alpha=0.8;}});
             app_pixi.stage.on('pointerup',()=>{isDragging=false;if(model)model.alpha=1;}).on('pointerupoutside',()=>{isDragging=false;if(model)model.alpha=1;});
+            app_pixi.stage.on('pointermove',()=>{if(isDragging&&model){const p=dragData.getLocalPosition(model.parent);model.x=p.x-model.width/2;model.y=p.y-model.height/2;}});
             
             s.addEventListener('wheel',(e)=>{e.preventDefault();if(model){model.scale.x*=(e.deltaY<0?1.1:0.9);model.scale.y=model.scale.x;}},{passive:false});
             s.addEventListener('touchstart',(e)=>{if(e.touches.length===2&&model){isDragging=false;initialDist=Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY);initialScale=model.scale.x;}});
             s.addEventListener('touchmove',(e)=>{if(e.touches.length===2&&model&&initialDist){e.preventDefault();model.scale.set(initialScale*(Math.hypot(e.touches[0].pageX-e.touches[1].pageX,e.touches[0].pageY-e.touches[1].pageY)/initialDist));}}); 
         }
 
-        // 口型同步 (Server Audio)
         function lipSync(){if(!model||!analyser||!isTalking)return;analyser.getByteFrequencyData(dataArray);let sum=0;for(let i=0;i<dataArray.length;i++)sum+=dataArray[i];if(model.internalModel?.coreModel)model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',Math.min(1.0,(sum/dataArray.length)/30));}
         
-        // 动作触发
         function triggerMotion(emo){ 
             if(!model) return; 
             try { 
                 const im = model.internalModel; emo = emo.toUpperCase(); 
-                // 表情
                 if (im.settings.expressions && im.settings.expressions.length > 0) { 
                     let exprMap = {'HAPPY': ['happy', 'smile', 'joy', 'f01'], 'ANGRY': ['angry', 'mad', 'f02'], 'SAD': ['sad', 'cry', 'f03'], 'SHOCK': ['shock', 'surprise', 'f04']}; 
                     let exprKeywords = exprMap[emo] || []; 
                     let targetExpr = im.settings.expressions.find(e => exprKeywords.some(k => e.Name.toLowerCase().includes(k.toLowerCase())))?.Name; 
                     if (targetExpr) { if (im.expressionManager) im.expressionManager.setExpression(targetExpr); else model.expression(targetExpr); } 
                 } 
-                // 动作
                 const definitions = im.motionManager.definitions?.Motions || im.motionManager.motionGroups || im.motionManager.definitions; 
                 if (!definitions) return; 
                 const groupAliases = {'HAPPY': ['Happy', 'Joy', 'Smile'], 'ANGRY': ['Angry', 'Mad'], 'SAD': ['Sad', 'Cry'], 'SHOCK': ['Shock', 'Surprise'], 'IDLE': ['Idle', 'Wait'], 'NORMAL': ['TapBody']}; 
@@ -560,13 +539,10 @@
             } catch(e) { console.error("Trigger Error:", e); } 
         }
 
-        // 工作室逻辑
         document.getElementById('studio-btn').onclick=()=>{document.getElementById('studio-overlay').style.display='flex';socket.emit('get_studio_data');};
         
         socket.on('studio_data',(d)=>{ 
             const list=document.getElementById('model-list');list.innerHTML="";currentModelId=d.current_id; 
-            
-            // 语音列表填充
             const vSelect = document.getElementById('voice-select');
             vSelect.innerHTML = "";
             if(d.voices && d.voices.length > 0) {
@@ -583,7 +559,6 @@
                 vSelect.appendChild(opt);
             }
 
-            // 渲染模型列表
             if(!d.models||d.models.length===0){list.innerHTML="<div style='grid-column:1/-1;text-align:center;color:red'>❌ 未找到模型</div>";} 
             else{ 
                 d.models.forEach(m=>{ 
@@ -615,7 +590,6 @@
             if(d.backgrounds) { d.backgrounds.forEach(bg => { let chip = document.createElement('span'); chip.className = `bg-chip ${bg===d.current_bg ? 'active' : ''}`; chip.textContent = bg; chip.onclick = () => changeBackground(bg); bgList.appendChild(chip); }); } 
         });
 
-        // 背景与模型上传
         window.uploadBackground = (f) => { if(!f) return; let fd = new FormData(); fd.append('file', f); showToast("🖼️ 上传背景..."); fetch('/upload_bg', {method:'POST', body:fd}).then(r=>r.json()).then(d=>{if(d.success){ showToast("✅ 上传成功"); socket.emit('get_studio_data'); } else showToast("❌ " + d.msg, "error");}); };
         window.changeBackground = (name) => { socket.emit('switch_background', {name: name}); };
         socket.on('background_update', (d) => { changeBackgroundUI(d.url ? d.url.split('/').pop() : ''); });
@@ -623,7 +597,6 @@
         
         socket.on('model_switched',(m)=>{currentCfg=m;loadModel(m.path,m);document.getElementById('room-title').textContent=`🤖 ${m.name}`;if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data');showToast(`✨ 已切换为 ${m.name}`);});
         
-        // 保存配置
         document.getElementById('save-settings-btn').onclick=()=>{
             let r=document.getElementById('rate-range').value;
             let p=document.getElementById('pitch-range').value;
@@ -645,19 +618,16 @@
         
         socket.on('admin_unlocked', () => { iAmAdmin = true; showToast("👑 管理员权限已解锁！"); document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'block'); if(document.getElementById('studio-overlay').style.display==='flex')socket.emit('get_studio_data'); });
         
-        // 本地记忆
         const MEMORY_KEY='pico_user_memories';
         window.clearLocalHistory=()=>{if(confirm('确定清除聊天记录？')){document.getElementById('chat-window').innerHTML="";showToast('🧹 已清除');}}
         window.clearLocalMemories=()=>{if(confirm('确定清除专属记忆？')){localStorage.removeItem(MEMORY_KEY);showToast('🧠 已清除');}}
         function getLocalMemories(){return JSON.parse(localStorage.getItem(MEMORY_KEY))||[];}
         function saveLocalMemory(f){let m=getLocalMemories();if(f&&!m.includes(f)){m.push(f);if(m.length>50)m=m.slice(-50);localStorage.setItem(MEMORY_KEY,JSON.stringify(m));return true;}return false;}
         
-        // 聊天逻辑
         socket.on('chat_message',(d)=>{addMsg(d.text,d.sender,d.sender===myUser?'self':'other', null, d.image);});
         socket.on('system_message',(d)=>{addMsg(d.text,'系统','system');});
         socket.on('response',(d)=>{addMsg(d.text,'Pico','pico',d.emotion);triggerMotion(d.emotion||'NORMAL');});
         
-        // TTS 失败静默提示
         socket.on('audio_failed', (d) => {
             if (d.type === 'warning' || d.type === 'info') {
                 showToast("🔊 " + d.msg, "info");
@@ -667,7 +637,6 @@
             console.error("Audio Failed:", d.msg);
         });
 
-        // 浏览器本地朗读 + 模拟口型 (不再自动调用)
         function speakLocal(text) {
             if (!window.speechSynthesis) return;
             window.speechSynthesis.cancel();
@@ -679,7 +648,6 @@
             window.speechSynthesis.speak(utterance);
         }
 
-        // 简单的随机口型模拟
         let mouthInterval;
         function simulateMouth(start) {
             if (mouthInterval) clearInterval(mouthInterval);
