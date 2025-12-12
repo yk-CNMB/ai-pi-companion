@@ -1,6 +1,7 @@
 # =======================================================================
-# Pico AI Server - pyttsx3 离线本地 TTS 集成版 (FINAL FIX)
-# 修复：pyttsx3 在初始化失败时的 'name is not defined' 错误。
+# Pico AI Server - VITS 网络语音增强版
+# 基于您的原始文件修改，保留所有管理/记忆功能。
+# TTS 逻辑：VITS API (二次元) -> gTTS (兜底)
 # =======================================================================
 import os
 import json
@@ -12,29 +13,17 @@ import re
 import zipfile
 import threading
 import requests
-import urllib.parse
 import base64
 import logging
-import subprocess
 import sys
-import traceback
+from io import BytesIO
+from gtts import gTTS
 
 from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from google import genai
 from google.genai import types
 from werkzeug.utils import secure_filename
-
-# ★★★ 导入 pyttsx3 库 ★★★
-try:
-    import pyttsx3
-    # 标记 TTS 模块已成功导入
-    TTS_AVAILABLE = True 
-    print("✅ Python 内部库 pyttsx3 已加载")
-except ImportError:
-    TTS_AVAILABLE = False
-    print("⚠️ Python 内部库 pyttsx3 未找到，请检查 requirements.txt 安装")
-
 
 # 日志配置
 logging.basicConfig(
@@ -43,7 +32,7 @@ logging.basicConfig(
 )
 
 app = Flask(__name__, static_folder='static')
-app.config['SECRET_KEY'] = 'pico_local_tts_key'
+app.config['SECRET_KEY'] = 'pico_vits_secret_key'
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
 
 # SocketIO 配置
@@ -74,8 +63,11 @@ for d in [AUDIO_DIR, MODELS_DIR, BG_DIR]:
             logging.error(f"创建目录失败 {d}: {e}")
 
 # --- 配置加载 ---
+# 默认 VITS 配置
 CONFIG = {
-    "GEMINI_API_KEY": ""
+    "GEMINI_API_KEY": "",
+    "VITS_API_URL": "https://artrajz-vits-simple-api.hf.space/voice/vits?text={text}&id={id}&format=wav&lang=zh",
+    "DEFAULT_VOICE_ID": "165" # 165 是比较通用的少女音
 }
 
 try:
@@ -126,7 +118,7 @@ load_state()
 
 # 当前模型缓存
 CURRENT_MODEL = {
-    "id": "default", "path": "", "persona": "", "voice": "zh", 
+    "id": "default", "path": "", "persona": "", "voice": CONFIG["DEFAULT_VOICE_ID"], 
     "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.5, "y": 0.5
 }
 DEFAULT_INSTRUCTION = "\n【指令】回复开头标记心情：[HAPPY], [ANGRY], [SAD], [SHOCK], [NORMAL]。"
@@ -135,7 +127,7 @@ def get_model_config(mid):
     p = os.path.join(MODELS_DIR, mid, "config.json")
     d = {
         "persona": f"你是{mid}。{DEFAULT_INSTRUCTION}", 
-        "voice": "zh", 
+        "voice": CONFIG["DEFAULT_VOICE_ID"], 
         "rate": "+0%", "pitch": "+0Hz", 
         "scale": 0.5, "x": 0.5, "y": 0.5
     }
@@ -191,102 +183,76 @@ def init_model():
 
 init_model()
 
-# ================= TTS 核心 (pyttsx3 实现) =================
+# ================= 语音合成核心 (VITS + gTTS) =================
 
-tts_engine = None
-TTS_INIT_LOCK = threading.Lock()
-
-def get_tts_engine():
-    global tts_engine
-    if not TTS_AVAILABLE: # 模块就没导入成功
-        return None
-        
-    with TTS_INIT_LOCK:
-        # 0. 检查是否初始化失败过
-        if tts_engine is False: 
-             return None
-
-        # 1. 首次初始化
-        if tts_engine is None:
-            try:
-                # 尝试初始化，使用 'espeak' 驱动
-                engine = pyttsx3.init(driverName='espeak') 
-                # 测试获取 voices，如果失败则会抛出异常
-                engine.getProperty('voices')
-                tts_engine = engine # 成功，保存实例
-                logging.info("pyttsx3 引擎初始化成功 (Espeak)")
-            except Exception as e:
-                logging.error(f"pyttsx3 引擎初始化失败: {e}. 请确保 espeak 和 libespeak-dev 已安装。")
-                tts_engine = False # 失败，标记为 False
-                return None
-                
-        return tts_engine
-
-def run_local_tts(text, output_path, voice, rate_str, pitch_str):
-    """
-    使用 pyttsx3 生成 WAV 文件
-    """
-    engine = get_tts_engine()
-    if not engine:
-        return False, "pyttsx3 引擎未初始化或系统依赖缺失。"
-
+def cleanup_audio_dir():
+    """清理旧音频，防止SD卡爆满"""
     try:
-        # --- 1. 速度调节 ---
-        rate_change = int(re.sub(r'[^\d\+\-]', '', rate_str))
-        current_rate = engine.getProperty('rate')
-        new_rate = int(current_rate * (1 + rate_change / 100.0))
-        engine.setProperty('rate', max(80, min(500, new_rate)))
-        
-        # --- 2. 语音选择 ---
-        voices = engine.getProperty('voices')
-        target_voice = next((v for v in voices if 'zh' in v.id.lower() or 'mandarin' in v.name.lower()), None)
+        now = time.time()
+        for f in os.listdir(AUDIO_DIR):
+            fp = os.path.join(AUDIO_DIR, f)
+            if os.path.getmtime(fp) < now - 300: # 清理5分钟前的文件
+                os.remove(fp)
+    except: pass
 
-        if target_voice:
-             engine.setProperty('voice', target_voice.id)
-        
-        # --- 3. 语音合成 ---
-        engine.save_to_file(text, output_path)
-        engine.runAndWait() 
+def generate_vits_audio(text, voice_id):
+    """
+    网络 TTS 生成器
+    1. 尝试 VITS API
+    2. 失败则回退 gTTS
+    """
+    cleanup_audio_dir()
+    clean_text = re.sub(r'\[.*?\]', '', text).strip()
+    if not clean_text: return None
 
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            return True, ""
+    filename = f"tts_{uuid.uuid4().hex}"
+    
+    # 1. 尝试 VITS
+    try:
+        logging.info(f"🎙️ VITS 请求: {clean_text} (ID: {voice_id})")
+        # 构造 URL
+        url = CONFIG["VITS_API_URL"].replace("{text}", requests.utils.quote(clean_text)).replace("{id}", str(voice_id))
+        resp = requests.get(url, timeout=8) # 8秒超时
+        
+        if resp.status_code == 200 and len(resp.content) > 100:
+            out_path = os.path.join(AUDIO_DIR, f"{filename}.wav")
+            with open(out_path, 'wb') as f:
+                f.write(resp.content)
+            logging.info("✅ VITS 生成成功")
+            return f"/static/audio/{filename}.wav"
         else:
-            return False, "本地 TTS 引擎执行失败，未生成文件。"
-            
+            logging.warning(f"⚠️ VITS API 异常: {resp.status_code}")
     except Exception as e:
-        err_msg = str(e)
-        logging.error(f"本地 TTS 失败: {err_msg}")
-        return False, err_msg
+        logging.error(f"❌ VITS 请求失败: {e}")
 
+    # 2. 回退 gTTS
+    try:
+        logging.info("🔄 降级使用 gTTS")
+        tts = gTTS(text=clean_text, lang='zh-cn')
+        out_path = os.path.join(AUDIO_DIR, f"{filename}.mp3")
+        tts.save(out_path)
+        return f"/static/audio/{filename}.mp3"
+    except Exception as e:
+        logging.error(f"❌ gTTS 失败: {e}")
+        return None
 
 def bg_tts_task(text, voice, rate, pitch, room=None, sid=None):
-    """后台任务：生成并推送，或者触发前端降级"""
-    clean_text = re.sub(r'\[(.*?)\]', '', text).strip()
-    if not clean_text: 
-        return
-
-    # pyttsx3 通常输出 WAV 格式
-    fname = f"local_{uuid.uuid4()}.wav" 
-    out_path = os.path.join(AUDIO_DIR, fname)
+    """后台任务：生成并推送"""
+    # 这里的 voice 参数如果是 "zh" 这种旧值，就用默认 ID
+    voice_id = voice if voice and voice.isdigit() else CONFIG["DEFAULT_VOICE_ID"]
     
-    # ★★★ 尝试服务器本地 TTS 生成 ★★★
-    success, err_reason = run_local_tts(clean_text, out_path, voice, rate, pitch)
+    audio_url = generate_vits_audio(text, voice_id)
 
-    if success and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
-        url = f"/static/audio/{fname}"
-        # 兼容性警告：pyttsx3 输出的是 WAV 文件，前端播放器必须能识别
-        payload = {'audio': url} 
-        logging.info(f"✅ 语音生成成功 (pyttsx3): {url}")
-        
+    if audio_url:
+        payload = {'audio': audio_url} 
         if room: socketio.emit('audio_response', payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_response', payload, to=sid, namespace='/')
     else:
-        # 生成失败，把文本发给前端，让浏览器读
-        logging.error(f"❌ 本地 TTS 失败，切换前端合成: {err_reason}")
+        # 彻底失败，发给前端让浏览器读
         err_payload = {
-            'msg': f'本地TTS失败，切换浏览器语音', 
-            'text': clean_text,
-            'type': 'error' 
+            'msg': f'TTS生成失败，切换浏览器语音', 
+            'text': text,
+            'type': 'warning' 
         }
         if room: socketio.emit('audio_failed', err_payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_failed', err_payload, to=sid, namespace='/')
@@ -369,7 +335,7 @@ def init_chatroom():
     if not gemini_client: return
     sys_prompt = CURRENT_MODEL.get('persona', "")
     if not sys_prompt: sys_prompt = DEFAULT_INSTRUCTION
-    try: chatroom_chat = gemini_client.chats.create(model="gemini-2.5-flash", config={"system_instruction": sys_prompt})
+    try: chatroom_chat = gemini_client.chats.create(model="gemini-2.0-flash-exp", config={"system_instruction": sys_prompt})
     except: pass
 
 def process_ai_response(sender, msg, img_data=None, sid=None):
@@ -389,7 +355,6 @@ def process_ai_response(sender, msg, img_data=None, sid=None):
                 content.append(types.Part.from_bytes(data=base64.b64decode(encoded), mime_type="image/jpeg"))
             except: pass
             
-        # ★★★ 429 错误保护 ★★★
         try:
             resp = chatroom_chat.send_message(content)
             txt = resp.text
@@ -412,6 +377,8 @@ def process_ai_response(sender, msg, img_data=None, sid=None):
         save_state()
         
         socketio.emit('response', {'text': txt, 'sender': 'Pico', 'emotion': emo}, to='lobby')
+        
+        # 调用新的 VITS TTS 任务
         bg_tts_task(txt, CURRENT_MODEL['voice'], CURRENT_MODEL['rate'], CURRENT_MODEL['pitch'], room='lobby')
         
     except Exception as e:
@@ -455,10 +422,12 @@ def is_admin(sid): return users.get(sid, {}).get('is_admin', False)
 
 @socketio.on('get_studio_data')
 def on_get_data():
-    # 本地 TTS 语音列表 (仅作演示，实际依赖系统安装的 Espeak 语言包)
+    # ★★★ 这里更新了 voices 列表，提供二次元选项 ★★★
     voices = [
-        {"id":"zh", "name":"🎙️ 默认中文 (Espeak)"},
-        {"id":"en", "name":"🎙️ 默认英文 (Espeak)"},
+        {"id":"165", "name":"🎧 通用少女 (VITS)"},
+        {"id":"0", "name":"🎧 可爱 (VITS)"},
+        {"id":"1", "name":"🎧 成熟 (VITS)"},
+        {"id":"gtts", "name":"🤖 Google 娘 (兜底)"},
     ]
     emit('studio_data', {
         'models': scan_models(), 
@@ -528,5 +497,5 @@ def bg_dl_task(name):
     except: pass
 
 if __name__ == '__main__':
-    logging.info("Starting Pico AI Server...")
+    logging.info("Starting Pico AI Server (VITS Edition)...")
     socketio.run(app, host='0.0.0.0', port=5000)
