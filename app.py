@@ -1,33 +1,34 @@
 # =======================================================================
-# Pico AI Server - 最终精简版 (Live2D Only + ACGN TTS)
-# 功能全保留，代码零冗余。
+# Pico AI Server - 混合动力版 (Live2D/VRM + PC Remote TTS)
+# 核心逻辑：优先调用 PC 端的 GPT-SoVITS，失败则自动降级为 Edge-TTS
 # =======================================================================
 import os
 import json
 import uuid
 import time
+import glob
 import shutil
 import re
 import zipfile
 import threading
 import base64
 import logging
+import sys
 import asyncio
 import edge_tts
-import requests
+import requests # 用于调用 PC 端接口
 
-from flask import Flask, render_template, request, redirect, url_for, jsonify
-from flask_socketio import SocketIO, emit, join_room
+from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from google import genai
 from google.genai import types
 from werkzeug.utils import secure_filename
 
-# 日志配置
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
 
 app = Flask(__name__, static_folder='static')
-app.config['SECRET_KEY'] = 'pico_slim_key'
-app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
+app.config['SECRET_KEY'] = 'pico_hybrid_key'
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024 # 支持大模型上传
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60)
 SERVER_VERSION = str(int(time.time()))
@@ -35,7 +36,7 @@ SERVER_VERSION = str(int(time.time()))
 # --- 目录初始化 ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 AUDIO_DIR = os.path.join(BASE_DIR, "static", "audio")
-MODELS_DIR = os.path.join(BASE_DIR, "static", "live2d") 
+MODELS_DIR = os.path.join(BASE_DIR, "static", "live2d")
 BG_DIR = os.path.join(BASE_DIR, "static", "backgrounds")
 STATE_FILE = os.path.join(BASE_DIR, "server_state.json")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
@@ -43,10 +44,11 @@ CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 for d in [AUDIO_DIR, MODELS_DIR, BG_DIR]:
     if not os.path.exists(d): os.makedirs(d)
 
-# --- 配置管理 ---
+# --- 配置加载 ---
 CONFIG = {
     "GEMINI_API_KEY": "",
     "DEFAULT_VOICE": "zh-CN-XiaoyiNeural",
+    "REMOTE_TTS_URL": "", # PC 端 GPT-SoVITS 地址，例如 http://192.168.1.5:9880
     "ACGN_TOKEN": "",
     "ACGN_CHARACTER": "流萤",
     "ACGN_API_URL": "https://gsv2p.acgnai.top"
@@ -62,10 +64,11 @@ def load_config():
 load_config()
 
 def save_config():
-    try: with open(CONFIG_FILE, "w", encoding='utf-8') as f: json.dump(CONFIG, f, indent=2, ensure_ascii=False)
+    try:
+        with open(CONFIG_FILE, "w", encoding='utf-8') as f: json.dump(CONFIG, f, indent=2)
     except: pass
 
-# --- Gemini AI ---
+# Gemini 初始化
 gemini_client = None
 chatroom_chat = None
 
@@ -76,7 +79,8 @@ def init_gemini():
             gemini_client = genai.Client(api_key=CONFIG["GEMINI_API_KEY"])
             chatroom_chat = None 
             logging.info("✅ Gemini 客户端就绪")
-        except: pass
+        except Exception as e:
+            logging.error(f"Gemini 初始化失败: {e}")
 
 init_gemini()
 
@@ -98,20 +102,23 @@ def load_state():
         except: pass
 load_state()
 
-# --- 模型管理 ---
-CURRENT_MODEL = {"id": "default", "path": "", "persona": "", "voice": "0", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.0, "y": 0.0}
+# 模型管理 (支持 VRM + Live2D)
+CURRENT_MODEL = {"id": "default", "type": "live2d", "path": "", "persona": "", "voice": "0", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.0, "y": 0.0}
 DEFAULT_INSTRUCTION = "\n【指令】回复开头标记心情：[HAPPY], [ANGRY], [SAD], [SHOCK], [NORMAL]。"
 
 def get_model_config(mid):
-    p = os.path.join(MODELS_DIR, mid, "config.json")
-    d = {"persona": f"你是{mid}。{DEFAULT_INSTRUCTION}", "voice": "0", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.0, "y": 0.0}
+    cfg_dir = os.path.join(MODELS_DIR, mid + "_config") if mid.endswith(".vrm") else os.path.join(MODELS_DIR, mid)
+    p = os.path.join(cfg_dir, "config.json")
+    d = {"persona": f"你是{mid}。{DEFAULT_INSTRUCTION}", "voice": "0", "rate": "+0%", "pitch": "+0Hz", "scale": 1.0, "x": 0.0, "y": 0.0}
     if os.path.exists(p):
         try: with open(p, "r", encoding="utf-8") as f: d.update(json.load(f))
         except: pass
     return d
 
 def save_model_config(mid, data):
-    p = os.path.join(MODELS_DIR, mid, "config.json")
+    cfg_dir = os.path.join(MODELS_DIR, mid + "_config") if mid.endswith(".vrm") else os.path.join(MODELS_DIR, mid)
+    if not os.path.exists(cfg_dir): os.makedirs(cfg_dir, exist_ok=True)
+    p = os.path.join(cfg_dir, "config.json")
     curr = get_model_config(mid)
     curr.update(data)
     try: with open(p, "w", encoding="utf-8") as f: json.dump(curr, f, indent=2, ensure_ascii=False)
@@ -120,6 +127,7 @@ def save_model_config(mid, data):
 
 def scan_models():
     ms = []
+    # 1. Live2D
     for root, dirs, files in os.walk(MODELS_DIR):
         for file in files:
             if file.endswith(('.model3.json', '.model.json')):
@@ -128,7 +136,16 @@ def scan_models():
                 if not rel_path.startswith("/"): rel_path = "/" + rel_path
                 mid = os.path.basename(os.path.dirname(full_path))
                 if any(m['id'] == mid for m in ms): continue
-                ms.append({"id": mid, "name": mid, "path": rel_path, **get_model_config(mid)})
+                cfg = get_model_config(mid)
+                ms.append({"id": mid, "name": mid, "type": "live2d", "path": rel_path, **cfg})
+    # 2. VRM
+    for file in os.listdir(MODELS_DIR):
+        if file.lower().endswith(".vrm"):
+            mid = file
+            rel_path = "/static/live2d/" + file
+            cfg = get_model_config(mid)
+            if "scale" not in cfg: cfg["scale"] = 1.0 
+            ms.append({"id": mid, "name": mid.replace(".vrm", ""), "type": "vrm", "path": rel_path, **cfg})
     return sorted(ms, key=lambda x: x['name'])
 
 def init_model():
@@ -142,7 +159,7 @@ def init_model():
         save_state()
 init_model()
 
-# ================= TTS 核心 (ACGN + Edge) =================
+# ================= 语音合成核心 (Remote + ACGN + Edge) =================
 
 def cleanup_audio_dir():
     try:
@@ -152,6 +169,7 @@ def cleanup_audio_dir():
     except: pass
 
 def generate_acgn_tts(text):
+    """调用 ACGN AI 在线接口"""
     token = CONFIG.get("ACGN_TOKEN")
     char_name = CONFIG.get("ACGN_CHARACTER", "流萤")
     if not token: return None
@@ -162,13 +180,31 @@ def generate_acgn_tts(text):
         params = {"text": text, "text_language": "zh", "character": char_name, "format": "wav"}
         logging.info(f"📡 ACGN TTS: {text[:10]}...")
         resp = requests.get(url, headers=headers, params=params, timeout=12)
-        if resp.status_code == 200:
-            if "audio" in resp.headers.get("Content-Type", "") or len(resp.content) > 1000:
-                filename = f"acgn_{uuid.uuid4().hex}.wav"
-                filepath = os.path.join(AUDIO_DIR, filename)
-                with open(filepath, 'wb') as f: f.write(resp.content)
-                return f"/static/audio/{filename}"
+        if resp.status_code == 200 and len(resp.content) > 1000:
+            filename = f"acgn_{uuid.uuid4().hex}.wav"
+            filepath = os.path.join(AUDIO_DIR, filename)
+            with open(filepath, 'wb') as f: f.write(resp.content)
+            return f"/static/audio/{filename}"
     except: pass
+    return None
+
+def generate_remote_tts(text):
+    """调用 PC 端 GPT-SoVITS 接口"""
+    url = CONFIG.get("REMOTE_TTS_URL")
+    if not url: return None
+    try:
+        logging.info(f"📡 PC Remote TTS: {text[:10]}...")
+        # 兼容常见 GPT-SoVITS API 格式: /?text=xxx&text_language=zh
+        sep = "&" if "?" in url else "?"
+        full_url = f"{url}{sep}text={requests.utils.quote(text)}&text_language=zh"
+        resp = requests.get(full_url, timeout=5)
+        if resp.status_code == 200 and len(resp.content) > 1000:
+            filename = f"remote_{uuid.uuid4().hex}.wav"
+            filepath = os.path.join(AUDIO_DIR, filename)
+            with open(filepath, 'wb') as f: f.write(resp.content)
+            return f"/static/audio/{filename}"
+    except Exception as e:
+        logging.warning(f"⚠️ PC TTS 失败: {e}")
     return None
 
 def run_edge_tts_sync(text, voice, output_file, rate="+0%", pitch="+0Hz"):
@@ -188,13 +224,21 @@ def generate_audio_smart(text, voice_id, rate, pitch):
     clean_text = re.sub(r'\[.*?\]', '', text).strip()
     if not clean_text: return None
 
-    if voice_id == "acgn" or (CONFIG.get("ACGN_TOKEN") and voice_id == "0"):
+    # 1. 优先尝试 PC 接口 (如果选中 'pc' 或配置了 URL 且选中 '0')
+    if voice_id == "pc" or (CONFIG.get("REMOTE_TTS_URL") and voice_id == "0"):
+        url = generate_remote_tts(clean_text)
+        if url: return url
+
+    # 2. 其次尝试 ACGN (如果选中 'acgn')
+    if voice_id == "acgn" or (CONFIG.get("ACGN_TOKEN") and voice_id == "0" and not CONFIG.get("REMOTE_TTS_URL")):
         url = generate_acgn_tts(clean_text)
         if url: return url
 
+    # 3. Edge-TTS 兜底
     filename = f"edge_{uuid.uuid4().hex}.mp3"
     filepath = os.path.join(AUDIO_DIR, filename)
-    voice_map = {"0": "zh-CN-XiaoyiNeural", "1": "zh-CN-XiaoxiaoNeural", "2": "zh-CN-YunxiNeural", "acgn": "zh-CN-XiaoyiNeural"}
+    
+    voice_map = {"0": "zh-CN-XiaoyiNeural", "1": "zh-CN-XiaoxiaoNeural", "2": "zh-CN-YunxiNeural", "acgn": "zh-CN-XiaoyiNeural", "pc": "zh-CN-XiaoyiNeural"}
     target_voice = voice_map.get(str(voice_id), "zh-CN-XiaoyiNeural")
     if "Neural" in str(voice_id): target_voice = voice_id
 
@@ -242,6 +286,7 @@ def upload_bg():
 @app.route('/upload_model', methods=['POST'])
 def upload_model():
     f = request.files.get('file')
+    # Live2D Zip
     if f and f.filename.endswith('.zip'):
         try:
             n = secure_filename(f.filename).rsplit('.', 1)[0].lower()
@@ -254,6 +299,10 @@ def upload_model():
                         for item in os.listdir(root): shutil.move(os.path.join(root, item), p)
                     break
             return jsonify({'success': True})
+        except: pass
+    # VRM
+    if f and f.filename.lower().endswith('.vrm'):
+        try: f.save(os.path.join(MODELS_DIR, secure_filename(f.filename))); return jsonify({'success': True})
         except: pass
     return jsonify({'success': False})
 
@@ -268,7 +317,7 @@ def api_danmaku():
     socketio.start_background_task(process_ai_response, user, msg)
     return jsonify({'success': True})
 
-# ================= 业务逻辑 =================
+# ================= Socket 逻辑 =================
 def init_chatroom():
     global chatroom_chat
     if not gemini_client: return
@@ -327,7 +376,24 @@ def on_login(d):
 @socketio.on('message')
 def on_msg(d):
     msg = d.get('text', '')
+    
+    # ★★★ TTS URL 指令 ★★★
+    if msg.startswith("/tts_url "):
+        url = msg.replace("/tts_url ", "").strip()
+        CONFIG["REMOTE_TTS_URL"] = url
+        save_config()
+        emit('system_message', {'text': f'已设置 PC 接口: {url}'})
+        return
+
+    # ★★★ ACGN 指令 ★★★
+    if msg.startswith("/acgn_token "):
+        CONFIG["ACGN_TOKEN"] = msg.replace("/acgn_token ", "").strip()
+        save_config()
+        emit('system_message', {'text': '✅ ACGN Token 已保存'})
+        return
+
     if msg == '/管理员': emit('admin_unlocked'); return
+
     sender = "User"
     GLOBAL_STATE['chat_history'].append({'type':'chat', 'sender':sender, 'text':msg, 'image': bool(d.get('image'))})
     save_state()
@@ -339,7 +405,8 @@ def on_get_data():
     voices = [
         {"id":"0", "name":"🎧 默认: 晓伊 (微软)"},
         {"id":"1", "name":"🎧 默认: 晓晓 (微软)"},
-        {"id":"acgn", "name":"✨ ACGN 在线 (需配置)"}
+        {"id":"acgn", "name":"✨ ACGN 在线"},
+        {"id":"pc", "name":"🖥️ PC 离线引擎"}
     ]
     acgn_config = {
         "token": CONFIG.get("ACGN_TOKEN", ""),
@@ -367,6 +434,7 @@ def on_sav(d):
     global CURRENT_MODEL
     updated = save_model_config(d['id'], d)
     if CURRENT_MODEL['id'] == d['id']: CURRENT_MODEL.update(updated); init_chatroom()
+    
     if 'acgn_token' in d: CONFIG['ACGN_TOKEN'] = d['acgn_token']
     if 'acgn_url' in d: CONFIG['ACGN_API_URL'] = d['acgn_url']
     if 'acgn_char' in d: CONFIG['ACGN_CHARACTER'] = d['acgn_char']
@@ -379,5 +447,5 @@ def on_sw_bg(d):
     emit('background_update', {'url': f"/static/backgrounds/{d.get('name')}" if d.get('name') else ""}, to='lobby')
 
 if __name__ == '__main__':
-    logging.info("Starting Pico AI Server (Slim Live2D)...")
+    logging.info("Starting Pico AI (Hybrid)...")
     socketio.run(app, host='0.0.0.0', port=5000)
