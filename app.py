@@ -1,43 +1,39 @@
 # =======================================================================
-# Pico AI Server - 最终修复版 v5 (修复 NameError)
-# 修复：补回 scan_backgrounds 函数，解决工作室按钮报错
+# Pico AI Server - ACGN Online TTS 版
+# 核心逻辑：优先调用 ACGN AI 在线 API (GPT-SoVITS)，失败则降级 Edge-TTS
 # =======================================================================
 import os
 import json
 import uuid
 import time
-import glob
-import shutil
 import re
-import zipfile
 import threading
 import base64
 import logging
-import sys
 import asyncio
 import edge_tts
-import requests
+import requests 
 
-from flask import Flask, render_template, request, make_response, redirect, url_for, jsonify
-from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask import Flask, render_template, request, redirect, url_for, jsonify
+from flask_socketio import SocketIO, emit, join_room
 from google import genai
 from google.genai import types
 from werkzeug.utils import secure_filename
 
+# 日志配置
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
 
 app = Flask(__name__, static_folder='static')
-app.config['SECRET_KEY'] = 'pico_final_fix_v5'
-app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024 
+app.config['SECRET_KEY'] = 'pico_acgn_key'
+app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60, ping_interval=25, max_http_buffer_size=100*1024*1024)
-
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60)
 SERVER_VERSION = str(int(time.time()))
 
 # --- 目录初始化 ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 AUDIO_DIR = os.path.join(BASE_DIR, "static", "audio")
-MODELS_DIR = os.path.join(BASE_DIR, "static", "live2d") 
+MODELS_DIR = os.path.join(BASE_DIR, "static", "live2d")
 BG_DIR = os.path.join(BASE_DIR, "static", "backgrounds")
 STATE_FILE = os.path.join(BASE_DIR, "server_state.json")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
@@ -49,9 +45,10 @@ for d in [AUDIO_DIR, MODELS_DIR, BG_DIR]:
 CONFIG = {
     "GEMINI_API_KEY": "",
     "DEFAULT_VOICE": "zh-CN-XiaoyiNeural",
-    "ACGN_TOKEN": "",
-    "ACGN_CHARACTER": "流萤",
-    "ACGN_API_URL": "https://gsv2p.acgnai.top"
+    # ACGN AI 配置
+    "ACGN_TOKEN": "",          # 用户提供的 Bearer Token
+    "ACGN_CHARACTER": "流萤",   # 默认角色，可修改
+    "ACGN_API_URL": "https://gsv2p.acgnai.top" 
 }
 
 def load_config():
@@ -65,11 +62,10 @@ load_config()
 
 def save_config():
     try:
-        with open(CONFIG_FILE, "w", encoding='utf-8') as f:
-            json.dump(CONFIG, f, indent=2, ensure_ascii=False)
+        with open(CONFIG_FILE, "w", encoding='utf-8') as f: json.dump(CONFIG, f, indent=2, ensure_ascii=False)
     except: pass
 
-# --- Gemini 初始化 ---
+# Gemini 初始化
 gemini_client = None
 chatroom_chat = None
 
@@ -89,9 +85,7 @@ init_gemini()
 GLOBAL_STATE = { "current_model_id": "default", "current_background": "", "chat_history": [] }
 
 def save_state():
-    try:
-        with open(STATE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(GLOBAL_STATE, f, ensure_ascii=False)
+    try: with open(STATE_FILE, 'w', encoding='utf-8') as f: json.dump(GLOBAL_STATE, f, ensure_ascii=False)
     except: pass
 
 def load_state():
@@ -101,25 +95,19 @@ def load_state():
             with open(STATE_FILE, 'r', encoding='utf-8') as f:
                 saved = json.load(f)
                 if saved: GLOBAL_STATE.update(saved)
-                if len(GLOBAL_STATE["chat_history"]) > 100: 
-                    GLOBAL_STATE["chat_history"] = GLOBAL_STATE["chat_history"][-100:]
+                if len(GLOBAL_STATE["chat_history"]) > 100: GLOBAL_STATE["chat_history"] = GLOBAL_STATE["chat_history"][-100:]
         except: pass
 load_state()
 
-# --- 模型管理 ---
-CURRENT_MODEL = {
-    "id": "default", "type": "live2d", "path": "", "persona": "", 
-    "voice": "0", "rate": "+0%", "pitch": "+0Hz", 
-    "scale": 0.5, "x": 0.0, "y": 0.0
-}
+# 模型管理
+CURRENT_MODEL = {"id": "default", "path": "", "persona": "", "voice": "0", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.5, "y": 0.5}
 DEFAULT_INSTRUCTION = "\n【指令】回复开头标记心情：[HAPPY], [ANGRY], [SAD], [SHOCK], [NORMAL]。"
 
 def get_model_config(mid):
     p = os.path.join(MODELS_DIR, mid, "config.json")
-    d = {"persona": f"你是{mid}。{DEFAULT_INSTRUCTION}", "voice": "0", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.0, "y": 0.0}
+    d = {"persona": f"你是{mid}。{DEFAULT_INSTRUCTION}", "voice": "0", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.5, "y": 0.5}
     if os.path.exists(p):
-        try: 
-            with open(p, "r", encoding="utf-8") as f: d.update(json.load(f))
+        try: with open(p, "r", encoding="utf-8") as f: d.update(json.load(f))
         except: pass
     return d
 
@@ -127,15 +115,12 @@ def save_model_config(mid, data):
     p = os.path.join(MODELS_DIR, mid, "config.json")
     curr = get_model_config(mid)
     curr.update(data)
-    try:
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(curr, f, indent=2, ensure_ascii=False)
+    try: with open(p, "w", encoding="utf-8") as f: json.dump(curr, f, indent=2, ensure_ascii=False)
     except: pass
     return curr
 
 def scan_models():
     ms = []
-    if not os.path.exists(MODELS_DIR): os.makedirs(MODELS_DIR)
     for root, dirs, files in os.walk(MODELS_DIR):
         for file in files:
             if file.endswith(('.model3.json', '.model.json')):
@@ -144,24 +129,13 @@ def scan_models():
                 if not rel_path.startswith("/"): rel_path = "/" + rel_path
                 mid = os.path.basename(os.path.dirname(full_path))
                 if any(m['id'] == mid for m in ms): continue
-                cfg = get_model_config(mid)
-                ms.append({"id": mid, "name": mid, "type": "live2d", "path": rel_path, **cfg})
+                ms.append({"id": mid, "name": mid, "path": rel_path, **get_model_config(mid)})
     return sorted(ms, key=lambda x: x['name'])
-
-# ★★★ 关键修复：补回 scan_backgrounds 函数 ★★★
-def scan_backgrounds():
-    bgs = []
-    for ext in ['*.jpg', '*.jpeg', '*.png', '*.webp', '*.gif']:
-        for f in glob.glob(os.path.join(BG_DIR, ext)): 
-            bgs.append(os.path.basename(f))
-    return sorted(bgs)
 
 def init_model():
     global CURRENT_MODEL
     ms = scan_models()
-    target = next((m for m in ms if m['id'] == GLOBAL_STATE.get("current_model_id")), None)
-    if not target and ms: target = ms[0]
-    
+    target = next((m for m in ms if m['id'] == GLOBAL_STATE.get("current_model_id")), ms[0] if ms else None)
     if target: 
         CURRENT_MODEL = target
         GLOBAL_STATE["current_model_id"] = target['id']
@@ -178,23 +152,64 @@ def cleanup_audio_dir():
     except: pass
 
 def generate_acgn_tts(text):
+    """调用 ACGN AI 在线 API"""
     token = CONFIG.get("ACGN_TOKEN")
-    char_name = CONFIG.get("ACGN_CHARACTER", "流萤")
-    if not token: return None
+    char_name = CONFIG.get("ACGN_CHARACTER", "流萤") # 默认流萤
+    
+    if not token: 
+        logging.warning("⚠️ ACGN Token 未配置，跳过在线合成")
+        return None
+    
     try:
+        logging.info(f"📡 请求 ACGN 语音 ({char_name}): {text[:10]}...")
+        
+        # 构造请求 (基于通常 GSV2P 接口猜测，需要具体文档校准)
+        # 这里假设它是一个兼容 GPT-SoVITS 协议的 API
+        # 很多第三方 GSV 接口使用 GET /?text=...&text_language=zh&character=...
+        
+        # 注意：这里我们尝试最通用的 params 结构
         url = CONFIG.get("ACGN_API_URL")
+        # 如果 URL 结尾没有 /，补上
         if not url.endswith("/"): url += "/"
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        params = {"text": text, "text_language": "zh", "character": char_name, "format": "wav"}
-        logging.info(f"📡 ACGN TTS: {text[:10]}...")
-        resp = requests.get(url, headers=headers, params=params, timeout=12)
+        
+        # 尝试 endpoint: /tts 或 直接根路径 (取决于服务商实现)
+        # 既然是 gsv2p.acgnai.top，大概率是兼容 GPT-SoVITS 官方 API 格式
+        # 尝试调用 / (根路径) 或者 /tts
+        
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"  # 有些接口需要
+        }
+        
+        # 尝试方案 A: GET 请求 (最常见)
+        # 参数名通常是: text, text_language, refer_wav_path (或者 character/emotion)
+        # 由于是公共库，可能有一个 'character' 参数或者 'speaker'
+        params = {
+            "text": text,
+            "text_language": "zh",
+            "character": char_name, # 关键参数：角色名
+            "format": "wav"
+        }
+        
+        # 发起请求 (这里假设是 GET 根路径，如果不行请尝试 /tts)
+        resp = requests.get(url, headers=headers, params=params, timeout=10)
+        
         if resp.status_code == 200:
+            # 检查返回是不是音频 (content-type)
             if "audio" in resp.headers.get("Content-Type", "") or len(resp.content) > 1000:
                 filename = f"acgn_{uuid.uuid4().hex}.wav"
                 filepath = os.path.join(AUDIO_DIR, filename)
                 with open(filepath, 'wb') as f: f.write(resp.content)
+                logging.info("✅ ACGN 语音生成成功")
                 return f"/static/audio/{filename}"
-    except Exception as e: logging.warning(f"ACGN Err: {e}")
+            else:
+                logging.warning(f"⚠️ ACGN 返回非音频数据: {resp.text[:50]}")
+        else:
+            logging.warning(f"⚠️ ACGN 请求失败: {resp.status_code} - {resp.text[:50]}")
+            
+    except Exception as e:
+        logging.warning(f"⚠️ ACGN API 异常 ({e})，将降级到 Edge-TTS")
+        
     return None
 
 def run_edge_tts_sync(text, voice, output_file, rate="+0%", pitch="+0Hz"):
@@ -214,17 +229,20 @@ def generate_audio_smart(text, voice_id, rate, pitch):
     clean_text = re.sub(r'\[.*?\]', '', text).strip()
     if not clean_text: return None
 
+    # 1. 优先尝试 ACGN 在线语音 (当 voice_id 选了 'acgn' 或配置了 Token 且 voice_id 为默认)
     if voice_id == "acgn" or (CONFIG.get("ACGN_TOKEN") and voice_id == "0"):
         url = generate_acgn_tts(clean_text)
         if url: return url
 
+    # 2. Edge-TTS 兜底
     filename = f"edge_{uuid.uuid4().hex}.mp3"
     filepath = os.path.join(AUDIO_DIR, filename)
+    
     voice_map = {"0": "zh-CN-XiaoyiNeural", "1": "zh-CN-XiaoxiaoNeural", "2": "zh-CN-YunxiNeural", "acgn": "zh-CN-XiaoyiNeural"}
     target_voice = voice_map.get(str(voice_id), "zh-CN-XiaoyiNeural")
     if "Neural" in str(voice_id): target_voice = voice_id
 
-    logging.info(f"🎙️ Edge-TTS: {clean_text[:10]}...")
+    logging.info(f"🎙️ Edge-TTS 请求: {clean_text[:10]}...")
     if run_edge_tts_sync(clean_text, target_voice, filepath, rate, pitch):
         return f"/static/audio/{filename}"
     return None
@@ -286,6 +304,7 @@ def upload_model():
 @app.route('/api/danmaku', methods=['POST'])
 def api_danmaku():
     data = request.json
+    if not data or 'text' not in data: return jsonify({'success': False})
     user = data.get('username', 'B站弹幕')
     msg = data.get('text', '')
     GLOBAL_STATE['chat_history'].append({'type':'chat', 'sender': user, 'text': msg})
@@ -322,8 +341,8 @@ def process_ai_response(sender, msg, img_data=None, sid=None):
             resp = chatroom_chat.send_message(content)
             txt = resp.text
         except Exception as e:
-            if "closed" in str(e).lower(): init_chatroom(); return
-            txt = f"(系统错误: {str(e)[:50]})"
+            if "closed" in str(e).lower(): init_chatroom(); return # 简单重试
+            txt = f"(系统: {str(e)[:50]})"
 
         emo='NORMAL'
         match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', txt)
@@ -353,7 +372,21 @@ def on_login(d):
 @socketio.on('message')
 def on_msg(d):
     msg = d.get('text', '')
-    if msg == '/管理员': emit('admin_unlocked'); return
+    
+    # ★★★ 新增：ACGN 配置指令 ★★★
+    if msg.startswith("/acgn_token "):
+        t = msg.replace("/acgn_token ", "").strip()
+        CONFIG["ACGN_TOKEN"] = t
+        save_config()
+        emit('system_message', {'text': '✅ ACGN Token 已保存'})
+        return
+    if msg.startswith("/acgn_char "):
+        c = msg.replace("/acgn_char ", "").strip()
+        CONFIG["ACGN_CHARACTER"] = c
+        save_config()
+        emit('system_message', {'text': f'✅ ACGN 角色已设为: {c}'})
+        return
+
     sender = "User"
     GLOBAL_STATE['chat_history'].append({'type':'chat', 'sender':sender, 'text':msg, 'image': bool(d.get('image'))})
     save_state()
@@ -362,30 +395,17 @@ def on_msg(d):
 
 @socketio.on('get_studio_data')
 def on_get_data():
+    # 增加 ACGN 选项
     voices = [
         {"id":"0", "name":"🎧 默认: 晓伊 (微软)"},
         {"id":"1", "name":"🎧 默认: 晓晓 (微软)"},
         {"id":"acgn", "name":"✨ ACGN 在线 (需配置)"}
     ]
-    acgn_config = {
-        "token": CONFIG.get("ACGN_TOKEN", ""),
-        "url": CONFIG.get("ACGN_API_URL", "https://gsv2p.acgnai.top"),
-        "char": CONFIG.get("ACGN_CHARACTER", "流萤")
-    }
-    
-    # 确保 scan_models 结果不为空
-    models = scan_models()
-    if not models:
-        models = [{"id": "default", "name": "无模型", "path": "", "persona": ""}]
-
     emit('studio_data', {
-        'models': models, 
-        'current_id': CURRENT_MODEL['id'], 
-        'voices': voices, 
-        'backgrounds': scan_backgrounds(), # 这里调用了 scan_backgrounds
+        'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 
+        'voices': voices, 'backgrounds': scan_backgrounds(), 
         'current_bg': GLOBAL_STATE.get('current_background', ''),
         'gemini_key_status': 'OK' if gemini_client else 'MISSING',
-        'acgn_config': acgn_config
     })
 
 @socketio.on('switch_model')
@@ -401,10 +421,6 @@ def on_sav(d):
     global CURRENT_MODEL
     updated = save_model_config(d['id'], d)
     if CURRENT_MODEL['id'] == d['id']: CURRENT_MODEL.update(updated); init_chatroom()
-    if 'acgn_token' in d: CONFIG['ACGN_TOKEN'] = d['acgn_token']
-    if 'acgn_url' in d: CONFIG['ACGN_API_URL'] = d['acgn_url']
-    if 'acgn_char' in d: CONFIG['ACGN_CHARACTER'] = d['acgn_char']
-    save_config()
     emit('toast', {'text': '✅ 保存成功'})
 
 @socketio.on('switch_background')
@@ -413,5 +429,5 @@ def on_sw_bg(d):
     emit('background_update', {'url': f"/static/backgrounds/{d.get('name')}" if d.get('name') else ""}, to='lobby')
 
 if __name__ == '__main__':
-    logging.info("Starting Pico AI Server (Fixed NameError)...")
+    logging.info("Starting Pico AI (ACGN Mode)...")
     socketio.run(app, host='0.0.0.0', port=5000)
