@@ -1,10 +1,6 @@
 # =======================================================================
-# Pico AI Server - 终极完整版 (Dual Engine: Live2D + VRM)
-# 包含功能：
-# 1. AI: Google Gemini 2.5 Flash (带 429 重试 & Client Closed 修复)
-# 2. TTS: Edge-TTS (晓伊) + ACGN Online (流萤) 双引擎自动降级
-# 3. Model: Live2D (Cubism) + VRM (3D) 双引擎自动识别
-# 4. System: 管理员后台、文件上传、B站弹幕接口、配置持久化
+# Pico AI Server - Final Fix (Syntax Error Repair)
+# 修复：解决 try: with ... 单行写法导致的 SyntaxError
 # =======================================================================
 import os
 import json
@@ -32,18 +28,16 @@ from werkzeug.utils import secure_filename
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
 
 app = Flask(__name__, static_folder='static')
-app.config['SECRET_KEY'] = 'pico_ultimate_key_2025'
-app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024 # 放宽限制以支持大模型
+app.config['SECRET_KEY'] = 'pico_syntax_fix_key'
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024 
 
-# SocketIO 配置 (Threading 模式最稳)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60, ping_interval=25, max_http_buffer_size=100*1024*1024)
-
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60)
 SERVER_VERSION = str(int(time.time()))
 
 # --- 目录初始化 ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 AUDIO_DIR = os.path.join(BASE_DIR, "static", "audio")
-MODELS_DIR = os.path.join(BASE_DIR, "static", "live2d") # 兼容旧路径，VRM 也放这
+MODELS_DIR = os.path.join(BASE_DIR, "static", "live2d") 
 BG_DIR = os.path.join(BASE_DIR, "static", "backgrounds")
 STATE_FILE = os.path.join(BASE_DIR, "server_state.json")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
@@ -55,7 +49,6 @@ for d in [AUDIO_DIR, MODELS_DIR, BG_DIR]:
 CONFIG = {
     "GEMINI_API_KEY": "",
     "DEFAULT_VOICE": "zh-CN-XiaoyiNeural",
-    # ACGN (GSV) 配置
     "ACGN_TOKEN": "",
     "ACGN_CHARACTER": "流萤",
     "ACGN_API_URL": "https://gsv2p.acgnai.top"
@@ -71,7 +64,9 @@ def load_config():
 load_config()
 
 def save_config():
-    try: with open(CONFIG_FILE, "w", encoding='utf-8') as f: json.dump(CONFIG, f, indent=2, ensure_ascii=False)
+    try:
+        with open(CONFIG_FILE, "w", encoding='utf-8') as f:
+            json.dump(CONFIG, f, indent=2, ensure_ascii=False)
     except: pass
 
 # --- Gemini 初始化 ---
@@ -83,7 +78,7 @@ def init_gemini():
     if CONFIG.get("GEMINI_API_KEY") and "AIza" in CONFIG["GEMINI_API_KEY"]:
         try:
             gemini_client = genai.Client(api_key=CONFIG["GEMINI_API_KEY"])
-            chatroom_chat = None # 强制重置会话，防止 client closed
+            chatroom_chat = None 
             logging.info("✅ Gemini 客户端就绪")
         except Exception as e:
             logging.error(f"Gemini 初始化失败: {e}")
@@ -91,14 +86,12 @@ def init_gemini():
 init_gemini()
 
 # --- 状态管理 ---
-GLOBAL_STATE = { 
-    "current_model_id": "default", 
-    "current_background": "", 
-    "chat_history": [] 
-}
+GLOBAL_STATE = { "current_model_id": "default", "current_background": "", "chat_history": [] }
 
 def save_state():
-    try: with open(STATE_FILE, 'w', encoding='utf-8') as f: json.dump(GLOBAL_STATE, f, ensure_ascii=False)
+    try: 
+        with open(STATE_FILE, 'w', encoding='utf-8') as f: 
+            json.dump(GLOBAL_STATE, f, ensure_ascii=False)
     except: pass
 
 def load_state():
@@ -108,47 +101,38 @@ def load_state():
             with open(STATE_FILE, 'r', encoding='utf-8') as f:
                 saved = json.load(f)
                 if saved: GLOBAL_STATE.update(saved)
-                # 限制历史记录，防止文件过大
                 if len(GLOBAL_STATE["chat_history"]) > 100: 
                     GLOBAL_STATE["chat_history"] = GLOBAL_STATE["chat_history"][-100:]
         except: pass
 load_state()
 
-# --- 模型管理 (Live2D + VRM) ---
-CURRENT_MODEL = {
-    "id": "default", "type": "live2d", "path": "", "persona": "", 
-    "voice": "0", "rate": "+0%", "pitch": "+0Hz", 
-    "scale": 0.5, "x": 0.0, "y": 0.0
-}
+# --- 模型管理 ---
+CURRENT_MODEL = {"id": "default", "type": "live2d", "path": "", "persona": "", "voice": "0", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.0, "y": 0.0}
 DEFAULT_INSTRUCTION = "\n【指令】回复开头标记心情：[HAPPY], [ANGRY], [SAD], [SHOCK], [NORMAL]。"
 
 def get_model_config(mid):
-    # 为每个模型(文件夹或VRM)读取独立的配置文件
-    # 逻辑：如果是VRM文件，它的配置存在同名文件夹下的 config.json 中
     cfg_dir = os.path.join(MODELS_DIR, mid + "_config") if mid.endswith(".vrm") else os.path.join(MODELS_DIR, mid)
     p = os.path.join(cfg_dir, "config.json")
-    
     d = {"persona": f"你是{mid}。{DEFAULT_INSTRUCTION}", "voice": "0", "rate": "+0%", "pitch": "+0Hz", "scale": 1.0, "x": 0.0, "y": 0.0}
     if os.path.exists(p):
-        try: with open(p, "r", encoding="utf-8") as f: d.update(json.load(f))
+        try: 
+            with open(p, "r", encoding="utf-8") as f: d.update(json.load(f))
         except: pass
     return d
 
 def save_model_config(mid, data):
-    # 确定配置保存路径
     cfg_dir = os.path.join(MODELS_DIR, mid + "_config") if mid.endswith(".vrm") else os.path.join(MODELS_DIR, mid)
     if not os.path.exists(cfg_dir): os.makedirs(cfg_dir, exist_ok=True)
-    
     p = os.path.join(cfg_dir, "config.json")
     curr = get_model_config(mid)
     curr.update(data)
-    try: with open(p, "w", encoding="utf-8") as f: json.dump(curr, f, indent=2, ensure_ascii=False)
+    try: 
+        with open(p, "w", encoding="utf-8") as f: json.dump(curr, f, indent=2, ensure_ascii=False)
     except: pass
     return curr
 
 def scan_models():
     ms = []
-    # 1. 扫描 Live2D (文件夹模式)
     for root, dirs, files in os.walk(MODELS_DIR):
         for file in files:
             if file.endswith(('.model3.json', '.model.json')):
@@ -157,19 +141,15 @@ def scan_models():
                 if not rel_path.startswith("/"): rel_path = "/" + rel_path
                 mid = os.path.basename(os.path.dirname(full_path))
                 if any(m['id'] == mid for m in ms): continue
-                # 读取配置
                 cfg = get_model_config(mid)
                 ms.append({"id": mid, "name": mid, "type": "live2d", "path": rel_path, **cfg})
 
-    # 2. 扫描 VRM (单文件模式)
     for file in os.listdir(MODELS_DIR):
         if file.lower().endswith(".vrm"):
             mid = file
             rel_path = "/static/live2d/" + file
             cfg = get_model_config(mid)
-            # 默认 VRM 需要大一点的缩放? 视情况而定
             if "scale" not in cfg: cfg["scale"] = 1.0 
-            
             ms.append({"id": mid, "name": mid.replace(".vrm", ""), "type": "vrm", "path": rel_path, **cfg})
             
     return sorted(ms, key=lambda x: x['name'])
@@ -179,7 +159,6 @@ def init_model():
     ms = scan_models()
     target = next((m for m in ms if m['id'] == GLOBAL_STATE.get("current_model_id")), None)
     if not target and ms: target = ms[0]
-    
     if target: 
         CURRENT_MODEL = target
         GLOBAL_STATE["current_model_id"] = target['id']
@@ -196,7 +175,6 @@ def cleanup_audio_dir():
     except: pass
 
 def generate_acgn_tts(text):
-    """调用 ACGN AI 在线接口"""
     token = CONFIG.get("ACGN_TOKEN")
     char_name = CONFIG.get("ACGN_CHARACTER", "流萤")
     if not token: return None
@@ -204,12 +182,9 @@ def generate_acgn_tts(text):
         url = CONFIG.get("ACGN_API_URL")
         if not url.endswith("/"): url += "/"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        # GSV2P 通用参数
         params = {"text": text, "text_language": "zh", "character": char_name, "format": "wav"}
-        
         logging.info(f"📡 ACGN TTS Request ({char_name}): {text[:10]}...")
         resp = requests.get(url, headers=headers, params=params, timeout=12)
-        
         if resp.status_code == 200:
             if "audio" in resp.headers.get("Content-Type", "") or len(resp.content) > 1000:
                 filename = f"acgn_{uuid.uuid4().hex}.wav"
@@ -226,7 +201,6 @@ def generate_acgn_tts(text):
     return None
 
 def run_edge_tts_sync(text, voice, output_file, rate="+0%", pitch="+0Hz"):
-    """在同步线程中运行异步 Edge-TTS"""
     async def _amain():
         communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
         await communicate.save(output_file)
@@ -243,15 +217,12 @@ def generate_audio_smart(text, voice_id, rate, pitch):
     clean_text = re.sub(r'\[.*?\]', '', text).strip()
     if not clean_text: return None
 
-    # 1. 优先 ACGN
     if voice_id == "acgn" or (CONFIG.get("ACGN_TOKEN") and voice_id == "0"):
         url = generate_acgn_tts(clean_text)
         if url: return url
 
-    # 2. Edge-TTS 兜底
     filename = f"edge_{uuid.uuid4().hex}.mp3"
     filepath = os.path.join(AUDIO_DIR, filename)
-    
     voice_map = {"0": "zh-CN-XiaoyiNeural", "1": "zh-CN-XiaoxiaoNeural", "2": "zh-CN-YunxiNeural", "acgn": "zh-CN-XiaoyiNeural"}
     target_voice = voice_map.get(str(voice_id), "zh-CN-XiaoyiNeural")
     if "Neural" in str(voice_id): target_voice = voice_id
@@ -267,9 +238,6 @@ def bg_tts_task(text, voice, rate, pitch, room=None, sid=None):
         payload = {'audio': audio_url}
         if room: socketio.emit('audio_response', payload, to=room, namespace='/')
         elif sid: socketio.emit('audio_response', payload, to=sid, namespace='/')
-    else:
-        # 静默失败，不打扰用户
-        pass 
 
 # ================= Flask 路由 =================
 @app.route('/')
@@ -290,7 +258,7 @@ def update_key():
         global gemini_client, chatroom_chat
         CONFIG['GEMINI_API_KEY'] = new_key
         save_config()
-        init_gemini() # 重新初始化，修复 Client Closed
+        init_gemini()
         return jsonify({'success': True})
     return jsonify({'success': False})
 
@@ -303,7 +271,6 @@ def upload_bg():
 @app.route('/upload_model', methods=['POST'])
 def upload_model():
     f = request.files.get('file')
-    # 1. Live2D Zip
     if f and f.filename.endswith('.zip'):
         try:
             n = secure_filename(f.filename).rsplit('.', 1)[0].lower()
@@ -318,7 +285,6 @@ def upload_model():
             return jsonify({'success': True})
         except: pass
     
-    # 2. VRM 单文件
     if f and f.filename.lower().endswith('.vrm'):
         try:
             f.save(os.path.join(MODELS_DIR, secure_filename(f.filename)))
@@ -351,7 +317,7 @@ def process_ai_response(sender, msg, img_data=None, sid=None):
     try:
         if not chatroom_chat: init_chatroom()
         if not gemini_client:
-            if sid: socketio.emit('system_message', {'text': '请先设置 Gemini Key'}, to=sid)
+            if sid: socketio.emit('system_message', {'text': '请设置 Gemini Key'}, to=sid)
             return
         
         content = []
@@ -366,12 +332,8 @@ def process_ai_response(sender, msg, img_data=None, sid=None):
             resp = chatroom_chat.send_message(content)
             txt = resp.text
         except Exception as e:
-            err_str = str(e)
-            # 自动重试逻辑 (Client Closed)
-            if "closed" in err_str.lower(): 
-                init_chatroom()
-                # 还可以再试一次 send_message，这里为了稳健暂不无限递归
-            txt = f"(系统错误: {str(e)[:50]})"
+            if "closed" in str(e).lower(): init_chatroom(); return
+            txt = f"(系统: {str(e)[:50]})"
 
         emo='NORMAL'
         match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', txt)
@@ -396,15 +358,12 @@ def on_login(d):
     if not chatroom_chat: init_chatroom()
     emit('login_success', {'username': u, 'current_model': CURRENT_MODEL, 'current_background': GLOBAL_STATE.get('current_background', '')})
     emit('history_sync', {'history': GLOBAL_STATE['chat_history']})
-    # 欢迎语音 (后台任务)
     socketio.start_background_task(bg_tts_task, f"欢迎 {u}", CURRENT_MODEL['voice'], "+0%", "+0%", sid=request.sid)
 
 @socketio.on('message')
 def on_msg(d):
     msg = d.get('text', '')
-    
-    # 只有 yk 才能触发管理员指令
-    # (这里做了简化，如果您希望更严格，可以校验 sid)
+    # 简化管理员校验
     if msg == '/管理员':
         emit('admin_unlocked')
         return
@@ -461,5 +420,5 @@ def on_sw_bg(d):
     emit('background_update', {'url': f"/static/backgrounds/{d.get('name')}" if d.get('name') else ""}, to='lobby')
 
 if __name__ == '__main__':
-    logging.info("Starting Pico AI (Complete)...")
+    logging.info("Starting Pico AI Server (Syntax Fix)...")
     socketio.run(app, host='0.0.0.0', port=5000)
