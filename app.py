@@ -1,7 +1,7 @@
 # =======================================================================
-# Pico AI Server - 最终修复版 (Live2D Only + 完整功能)
-# 修复：工作室按钮点击无反应的问题 (修复 scan_models 逻辑)
-# 保留：ACGN TTS, Edge-TTS, 管理员后台, 自动格式清洗
+# Pico AI Server - 最终修复版 (Syntax Error Free)
+# 修复：彻底解决所有单行 try: with 写法导致的语法错误
+# 架构：Live2D Only + ACGN TTS + Edge-TTS 兜底
 # =======================================================================
 import os
 import json
@@ -29,7 +29,7 @@ from werkzeug.utils import secure_filename
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
 
 app = Flask(__name__, static_folder='static')
-app.config['SECRET_KEY'] = 'pico_final_fix_v3'
+app.config['SECRET_KEY'] = 'pico_final_syntax_v4'
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024 
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', ping_timeout=60, ping_interval=25, max_http_buffer_size=100*1024*1024)
@@ -66,7 +66,10 @@ def load_config():
 load_config()
 
 def save_config():
-    try: with open(CONFIG_FILE, "w", encoding='utf-8') as f: json.dump(CONFIG, f, indent=2, ensure_ascii=False)
+    # ★★★ 修复点 1：拆分 try: with ★★★
+    try:
+        with open(CONFIG_FILE, "w", encoding='utf-8') as f:
+            json.dump(CONFIG, f, indent=2, ensure_ascii=False)
     except: pass
 
 # --- Gemini 初始化 ---
@@ -89,7 +92,10 @@ init_gemini()
 GLOBAL_STATE = { "current_model_id": "default", "current_background": "", "chat_history": [] }
 
 def save_state():
-    try: with open(STATE_FILE, 'w', encoding='utf-8') as f: json.dump(GLOBAL_STATE, f, ensure_ascii=False)
+    # ★★★ 修复点 2：拆分 try: with ★★★
+    try:
+        with open(STATE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(GLOBAL_STATE, f, ensure_ascii=False)
     except: pass
 
 def load_state():
@@ -99,7 +105,8 @@ def load_state():
             with open(STATE_FILE, 'r', encoding='utf-8') as f:
                 saved = json.load(f)
                 if saved: GLOBAL_STATE.update(saved)
-                if len(GLOBAL_STATE["chat_history"]) > 100: GLOBAL_STATE["chat_history"] = GLOBAL_STATE["chat_history"][-100:]
+                if len(GLOBAL_STATE["chat_history"]) > 100: 
+                    GLOBAL_STATE["chat_history"] = GLOBAL_STATE["chat_history"][-100:]
         except: pass
 load_state()
 
@@ -115,7 +122,8 @@ def get_model_config(mid):
     p = os.path.join(MODELS_DIR, mid, "config.json")
     d = {"persona": f"你是{mid}。{DEFAULT_INSTRUCTION}", "voice": "0", "rate": "+0%", "pitch": "+0Hz", "scale": 0.5, "x": 0.0, "y": 0.0}
     if os.path.exists(p):
-        try: with open(p, "r", encoding="utf-8") as f: d.update(json.load(f))
+        try: 
+            with open(p, "r", encoding="utf-8") as f: d.update(json.load(f))
         except: pass
     return d
 
@@ -123,36 +131,28 @@ def save_model_config(mid, data):
     p = os.path.join(MODELS_DIR, mid, "config.json")
     curr = get_model_config(mid)
     curr.update(data)
-    try: with open(p, "w", encoding="utf-8") as f: json.dump(curr, f, indent=2, ensure_ascii=False)
+    # ★★★ 修复点 3：拆分 try: with ★★★
+    try:
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(curr, f, indent=2, ensure_ascii=False)
     except: pass
     return curr
 
 def scan_models():
-    """扫描所有 Live2D 模型文件夹"""
     ms = []
-    # 确保目录存在
-    if not os.path.exists(MODELS_DIR):
-        os.makedirs(MODELS_DIR)
-        
+    if not os.path.exists(MODELS_DIR): os.makedirs(MODELS_DIR)
+    
+    # 只扫描 Live2D 文件夹
     for root, dirs, files in os.walk(MODELS_DIR):
         for file in files:
             if file.endswith(('.model3.json', '.model.json')):
                 full_path = os.path.join(root, file)
-                # 转换为相对路径，注意要用正斜杠
                 rel_path = os.path.relpath(full_path, BASE_DIR).replace("\\", "/")
                 if not rel_path.startswith("/"): rel_path = "/" + rel_path
-                
-                # 模型 ID 是文件夹名
                 mid = os.path.basename(os.path.dirname(full_path))
-                
-                # 去重
                 if any(m['id'] == mid for m in ms): continue
-                
-                # 读取配置
                 cfg = get_model_config(mid)
                 ms.append({"id": mid, "name": mid, "type": "live2d", "path": rel_path, **cfg})
-    
-    # 排序
     return sorted(ms, key=lambda x: x['name'])
 
 def init_model():
@@ -322,7 +322,7 @@ def process_ai_response(sender, msg, img_data=None, sid=None):
             txt = resp.text
         except Exception as e:
             if "closed" in str(e).lower(): init_chatroom(); return
-            txt = f"(系统: {str(e)[:50]})"
+            txt = f"(系统错误: {str(e)[:50]})"
 
         emo='NORMAL'
         match=re.search(r'\[(HAPPY|ANGRY|SAD|SHOCK|NORMAL)\]', txt)
@@ -361,7 +361,6 @@ def on_msg(d):
 
 @socketio.on('get_studio_data')
 def on_get_data():
-    logging.info("📺 前端请求获取 Studio 数据")
     voices = [
         {"id":"0", "name":"🎧 默认: 晓伊 (微软)"},
         {"id":"1", "name":"🎧 默认: 晓晓 (微软)"},
@@ -372,18 +371,9 @@ def on_get_data():
         "url": CONFIG.get("ACGN_API_URL", "https://gsv2p.acgnai.top"),
         "char": CONFIG.get("ACGN_CHARACTER", "流萤")
     }
-    
-    # 确保 scan_models 结果不为空，否则前端可能会因为空数组报错
-    models = scan_models()
-    if not models:
-        # 造一个假的占位模型，防止前端崩
-        models = [{"id": "default", "name": "无模型", "path": "", "persona": ""}]
-
     emit('studio_data', {
-        'models': models, 
-        'current_id': CURRENT_MODEL['id'], 
-        'voices': voices, 
-        'backgrounds': scan_backgrounds(), 
+        'models': scan_models(), 'current_id': CURRENT_MODEL['id'], 
+        'voices': voices, 'backgrounds': scan_backgrounds(), 
         'current_bg': GLOBAL_STATE.get('current_background', ''),
         'gemini_key_status': 'OK' if gemini_client else 'MISSING',
         'acgn_config': acgn_config
@@ -414,5 +404,5 @@ def on_sw_bg(d):
     emit('background_update', {'url': f"/static/backgrounds/{d.get('name')}" if d.get('name') else ""}, to='lobby')
 
 if __name__ == '__main__':
-    logging.info("Starting Pico AI Server (Fixed Live2D Only)...")
+    logging.info("Starting Pico AI Server (Live2D Only + ACGN)...")
     socketio.run(app, host='0.0.0.0', port=5000)
