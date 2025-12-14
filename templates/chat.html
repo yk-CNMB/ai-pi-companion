@@ -13,6 +13,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     
     <style>
+        /* 保持原样式，无删减 */
         * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
         body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; padding: 0; height: 100dvh; width: 100vw; background-color: #2d3436; overflow: hidden; color: #333; }
         #live2d-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
@@ -20,7 +21,6 @@
         #orientation-lock { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #2d3436; z-index: 99999; color: white; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
         @media screen and (max-width: 1024px) and (orientation: landscape) { #orientation-lock { display: flex !important; } }
 
-        /* PC Layout */
         @media (min-width: 1025px) {
             body { display: flex; flex-direction: row; }
             #stage-container { flex: 1; position: relative; background-image: radial-gradient(circle, #636e72 10%, #2d3436 90%); overflow: hidden; background-size: cover; background-position: center; z-index: 1; }
@@ -41,7 +41,6 @@
             body.live-mode .message-bubble { background: rgba(255,255,255,0.95); backdrop-filter: blur(4px); }
         }
 
-        /* Mobile Layout */
         @media (max-width: 1024px) {
             body { display: block; background: #2d3436; }
             #stage-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100dvh; z-index: 0; background-image: radial-gradient(circle, #636e72 10%, #2d3436 90%); background-size: cover; background-position: center; }
@@ -88,6 +87,7 @@
         .bg-chip { display: inline-block; background: #fff; padding: 5px 10px; border-radius: 8px; margin: 5px; cursor: pointer; font-size: 12px; border: 1px solid #ddd; }
         .bg-chip.active { background: #d1ecf1; border-color: #17a2b8; font-weight: bold; }
         .btn-del { color: red; font-size: 12px; display: block; margin-top: 5px; }
+        
         .toggle-btn { background-color: #f1f2f6; color: #333; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-weight: bold; border: 2px solid #ddd; display: block; width: 100%; margin-bottom: 15px; transition: all 0.3s; }
         .toggle-btn.active { background-color: #6c5ce7; color: white; border-color: #6c5ce7; }
         
@@ -99,6 +99,7 @@
         @keyframes fadeOut { to { opacity: 0; visibility: hidden; } }
         #debug-pos { position: absolute; top: 10px; left: 10px; color: #0f0; background: rgba(0, 0, 0, 0.5); padding: 5px; font-size: 10px; pointer-events: none; z-index: 100; border-radius: 4px; }
         
+        /* ACGN Config Panel */
         #acgn-panel { background: #e3f2fd; padding: 10px; border-radius: 8px; margin-top: 10px; border: 1px solid #90caf9; display: none; }
         #acgn-panel input { width: 100%; margin-bottom: 5px; padding: 6px; border-radius: 4px; border: 1px solid #ccc; font-size: 12px; }
         #acgn-panel label { font-size: 11px; font-weight: bold; color: #1565c0; display: block; margin-bottom: 2px; }
@@ -167,7 +168,7 @@
                 
                 <hr>
                 <h4>☁️ 上传模型 (zip/vrm)</h4>
-                <div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传模型包 (.zip)<input type="file" id="file-input" accept=".zip" style="display:none" onchange="uploadFile(this.files[0])"></div>
+                <div class="upload-box" onclick="document.getElementById('file-input').click()">点击上传 (.zip / .vrm)<input type="file" id="file-input" accept=".zip,.vrm" style="display:none" onchange="uploadFile(this.files[0])"></div>
             </div>
             
             <hr>
@@ -194,8 +195,9 @@
         let isDragging=false, dragData, initialScale, initialDist, iAmAdmin=false;
         window.model = null; let currentImgBase64 = null;
         
-        let isMouseFollow = true; // Default ON
-        let targetX = 0, targetY = 0; // -1 to 1
+        // ★★★ 鼠标跟随逻辑 ★★★
+        let isMouseFollow = true; // 默认开启
+        let targetX = 0, targetY = 0; // 目标位置 (-1 to 1)
 
         function toggleMouseFollow() {
             isMouseFollow = !isMouseFollow;
@@ -282,20 +284,18 @@
         function initInteraction() { 
             const s=document.getElementById('stage-container'); app_pixi.stage.interactive=true;
             
-            // 全局鼠标监听 (解决 "看不见鼠标" 的问题)
+            // 全局鼠标监听 (Eyes Follow)
             window.addEventListener('mousemove', (e) => {
                 if (isMouseFollow && model) {
                     targetX = (e.clientX / window.innerWidth) * 2 - 1; 
                     targetY = (e.clientY / window.innerHeight) * 2 - 1;
-                    // 暴力驱动 Live2D 头部参数
                     if (model.internalModel && model.internalModel.coreModel) {
                         const core = model.internalModel.coreModel;
-                        // Cubism 2.0 / 3.0
+                        // Cubism 2.0 / 3.0 / 4.0 兼容
                         core.setParameterValueById('ParamAngleX', targetX * 30);
                         core.setParameterValueById('ParamAngleY', targetY * 30);
                         core.setParameterValueById('ParamEyeBallX', targetX);
                         core.setParameterValueById('ParamEyeBallY', targetY);
-                        // Cubism 4.0
                         core.setParameterValueById('AngleX', targetX * 30);
                         core.setParameterValueById('AngleY', targetY * 30);
                         core.setParameterValueById('EyeBallX', targetX);
@@ -319,6 +319,8 @@
             try { const im = model.internalModel; emo = emo.toUpperCase(); if (im.settings.expressions) { let exprMap = {'HAPPY': ['happy', 'smile'], 'ANGRY': ['angry'], 'SAD': ['sad'], 'SHOCK': ['shock']}; let k = exprMap[emo] || []; let t = im.settings.expressions.find(e => k.some(kk => e.Name.toLowerCase().includes(kk)))?.Name; if (t) (im.expressionManager || model).setExpression(t); } const defs = im.motionManager.definitions?.Motions || im.motionManager.motionGroups; if (!defs) return; const ga = {'HAPPY': ['Happy'], 'ANGRY': ['Angry'], 'SAD': ['Sad'], 'SHOCK': ['Shock'], 'IDLE': ['Idle'], 'NORMAL': ['TapBody']}; let tg = ga[emo] || []; for (let g of tg) { if (defs[g]) { im.motionManager.startRandomMotion(g, 3); return; } } if (emo !== 'IDLE' && defs['TapBody']) im.motionManager.startRandomMotion('TapBody', 3); } catch(e) {} 
         }
 
+        document.getElementById('studio-btn').onclick=()=>{document.getElementById('studio-overlay').style.display='flex';socket.emit('get_studio_data');};
+        
         // Voice Panel Logic
         function checkVoicePanel() {
             const val = document.getElementById('voice-select').value;
