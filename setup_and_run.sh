@@ -44,8 +44,6 @@ else
     exit 1
 fi
 
-echo -e "${YELLOW}📦 强制安装依赖 (防止缺包)...${NC}"
-pip install -r requirements.txt
 
 # 5. 启动后端 (带健康检查)
 echo -e "🚀 启动 Gunicorn..."
@@ -88,3 +86,4 @@ YAML
 else
     echo -e "${RED}⚠️ 隧道启动失败 (缺凭证)${NC}"
 fi
+
