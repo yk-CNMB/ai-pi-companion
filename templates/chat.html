@@ -13,7 +13,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
     
     <style>
-        /* 保持原样式，无删减 */
         * { box-sizing: border-box; outline: none; -webkit-tap-highlight-color: transparent; }
         body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; padding: 0; height: 100dvh; width: 100vw; background-color: #2d3436; overflow: hidden; color: #333; }
         #live2d-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
@@ -21,6 +20,7 @@
         #orientation-lock { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #2d3436; z-index: 99999; color: white; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
         @media screen and (max-width: 1024px) and (orientation: landscape) { #orientation-lock { display: flex !important; } }
 
+        /* PC Layout */
         @media (min-width: 1025px) {
             body { display: flex; flex-direction: row; }
             #stage-container { flex: 1; position: relative; background-image: radial-gradient(circle, #636e72 10%, #2d3436 90%); overflow: hidden; background-size: cover; background-position: center; z-index: 1; }
@@ -41,6 +41,7 @@
             body.live-mode .message-bubble { background: rgba(255,255,255,0.95); backdrop-filter: blur(4px); }
         }
 
+        /* Mobile Layout */
         @media (max-width: 1024px) {
             body { display: block; background: #2d3436; }
             #stage-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100dvh; z-index: 0; background-image: radial-gradient(circle, #636e72 10%, #2d3436 90%); background-size: cover; background-position: center; }
@@ -79,6 +80,7 @@
         .slider-container { margin: 12px 0; }
         .slider-label { font-size: 12px; color: #666; display: flex; justify-content: space-between; margin-bottom: 5px; }
         input[type="range"] { width: 100%; cursor: pointer; }
+        
         .upload-box { border: 2px dashed #ccc; padding: 20px; text-align: center; border-radius: 12px; margin-top: 15px; cursor: pointer; transition: background 0.2s; background: #fafafa; }
         .model-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px; margin-top: 15px; }
         .model-card { background: #f8f9fa; padding: 12px; border-radius: 10px; text-align: center; cursor: pointer; border: 2px solid transparent; transition: all 0.2s; font-size: 14px; }
@@ -87,7 +89,6 @@
         .bg-chip { display: inline-block; background: #fff; padding: 5px 10px; border-radius: 8px; margin: 5px; cursor: pointer; font-size: 12px; border: 1px solid #ddd; }
         .bg-chip.active { background: #d1ecf1; border-color: #17a2b8; font-weight: bold; }
         .btn-del { color: red; font-size: 12px; display: block; margin-top: 5px; }
-        
         .toggle-btn { background-color: #f1f2f6; color: #333; padding: 8px 16px; border-radius: 20px; cursor: pointer; font-weight: bold; border: 2px solid #ddd; display: block; width: 100%; margin-bottom: 15px; transition: all 0.3s; }
         .toggle-btn.active { background-color: #6c5ce7; color: white; border-color: #6c5ce7; }
         
@@ -152,6 +153,7 @@
                     <label style="font-size:12px;color:#666">声线选择 (Voice):</label>
                     <select id="voice-select" style="width:100%;padding:8px;margin-bottom:10px;border-radius:8px;border:1px solid #ddd" onchange="checkVoicePanel()"></select>
 
+                    <!-- ★★★ ACGN 专属配置面板 (隐藏式) ★★★ -->
                     <div id="acgn-panel">
                         <label>🔒 访问令牌 (Token):</label><input id="acgn-token" placeholder="粘贴 ACGN 网站的 Token">
                         <label>🔗 API 地址 (默认 gsv2p.acgnai.top):</label><input id="acgn-url" placeholder="https://gsv2p.acgnai.top">
@@ -178,6 +180,7 @@
     </div>
 
     <div id="stage-container">
+        <!-- Live2D Canvas Only -->
         <canvas id="live2d-canvas"></canvas>
         <div id="debug-pos"></div>
     </div>
@@ -195,9 +198,8 @@
         let isDragging=false, dragData, initialScale, initialDist, iAmAdmin=false;
         window.model = null; let currentImgBase64 = null;
         
-        // ★★★ 鼠标跟随逻辑 ★★★
-        let isMouseFollow = true; // 默认开启
-        let targetX = 0, targetY = 0; // 目标位置 (-1 to 1)
+        let isMouseFollow = true;
+        let targetX = 0, targetY = 0; // -1 to 1
 
         function toggleMouseFollow() {
             isMouseFollow = !isMouseFollow;
@@ -284,18 +286,19 @@
         function initInteraction() { 
             const s=document.getElementById('stage-container'); app_pixi.stage.interactive=true;
             
-            // 全局鼠标监听 (Eyes Follow)
+            // ★★★ 全局鼠标监听 (Eyes Follow) ★★★
             window.addEventListener('mousemove', (e) => {
                 if (isMouseFollow && model) {
                     targetX = (e.clientX / window.innerWidth) * 2 - 1; 
                     targetY = (e.clientY / window.innerHeight) * 2 - 1;
                     if (model.internalModel && model.internalModel.coreModel) {
                         const core = model.internalModel.coreModel;
-                        // Cubism 2.0 / 3.0 / 4.0 兼容
+                        // Cubism 2.0 / 3.0
                         core.setParameterValueById('ParamAngleX', targetX * 30);
                         core.setParameterValueById('ParamAngleY', targetY * 30);
                         core.setParameterValueById('ParamEyeBallX', targetX);
                         core.setParameterValueById('ParamEyeBallY', targetY);
+                        // Cubism 4.0
                         core.setParameterValueById('AngleX', targetX * 30);
                         core.setParameterValueById('AngleY', targetY * 30);
                         core.setParameterValueById('EyeBallX', targetX);
@@ -321,7 +324,7 @@
 
         document.getElementById('studio-btn').onclick=()=>{document.getElementById('studio-overlay').style.display='flex';socket.emit('get_studio_data');};
         
-        // Voice Panel Logic
+        // ★★★ Check Voice Panel Logic ★★★
         function checkVoicePanel() {
             const val = document.getElementById('voice-select').value;
             const panel = document.getElementById('acgn-panel');
@@ -333,7 +336,8 @@
             const vSelect = document.getElementById('voice-select'); vSelect.innerHTML = "";
             (d.voices || [{id:"zh-CN-XiaoyiNeural", name:"默认"}]).forEach(v => { let opt = document.createElement('option'); opt.value = v.id; opt.textContent = v.name; vSelect.appendChild(opt); });
 
-            if(d.acgn_config) {
+            // ★★★ Fill ACGN Configs ★★★
+            if (d.acgn_config) {
                 document.getElementById('acgn-token').value = d.acgn_config.token || "";
                 document.getElementById('acgn-url').value = d.acgn_config.url || "https://gsv2p.acgnai.top";
                 document.getElementById('acgn-char').value = d.acgn_config.char || "流萤";
@@ -351,7 +355,9 @@
                     } 
                 }); 
             } 
+            
             const bgList = document.getElementById('bg-list'); bgList.innerHTML = ""; if(d.backgrounds) { d.backgrounds.forEach(bg => { let chip = document.createElement('span'); chip.className = `bg-chip ${bg===d.current_bg ? 'active' : ''}`; chip.textContent = bg; chip.onclick = () => changeBackground(bg); bgList.appendChild(chip); }); }
+            
             checkVoicePanel();
         });
 
@@ -364,6 +370,7 @@
         
         document.getElementById('save-settings-btn').onclick=()=>{
             let r=document.getElementById('rate-range').value; let p=document.getElementById('pitch-range').value;
+            // ★★★ Include ACGN Configs in Save ★★★
             socket.emit('save_settings',{
                 id:currentModelId,
                 persona:document.getElementById('persona-text').value,
